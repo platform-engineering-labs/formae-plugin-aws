@@ -6,9 +6,6 @@ AWS CloudControl resource plugin for [Formae](https://github.com/platform-engine
 
 ```bash
 # Install the plugin (when published)
-formae plugin install aws
-
-# Or build from source
 make install
 ```
 
