@@ -106,7 +106,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: us-west-2
+          aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: ConformanceTests
 
@@ -115,6 +115,6 @@ jobs:
 
       - name: Run conformance tests
         env:
-          AWS_REGION: us-west-2
+          AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: make conformance-test VERSION=${{ vars.FORMAE_VERSION || '0.76.5' }}
