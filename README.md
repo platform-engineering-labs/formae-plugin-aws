@@ -1,6 +1,6 @@
 # AWS Plugin for Formae
 
-AWS CloudControl resource plugin for [Formae](https://github.com/platform-engineering-labs/formae). This plugin enables Formae to manage AWS resources using the [AWS Cloud Control API](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudcontrolapi.html).
+AWS resource plugin for [formae](https://github.com/platform-engineering-labs/formae). This plugin enables Formae to manage AWS resources using the [AWS Cloud Control API](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudcontrolapi.html).
 
 ## Installation
 
@@ -84,100 +84,19 @@ When running on EC2 or ECS, credentials are automatically retrieved from the ins
 **OIDC (for CI/CD):**
 See `.github/workflows/ci.yml` for an example using GitHub Actions OIDC with `aws-actions/configure-aws-credentials`.
 
-## Example
 
-Here's a basic infrastructure example creating a VPC with subnets and security groups:
+## Examples
 
-```pkl
-amends "@formae/forma.pkl"
-import "@formae/formae.pkl"
-import "@aws/aws.pkl"
-import "@aws/ec2/vpc.pkl"
-import "@aws/ec2/subnet.pkl"
-import "@aws/ec2/internetgateway.pkl"
-import "@aws/ec2/securitygroup.pkl"
+See the [examples/](examples/) directory for usage examples.
 
-local region = "us-east-1"
-
-stack: formae.Stack = new {
-    label = "my-infrastructure"
-    description = "Basic AWS infrastructure"
-}
-
-target: formae.Target = new formae.Target {
-    label = "aws-target"
-    config = new aws.Config {
-        region = region
-    }
-}
-
-local myVpc: vpc.VPC = new {
-    label = "main-vpc"
-    CidrBlock = "10.0.0.0/16"
-    EnableDnsHostnames = true
-    EnableDnsSupport = true
-    tags = new Listing {
-        new formae.Tag { key = "Name"; value = "main-vpc" }
-    }
-}
-
-local publicSubnet: subnet.Subnet = new {
-    label = "public-subnet-1"
-    VpcId = myVpc.ref("VpcId")
-    CidrBlock = "10.0.1.0/24"
-    AvailabilityZone = "\(region)a"
-    MapPublicIpOnLaunch = true
-    tags = new Listing {
-        new formae.Tag { key = "Name"; value = "public-subnet-1" }
-    }
-}
-
-local igw: internetgateway.InternetGateway = new {
-    label = "main-igw"
-    tags = new Listing {
-        new formae.Tag { key = "Name"; value = "main-igw" }
-    }
-}
-
-local webSg: securitygroup.SecurityGroup = new {
-    label = "web-sg"
-    GroupDescription = "Allow HTTP/HTTPS traffic"
-    VpcId = myVpc.ref("VpcId")
-    SecurityGroupIngress = new Listing {
-        new securitygroup.Ingress {
-            IpProtocol = "tcp"
-            FromPort = 80
-            ToPort = 80
-            CidrIp = "0.0.0.0/0"
-        }
-        new securitygroup.Ingress {
-            IpProtocol = "tcp"
-            FromPort = 443
-            ToPort = 443
-            CidrIp = "0.0.0.0/0"
-        }
-    }
-    tags = new Listing {
-        new formae.Tag { key = "Name"; value = "web-sg" }
-    }
-}
-
-forma {
-    stack
-    target
-    myVpc
-    publicSubnet
-    igw
-    webSg
-}
-```
-
-Apply with:
 ```bash
-formae apply --mode reconcile --watch my-infrastructure.pkl
+# Evaluate an example
+formae eval examples/complete/lifeline/basic_infrastructure.pkl
+
+# Apply resources
+formae apply --mode reconcile --watch examples/complete/lifeline/basic_infrastructure.pkl
 ```
 
-See the [examples/](examples/) directory for more examples.
 
 ## Development
 
