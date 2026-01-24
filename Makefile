@@ -58,11 +58,11 @@ install: build
 	@echo "Installing $(PLUGIN_NAME) v$(PLUGIN_VERSION) (namespace: $(PLUGIN_NAMESPACE))..."
 	@rm -rf $(PLUGIN_BASE_DIR)/$(PLUGIN_NAMESPACE)
 	@mkdir -p $(INSTALL_DIR)/schema/pkl
-	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@cp bin/$(BINARY) $(INSTALL_DIR)/$(PLUGIN_NAMESPACE)
 	@cp -r schema/pkl/* $(INSTALL_DIR)/schema/pkl/
 	@cp formae-plugin.pkl $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)"
-	@echo "  - Binary: $(INSTALL_DIR)/$(BINARY)"
+	@echo "  - Binary: $(INSTALL_DIR)/$(PLUGIN_NAMESPACE)"
 	@echo "  - Schema: $(INSTALL_DIR)/schema/pkl/"
 	@echo "  - Manifest: $(INSTALL_DIR)/formae-plugin.pkl"
 
