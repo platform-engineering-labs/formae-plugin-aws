@@ -1,0 +1,46 @@
+/*
+ * Basic Example
+ *
+ * This example shows how to define resources using your plugin.
+ * Run with: formae apply --mode reconcile --watch examples/basic/main.pkl
+ */
+amends "@formae/forma.pkl"
+
+import "@formae/formae.pkl"
+import "@example/example.pkl"
+
+forma {
+  new formae.Stack {
+    label = "default"
+    description = "Default stack for example resources"
+  }
+
+  new formae.Target {
+    label = "my-target"
+    namespace = "AWS"
+    // Add your provider-specific configuration here
+    // For typed config, create a Config class in your schema:
+    //   config = new example.Config { region = "us-east-1" }
+    config = new Mapping {
+      ["region"] = "us-east-1"
+    }
+  }
+
+  new example.ExampleResource {
+    label = "my-resource"
+    name = "My Example Resource"
+    description = "This is an example resource"
+    region = "us-east-1"
+
+    endpoint = new example.Endpoint {
+      url = "https://api.example.com"
+      port = 8080
+      protocol = "https"
+    }
+
+    tags = new Listing {
+      new example.Tag { key = "Environment"; value = "development" }
+      new example.Tag { key = "Team"; value = "platform" }
+    }
+  }
+}

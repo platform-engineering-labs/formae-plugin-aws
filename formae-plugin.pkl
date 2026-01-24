@@ -1,0 +1,29 @@
+/*
+ * Formae Plugin Manifest
+ *
+ * This file defines metadata for your Formae plugin.
+ * Update the values below to match your plugin.
+ */
+
+// TODO: Change to your plugin name (lowercase, letters/numbers/hyphens)
+name = "aws"
+
+// TODO: Update version following semver
+version = "0.1.0"
+
+// TODO: Resource type namespace prefix (uppercase)
+// This appears in resource types: AWS::Service::Resource
+namespace = "AWS"
+
+// TODO: Describe what your plugin does
+description = "AWS CloudControl resource plugin for Formae"
+
+// TODO: Your license (SPDX identifier)
+license = "FSL-1.1-ALv2"
+
+// Minimum formae version required
+minFormaeVersion = "0.77.0"
+
+output {
+  renderer = new JsonRenderer {}
+}

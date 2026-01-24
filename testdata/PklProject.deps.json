@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "resolvedDependencies": {
+    "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0": {
+      "type": "local",
+      "uri": "projectpackage://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.76.0",
+      "path": "../../pkl/schema"
+    },
+    "package://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0": {
+      "type": "local",
+      "uri": "projectpackage://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0.76.0",
+      "path": "../schema/pkl"
+    }
+  }
+}
