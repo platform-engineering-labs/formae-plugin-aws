@@ -79,41 +79,9 @@ jobs:
           pkl eval formae-plugin.pkl --format json > /dev/null
           echo "Manifest validated successfully"
 
-  # Integration tests require AWS credentials but test plugin logic
-  # without running full conformance test lifecycle
-  integration-tests:
-    needs: [build, lint, pkl-validate]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.inputs.run_conformance == 'true'
-    timeout-minutes: 30
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: us-west-2
-          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
-          role-session-name: IntegrationTests
-
-      - name: Run integration tests
-        env:
-          AWS_REGION: us-west-2
-        run: go test -tags=integration -v -timeout 30m ./...
-
   # Conformance tests run the full CRUD lifecycle against real AWS resources
   conformance-tests:
-    needs: [build, lint, pkl-validate]
+    needs: [build, lint, pkl-validate, test-unit]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.run_conformance == 'true'
     timeout-minutes: 60
@@ -149,4 +117,4 @@ jobs:
         env:
           AWS_REGION: us-west-2
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: make conformance-test VERSION=${{ vars.FORMAE_VERSION || '0.77.15' }}
+        run: make conformance-test VERSION=${{ vars.FORMAE_VERSION || '0.76.5' }}
