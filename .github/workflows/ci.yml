@@ -102,13 +102,13 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: us-east-1
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: IntegrationTests
 
       - name: Run integration tests
         env:
-          AWS_REGION: us-east-1
+          AWS_REGION: us-west-2
         run: go test -tags=integration -v -timeout 30m ./...
 
   # Conformance tests run the full CRUD lifecycle against real AWS resources
@@ -138,8 +138,8 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: us-east-1
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: ConformanceTests
 
       - name: Install plugin
@@ -147,6 +147,6 @@ jobs:
 
       - name: Run conformance tests
         env:
-          AWS_REGION: us-east-1
+          AWS_REGION: us-west-2
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: make conformance-test VERSION=${{ vars.FORMAE_VERSION || '0.77.15' }}
