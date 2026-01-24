@@ -2,13 +2,15 @@
   "schemaVersion": 1,
   "resolvedDependencies": {
     "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0": {
-      "type": "local",
-      "uri": "projectpackage://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.76.0",
-      "path": "../../pkl/schema"
+      "type": "remote",
+      "uri": "projectpackage://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.76.5",
+      "checksums": {
+        "sha256": "d5ee50fcb0dd875425c991bf8210fc16c588ea1c9018b9ab27724acc994d2f83"
+      }
     },
     "package://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0": {
       "type": "local",
-      "uri": "projectpackage://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0.76.0",
+      "uri": "projectpackage://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0.1.0",
       "path": "../schema/pkl"
     }
   }

@@ -1,6 +1,11 @@
 amends "pkl:Project"
 
 dependencies {
-  ["formae"] = import("../../pkl/schema/PklProject")
+  // Reference local plugin schema during development
   ["aws"] = import("../schema/pkl/PklProject")
+
+  // Formae schema - fetched from public registry
+  ["formae"] {
+    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.76.5"
+  }
 }
