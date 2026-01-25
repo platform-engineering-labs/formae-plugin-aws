@@ -1,0 +1,8 @@
+amends "pkl:Project"
+
+dependencies {
+  ["formae"] {
+    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.77.15-internal"
+  }
+  ["aws"] = import("../schema/pkl/PklProject")
+}
