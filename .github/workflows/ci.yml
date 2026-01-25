@@ -117,4 +117,4 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: make conformance-test VERSION=${{ vars.FORMAE_VERSION || '0.76.5' }}
+        run: make conformance-test VERSION=${{ vars.FORMAE_VERSION || '0.77.15-internal' }}
