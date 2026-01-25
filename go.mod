@@ -10,12 +10,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iam v1.47.3
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.49.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.36.1
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.67.8
 	github.com/aws/smithy-go v1.24.0
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.0.0-20260120041653-c26026025caf
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.0
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.0
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.1
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.2
 	github.com/stretchr/testify v1.11.1
 )
 

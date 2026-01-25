@@ -122,13 +122,13 @@ if [[ "${VERSION}" != "latest" ]]; then
     # Update schema/pkl/PklProject (plugin schema depends on formae)
     if [[ -f "${PROJECT_ROOT}/schema/pkl/PklProject" ]]; then
         echo "Updating schema/pkl/PklProject to use formae@${VERSION}..."
-        sed_inplace "s|formae/formae@[0-9.]*\"|formae/formae@${VERSION}\"|g" "${PROJECT_ROOT}/schema/pkl/PklProject"
+        sed_inplace "s|formae/formae@[0-9a-zA-Z.\-]*\"|formae/formae@${VERSION}\"|g" "${PROJECT_ROOT}/schema/pkl/PklProject"
     fi
 
     # Update testdata/PklProject (test files depend on formae)
     if [[ -f "${PROJECT_ROOT}/testdata/PklProject" ]]; then
         echo "Updating testdata/PklProject to use formae@${VERSION}..."
-        sed_inplace "s|formae/formae@[0-9.]*\"|formae/formae@${VERSION}\"|g" "${PROJECT_ROOT}/testdata/PklProject"
+        sed_inplace "s|formae/formae@[0-9a-zA-Z.\-]*\"|formae/formae@${VERSION}\"|g" "${PROJECT_ROOT}/testdata/PklProject"
     fi
 fi
 
