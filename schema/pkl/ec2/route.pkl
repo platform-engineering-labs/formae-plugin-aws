@@ -26,53 +26,49 @@ open class Route extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        persist = true
     }
     destinationCidrBlock: String?
 
     @aws.FieldHint{
         createOnly = true
-        persist = true
     }
     destinationIpv6CidrBlock: String?
 
     @aws.FieldHint{
         createOnly = true
-        persist = true
     }
     destinationPrefixListId: String?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     egressOnlyInternetGatewayId: String?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     gatewayId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     instanceId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     localGatewayId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     natGatewayId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     networkInterfaceId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
-        persist = true
     }
     routeTableId: (String|formae.Resolvable)
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     transitGatewayId: String?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     vpcEndpointId: String?
 
-    @aws.FieldHint{persist = true}
+    @aws.FieldHint{}
     vpcPeeringConnectionId: String?
 
 }

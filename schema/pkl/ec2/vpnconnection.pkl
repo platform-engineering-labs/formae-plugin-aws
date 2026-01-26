@@ -92,7 +92,7 @@ open class VpnTunnelOptionsSpecification extends formae.SubResource {
     phase2IntegrityAlgorithms: Listing<VPNConnectionPhase2IntegrityAlgorithmsRequestListValue>?
     phase2LifetimeSeconds: Int?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     preSharedKey: String?
 
     rekeyFuzzPercentage: Int?

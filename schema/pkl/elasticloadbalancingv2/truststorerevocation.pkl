@@ -29,7 +29,6 @@ open class TrustStoreRevocation extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     revocationContents: Listing<RevocationContent>?
 

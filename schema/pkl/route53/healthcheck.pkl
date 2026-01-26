@@ -13,7 +13,6 @@ const type = "AWS::Route53::HealthCheck"
 
 @aws.ResourceHint {
     type = module.type
-    nonprovisionable = true
     identifier = "Id"
 }
 open class HealthCheck extends formae.Resource {

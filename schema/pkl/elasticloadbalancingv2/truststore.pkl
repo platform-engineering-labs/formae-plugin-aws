@@ -17,13 +17,13 @@ const type = "AWS::ElasticLoadBalancingV2::TrustStore"
 }
 open class TrustStore extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     caCertificatesBundleS3Bucket: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     caCertificatesBundleS3Key: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     caCertificatesBundleS3ObjectVersion: String?
 
     @aws.FieldHint{createOnly = true}

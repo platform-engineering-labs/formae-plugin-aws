@@ -46,7 +46,6 @@ open class ApiKey extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     generateDistinctId: Boolean?
 

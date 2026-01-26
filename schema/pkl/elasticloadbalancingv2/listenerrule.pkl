@@ -40,7 +40,7 @@ open class AuthenticateOidcConfig extends formae.SubResource {
     authenticationRequestExtraParams: Mapping<String, Any>?
     authorizationEndpoint: String
     clientId: String
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     clientSecret: String?
     issuer: String
     onUnauthenticatedRequest: String?
@@ -154,7 +154,6 @@ open class ListenerRule extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     listenerArn: (String|formae.Resolvable)?
 

@@ -276,7 +276,6 @@ open class Domain extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     tags: Listing<aws.Tag>?
 

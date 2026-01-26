@@ -58,7 +58,6 @@ open class AccessPoint extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     clientToken: (String)?
 

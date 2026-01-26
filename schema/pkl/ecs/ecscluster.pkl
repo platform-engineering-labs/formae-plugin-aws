@@ -86,7 +86,7 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint
     defaultCapacityProviderStrategy: Listing<CapacityProviderStrategy>?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     serviceConnectDefaults: ServiceConnectDefaults?
 
     @aws.FieldHint {

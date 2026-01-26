@@ -368,7 +368,6 @@ open class VCpuCount extends formae.SubResource {
 open class LaunchTemplate extends formae.Resource {
 
     @aws.FieldHint{
-        writeOnly = true
         requiredOnCreate = true
     }
     launchTemplateData: LaunchTemplateData?
@@ -376,9 +375,9 @@ open class LaunchTemplate extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     launchTemplateName: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     tagSpecifications: Listing<TagSpecification>?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     versionDescription: String?
 }

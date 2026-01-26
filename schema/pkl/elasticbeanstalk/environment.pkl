@@ -50,7 +50,7 @@ open class Environment extends formae.Resource {
     @aws.FieldHint
     operationsRole: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     optionSettings: Listing<OptionSetting>?
 
     @aws.FieldHint
@@ -65,7 +65,7 @@ open class Environment extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     templateName: String?
 
     @aws.FieldHint

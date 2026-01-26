@@ -28,13 +28,11 @@ open class VPCCidrBlock extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv4IpamPoolId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv4NetmaskLength: Int?
 
@@ -46,13 +44,11 @@ open class VPCCidrBlock extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6IpamPoolId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6NetmaskLength: Int?
 

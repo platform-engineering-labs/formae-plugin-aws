@@ -94,7 +94,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     allocatedStorage: Int?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     allowMajorVersionUpgrade: Boolean?
 
     @aws.FieldHint
@@ -103,7 +103,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     autoMinorVersionUpgrade: Boolean?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     automaticBackupReplicationKmsKeyId: String?
 
     @aws.FieldHint
@@ -123,7 +123,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     certificateDetails: CertificateDetails?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     certificateRotationRestart: Boolean?
 
     @aws.FieldHint{createOnly = true}
@@ -152,7 +152,6 @@ open class DBInstance extends formae.Resource {
     dbInstanceClass: String?
 
     @aws.FieldHint{
-        writeOnly = true
         outputField = "DBInstanceIdentifier"
     }
     dbInstanceIdentifier: (String(matches(Regex(#"^$|^[a-zA-Z]{1}(?:-?[a-zA-Z0-9]){0,62}$"#))))?
@@ -193,7 +192,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     dedicatedLogVolume: Boolean?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     deleteAutomatedBackups: Boolean?
 
     @aws.FieldHint
@@ -250,7 +249,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     manageMasterUserPassword: Boolean?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     masterUserPassword: (String|formae.Resolvable|formae.Value)?
 
     @aws.FieldHint
@@ -307,24 +306,23 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     replicaMode: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     restoreTime: String?
 
     @aws.FieldHint
     sourceDBClusterIdentifier: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     sourceDBInstanceAutomatedBackupsArn: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     sourceDBInstanceIdentifier: (String|formae.Resolvable)?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     sourceDbiResourceId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     sourceRegion: aws.Region?
 
@@ -346,16 +344,16 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     tdeCredentialArn: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     tdeCredentialPassword: String?
 
     @aws.FieldHint{createOnly = true}
     timezone: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     useDefaultProcessorFeatures: Boolean?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     useLatestRestorableTime: Boolean?
 
     @aws.FieldHint{outputField = "VPCSecurityGroups"}

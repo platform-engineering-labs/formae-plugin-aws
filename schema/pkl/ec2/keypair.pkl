@@ -40,7 +40,6 @@ open class KeyPair extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     keyFormat: KeyFormat?
 

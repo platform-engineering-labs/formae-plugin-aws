@@ -74,7 +74,6 @@ open class RecordSet extends formae.SubResource {
 
 @aws.ResourceHint {
     type = module.type
-    nonprovisionable = true
     identifier = "Id"
     discoverable = false
 }

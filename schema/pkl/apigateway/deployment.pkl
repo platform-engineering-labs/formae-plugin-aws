@@ -83,7 +83,6 @@ open class Deployment extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     deploymentCanarySettings: CanarySetting?
 
@@ -95,13 +94,11 @@ open class Deployment extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     stageDescription: StageDescription?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     stageName: String?
 

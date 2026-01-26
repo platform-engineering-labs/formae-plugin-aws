@@ -19,13 +19,11 @@ open class ServerCertificate extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     certificateBody: String(matches(Regex(#"[\u0009\u000A\u000D\u0020-\u00FF]+"#)))?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     certificateChain: String(matches(Regex(#"[\u0009\u000A\u000D\u0020-\u00FF]+"#)))?
 
@@ -34,7 +32,6 @@ open class ServerCertificate extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     privateKey: String(matches(Regex(#"[\u0009\u000A\u000D\u0020-\u00FF]+"#)))?
 

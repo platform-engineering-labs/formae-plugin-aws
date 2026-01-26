@@ -92,13 +92,13 @@ open class Endpoint extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     endpointName: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     excludeRetainedVariantProperties: Listing<VariantProperty>?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     retainAllVariantProperties: Boolean?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     retainDeploymentConfig: Boolean?
 
     @aws.FieldHint {

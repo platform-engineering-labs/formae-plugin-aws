@@ -183,7 +183,6 @@ open class UserProfile extends formae.Resource {
     singleSignOnUserValue: String?
 
     @aws.FieldHint {
-        writeOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }

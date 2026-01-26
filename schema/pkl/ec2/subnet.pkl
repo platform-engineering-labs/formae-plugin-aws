@@ -65,18 +65,16 @@ open class Subnet extends formae.Resource {
     @aws.FieldHint
     enableDns64: Boolean? = false
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     enableLniAtDeviceIndex: Int?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv4IpamPoolId: String?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv4NetmaskLength: Int?
 
@@ -85,7 +83,6 @@ open class Subnet extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6IpamPoolId: String?
 
@@ -94,7 +91,6 @@ open class Subnet extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6NetmaskLength: Int?
 

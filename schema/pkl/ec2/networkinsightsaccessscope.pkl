@@ -54,13 +54,11 @@ open class NetworkInsightsAccessScope extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     excludePaths: Listing<ScopeAccessScopePathRequest>?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     matchPaths: Listing<ScopeAccessScopePathRequest>?
 

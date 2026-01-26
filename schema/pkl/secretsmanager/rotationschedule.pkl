@@ -39,10 +39,10 @@ open class RotationRules extends formae.SubResource {
 }
 open class RotationSchedule extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     hostedRotationLambda: HostedRotationLambda?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     rotateImmediatelyOnUpdate: Boolean?
 
     @aws.FieldHint

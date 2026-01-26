@@ -31,7 +31,6 @@ open class EIP extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     address: String?
 
@@ -43,7 +42,6 @@ open class EIP extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipamPoolId: String?
 
@@ -61,7 +59,6 @@ open class EIP extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     transferAddress: String?
 

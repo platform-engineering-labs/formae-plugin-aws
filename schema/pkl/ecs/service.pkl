@@ -250,7 +250,7 @@ open class Service extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     schedulingStrategy: SchedulingStrategy?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     serviceConnectConfiguration: ServiceConnectConfiguration?
 
     @aws.FieldHint{createOnly = true}
@@ -268,7 +268,7 @@ open class Service extends formae.Resource {
     @aws.FieldHint
     taskDefinition: (String|formae.Resolvable)?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     volumeConfigurations: Listing<VolumeConfiguration>?
 
     @aws.FieldHint

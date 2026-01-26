@@ -39,7 +39,6 @@ open class ConfigurationTemplate extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     environmentId: (String|formae.Resolvable)?
 
@@ -54,7 +53,6 @@ open class ConfigurationTemplate extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     sourceConfiguration: SourceConfiguration?
 }

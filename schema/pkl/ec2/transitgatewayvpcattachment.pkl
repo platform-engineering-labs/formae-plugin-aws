@@ -17,13 +17,13 @@ const type = "AWS::EC2::TransitGatewayVpcAttachment"
 }
 open class TransitGatewayVpcAttachment extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     addSubnetIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint
     options: Dynamic?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     removeSubnetIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}

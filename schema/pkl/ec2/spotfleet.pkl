@@ -97,7 +97,7 @@ open class NetworkInterface extends formae.SubResource {
     deleteOnTermination: Boolean?
     description: String?
     deviceIndex: Int?
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     groups: Listing<String>?
     ipv6AddressCount: Int?
     ipv6Addresses: Listing<Ipv6Address>?
@@ -238,7 +238,7 @@ open class LaunchSpecification extends formae.SubResource {
     spotPrice: String?
     subnetId: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     tagSpecifications: Listing<TagSpecification>?
 
     userData: String?

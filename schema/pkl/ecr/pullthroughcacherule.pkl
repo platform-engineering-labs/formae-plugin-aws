@@ -19,7 +19,6 @@ open class PullThroughCacheRule extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     credentialArn: (String(matches(Regex(#"^arn:aws:secretsmanager:[a-zA-Z0-9-:]+:secret:ecr\-pullthroughcache\/[a-zA-Z0-9\/_+=.@-]+$"#)))|formae.Value)?
 
@@ -28,7 +27,6 @@ open class PullThroughCacheRule extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     upstreamRegistry: String?
 

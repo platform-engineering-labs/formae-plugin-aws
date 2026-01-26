@@ -160,7 +160,6 @@ open class Table extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     importSourceSpecification: ImportSourceSpecification?
 

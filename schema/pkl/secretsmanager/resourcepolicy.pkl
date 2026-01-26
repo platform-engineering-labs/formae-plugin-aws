@@ -17,7 +17,7 @@ const type = "AWS::SecretsManager::ResourcePolicy"
 }
 open class ResourcePolicy extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     blockPublicPolicy: Boolean?
 
     @aws.FieldHint

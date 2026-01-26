@@ -20,14 +20,12 @@ open class ServiceLinkedRole extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
         outputField = "AWSServiceName"
     }
     awsServiceName: String?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     customSuffix: String?
 

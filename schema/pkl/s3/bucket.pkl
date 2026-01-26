@@ -431,7 +431,6 @@ open class Rule extends formae.SubResource {
     noncurrentVersionExpirationInDays: Int?
 
     @aws.FieldHint {
-        writeOnly = true
     }
     noncurrentVersionTransition: NoncurrentVersionTransition?
 
@@ -442,7 +441,6 @@ open class Rule extends formae.SubResource {
     objectSizeLessThan: String(matches(Regex(#"[0-9]+"#)))?
 
     @aws.FieldHint {
-        writeOnly = true
     }
     prefix: String?
 
@@ -600,7 +598,6 @@ open class Bucket extends formae.Resource {
     accelerateConfiguration: AccelerateConfiguration?
 
     @aws.FieldHint {
-        writeOnly = true
     }
     accessControl: AccessControl?
 

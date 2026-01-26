@@ -13,7 +13,7 @@ const type = "AWS::IAM::User"
 
 @aws.SubResourceHint
 open class UserLoginProfile extends formae.SubResource {
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     password: (String|formae.Value)?
     passwordResetRequired: Boolean?
 }

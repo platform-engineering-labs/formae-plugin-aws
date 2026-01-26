@@ -67,6 +67,6 @@ open class CapacityReservation extends formae.Resource {
     @aws.FieldHint
     tenancy: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     unusedReservationBillingOwnerId: String?
 }

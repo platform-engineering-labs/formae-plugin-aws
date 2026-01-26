@@ -13,21 +13,21 @@ const type = "AWS::Lambda::Function"
 
 @aws.SubResourceHint
 open class Code extends formae.SubResource {
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     imageUri: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     s3Bucket: (String(matches(Regex(#"^[0-9A-Za-z\.\-_]*(?<!\.)$"#))))?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     s3Key: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     s3ObjectVersion: String?
 
     sourceKMSKeyArn: (String(matches(Regex(#"^(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()$"#))))?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     zipFile: String?
 }
 
@@ -185,7 +185,6 @@ open class Function extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     snapStart: SnapStart?
 

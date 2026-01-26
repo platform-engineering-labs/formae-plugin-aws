@@ -24,10 +24,10 @@ open class BlockDeviceMapping extends formae.SubResource {
     deviceName: String
     ebs: EBS?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     noDevice: Dynamic?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     virtualName: String?
 }
 
@@ -157,7 +157,7 @@ open class InstanceResolvable extends formae.Resolvable {
 }
 open class Instance extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     additionalInfo: String?
 
     @aws.FieldHint
@@ -213,13 +213,11 @@ open class Instance extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6AddressCount: Int?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6Addresses: Listing<Ipv6Address>?
 
@@ -231,7 +229,6 @@ open class Instance extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     launchTemplate: Dynamic?
 
@@ -253,7 +250,7 @@ open class Instance extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     privateIpAddress: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     propagateTagsToVolumeOnCreation: Boolean?
 
     @aws.FieldHint

@@ -50,7 +50,6 @@ open class AccessGrant extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     s3PrefixType: AccessGrantS3PrefixType?
 

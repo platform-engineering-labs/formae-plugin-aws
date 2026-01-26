@@ -53,13 +53,11 @@ open class CustomDBEngineVersion extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     manifest: String?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     sourceCustomDbEngineVersionIdentifier: String?
 
@@ -74,7 +72,6 @@ open class CustomDBEngineVersion extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     useAwsProvidedLatestImage: Boolean?
 

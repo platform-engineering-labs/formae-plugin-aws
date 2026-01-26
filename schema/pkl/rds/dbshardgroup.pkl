@@ -45,7 +45,7 @@ open class DBShardGroup extends formae.Resource {
     @aws.FieldHint
     maxACU: Number
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     minACU: Number?
 
     @aws.FieldHint{createOnly = true}

@@ -33,7 +33,7 @@ open class KeyResolvable extends formae.Resolvable {
 }
 open class Key extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     bypassPolicyLockoutSafetyCheck: Boolean?
 
     @aws.FieldHint
@@ -60,10 +60,10 @@ open class Key extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     origin: Origin?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     pendingWindowInDays: Int?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     rotationPeriodInDays: Int?
 
     @aws.FieldHint {

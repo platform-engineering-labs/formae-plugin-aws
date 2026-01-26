@@ -21,7 +21,7 @@ open class AttributeDefinition extends formae.SubResource {
 open class CapacityAutoScalingSettings extends formae.SubResource {
     maxCapacity: Int
     minCapacity: Int
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     seedCapacity: Int?
     targetTrackingScalingPolicyConfiguration: TargetTrackingScalingPolicyConfiguration
 }

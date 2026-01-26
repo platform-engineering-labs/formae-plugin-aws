@@ -34,7 +34,7 @@ open class NatGateway extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     connectivityType: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     maxDrainDurationSeconds: Int?
 
     @aws.FieldHint{createOnly = true}

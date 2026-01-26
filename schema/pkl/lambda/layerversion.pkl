@@ -33,7 +33,6 @@ open class LayerVersion extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
         requiredOnCreate = true
     }
     content: Content?

@@ -20,7 +20,7 @@ open class VPCEndpointService extends formae.Resource {
     @aws.FieldHint
     acceptanceRequired: Boolean?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     contributorInsightsEnabled: Boolean?
 
     @aws.FieldHint

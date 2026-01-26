@@ -23,7 +23,7 @@ open class OidcOptions extends formae.SubResource {
     authorizationEndpoint: String?
     clientId: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     clientSecret: String?
 
     issuer: String?

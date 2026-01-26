@@ -57,19 +57,16 @@ open class RestApi extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     body: Dynamic?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     bodyS3Location: BodyS3Location?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     cloneFrom: String?
 
@@ -83,7 +80,6 @@ open class RestApi extends formae.Resource {
     endpointConfiguration: EndpointConfiguration?
 
     @aws.FieldHint{
-        writeOnly = true
     }
     failOnWarnings: Boolean?
 
@@ -91,7 +87,6 @@ open class RestApi extends formae.Resource {
     minimumCompressionSize: Int?
 
     @aws.FieldHint{
-        writeOnly = true
     }
     mode: String?
 
@@ -99,7 +94,6 @@ open class RestApi extends formae.Resource {
     name: String?
 
     @aws.FieldHint{
-        writeOnly = true
     }
     parameters: Mapping<String, Any>?
 

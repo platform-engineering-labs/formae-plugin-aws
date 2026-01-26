@@ -97,7 +97,6 @@ open class DBCluster extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     clusterScalabilityType: String?
 
@@ -118,7 +117,6 @@ open class DBCluster extends formae.Resource {
     dbClusterParameterGroupName: String?
 
     @aws.FieldHint{
-        writeOnly = true
         outputField = "DBInstanceParameterGroupName"
     }
     dbInstanceParameterGroupName: String?
@@ -240,7 +238,6 @@ open class DBCluster extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     restoreType: String?
 
@@ -252,19 +249,16 @@ open class DBCluster extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     snapshotIdentifier: String?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     sourceDBClusterIdentifier: String?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     sourceRegion: aws.Region?
 
@@ -282,7 +276,6 @@ open class DBCluster extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     useLatestRestorableTime: Boolean?
 

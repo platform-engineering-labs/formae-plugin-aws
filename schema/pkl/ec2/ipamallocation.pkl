@@ -30,7 +30,6 @@ open class IPAMAllocation extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     netmaskLength: Int?
 }

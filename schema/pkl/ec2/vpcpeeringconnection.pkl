@@ -25,7 +25,6 @@ open class VPCPeeringConnection extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     peerRoleArn: String?
 

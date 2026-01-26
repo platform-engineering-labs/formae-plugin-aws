@@ -22,13 +22,11 @@ open class SubnetCidrBlock extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6IpamPoolId: String?
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     ipv6NetmaskLength: Int?
 

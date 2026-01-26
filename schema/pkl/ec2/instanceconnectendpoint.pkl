@@ -19,7 +19,6 @@ open class InstanceConnectEndpoint extends formae.Resource {
 
     @aws.FieldHint{
         createOnly = true
-        writeOnly = true
     }
     clientToken: String?
 

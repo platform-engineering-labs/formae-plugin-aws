@@ -36,7 +36,7 @@ typealias ImageTagMutability = "MUTABLE"|"IMMUTABLE"
 }
 open class Repository extends formae.Resource {
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     emptyOnDelete: Boolean?
 
     @aws.FieldHint{createOnly = true}

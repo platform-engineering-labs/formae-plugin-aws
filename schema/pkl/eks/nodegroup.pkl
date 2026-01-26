@@ -85,7 +85,7 @@ open class Nodegroup extends formae.Resource {
     @aws.FieldHint
     diskSize: Int?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{}
     forceUpdateEnabled: Boolean?
 
     @aws.FieldHint
