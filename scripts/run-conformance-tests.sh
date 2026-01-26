@@ -11,8 +11,10 @@
 #   VERSION - Optional formae version (e.g., 0.76.0). Defaults to "latest".
 #
 # Environment variables:
-#   FORMAE_BINARY - Path to formae binary (skips download if set)
+#   FORMAE_BINARY      - Path to formae binary (skips download if set)
 #   FORMAE_INSTALL_PREFIX - Installation directory (default: temp directory)
+#   FORMAE_TEST_FILTER - Filter tests by name pattern (e.g., "s3-bucket")
+#   FORMAE_TEST_TYPE   - Select test type: "all" (default), "crud", or "discovery"
 
 set -euo pipefail
 
@@ -102,10 +104,20 @@ echo ""
 echo "Using formae binary: ${FORMAE_BINARY}"
 "${FORMAE_BINARY}" --version
 
-# Export FORMAE_BINARY and FORMAE_VERSION for the tests
+# Export environment variables for the tests
 # FORMAE_VERSION is required by the plugin SDK to resolve PKL schema paths
 export FORMAE_BINARY
 export FORMAE_VERSION="${VERSION}"
+
+# Pass through test filter and type if set
+if [[ -n "${FORMAE_TEST_FILTER:-}" ]]; then
+    export FORMAE_TEST_FILTER
+    echo "Test filter: ${FORMAE_TEST_FILTER}"
+fi
+if [[ -n "${FORMAE_TEST_TYPE:-}" ]]; then
+    export FORMAE_TEST_TYPE
+    echo "Test type: ${FORMAE_TEST_TYPE}"
+fi
 
 # =============================================================================
 # Update and Resolve PKL Dependencies

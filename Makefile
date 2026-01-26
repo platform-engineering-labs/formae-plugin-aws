@@ -22,7 +22,7 @@ BINARY := $(PLUGIN_NAME)
 PLUGIN_BASE_DIR := $(HOME)/.pel/formae/plugins
 INSTALL_DIR := $(PLUGIN_BASE_DIR)/$(PLUGIN_NAMESPACE)/v$(PLUGIN_VERSION)
 
-.PHONY: all build test test-unit test-integration lint clean install help setup-credentials clean-environment conformance-test
+.PHONY: all build test test-unit test-integration lint clean install help setup-credentials clean-environment conformance-test conformance-test-crud conformance-test-discovery
 
 all: build
 
@@ -82,16 +82,38 @@ setup-credentials:
 clean-environment:
 	@./scripts/ci/clean-environment.sh
 
-## conformance-test: Run conformance tests against formae
-## Usage: make conformance-test [VERSION=0.76.0]
+## conformance-test: Run all conformance tests (CRUD + discovery)
+## Usage: make conformance-test [VERSION=0.80.0] [TEST=s3-bucket]
 ## Downloads the specified formae version (or latest) and runs conformance tests.
 ## Calls setup-credentials and clean-environment automatically.
-conformance-test: install setup-credentials
+##
+## Parameters:
+##   VERSION - Formae version to test against (default: latest)
+##   TEST    - Filter tests by name pattern (e.g., TEST=s3-bucket)
+conformance-test: conformance-test-crud conformance-test-discovery
+
+## conformance-test-crud: Run only CRUD lifecycle tests
+## Usage: make conformance-test-crud [VERSION=0.80.0] [TEST=s3-bucket]
+conformance-test-crud: install setup-credentials
 	@echo "Pre-test cleanup..."
 	@./scripts/ci/clean-environment.sh || true
 	@echo ""
-	@echo "Running conformance tests..."
-	@./scripts/run-conformance-tests.sh $(VERSION); \
+	@echo "Running CRUD conformance tests..."
+	@FORMAE_TEST_FILTER="$(TEST)" FORMAE_TEST_TYPE=crud ./scripts/run-conformance-tests.sh $(VERSION); \
+	TEST_EXIT=$$?; \
+	echo ""; \
+	echo "Post-test cleanup..."; \
+	./scripts/ci/clean-environment.sh || true; \
+	exit $$TEST_EXIT
+
+## conformance-test-discovery: Run only discovery tests
+## Usage: make conformance-test-discovery [VERSION=0.80.0] [TEST=s3-bucket]
+conformance-test-discovery: install setup-credentials
+	@echo "Pre-test cleanup..."
+	@./scripts/ci/clean-environment.sh || true
+	@echo ""
+	@echo "Running discovery conformance tests..."
+	@FORMAE_TEST_FILTER="$(TEST)" FORMAE_TEST_TYPE=discovery ./scripts/run-conformance-tests.sh $(VERSION); \
 	TEST_EXIT=$$?; \
 	echo ""; \
 	echo "Post-test cleanup..."; \
