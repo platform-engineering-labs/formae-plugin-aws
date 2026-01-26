@@ -14,7 +14,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.0.0-20260120041653-c26026025caf
 	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.1
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.3
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.4
 	github.com/stretchr/testify v1.11.1
 )
 
