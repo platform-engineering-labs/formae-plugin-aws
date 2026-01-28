@@ -1,0 +1,16 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+name = "aws"
+version = "0.1.0"
+namespace = "AWS"
+description = "AWS CloudControl resource plugin for Formae"
+license = "FSL-1.1-ALv2"
+minFormaeVersion = "0.80.0"
+
+output {
+  renderer = new JsonRenderer {}
+}

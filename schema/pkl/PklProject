@@ -1,0 +1,14 @@
+amends "pkl:Project"
+
+dependencies {
+  ["formae"] {
+    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.80.0"
+  }
+}
+
+package {
+  name = "aws"
+  baseUri = "package://hub.platform.engineering/plugins/aws/schema/pkl/\(name)/\(name)"
+  version = read("VERSION").text.trim()
+  packageZipUrl = "https://hub.platform.engineering/plugins/aws/schema/pkl/\(name)/\(name)@\(version).zip"
+}
