@@ -34,10 +34,13 @@ open class DBSubnetGroupResolvable extends formae.Resolvable {
 }
 open class DBSubnetGroup extends formae.Resource {
 
-    @aws.FieldHint
-    dbSubnetGroupDescription: String?
+    @aws.FieldHint{outputField = "DBSubnetGroupDescription"}
+    dbSubnetGroupDescription: String
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        outputField = "DBSubnetGroupName"
+    }
     dbSubnetGroupName: String?
 
     @aws.FieldHint

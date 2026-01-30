@@ -139,7 +139,7 @@ open class DBInstance extends formae.Resource {
         createOnly = true
         outputField = "DBClusterIdentifier"
         }
-    dbClusterIdentifier: String?
+    dbClusterIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         outputField = "DBClusterSnapshotIdentifier"
