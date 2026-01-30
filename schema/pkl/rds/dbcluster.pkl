@@ -48,6 +48,9 @@ open class ServerlessV2ScalingConfiguration extends formae.SubResource {
 open class DBClusterResolvable extends formae.Resolvable {
     hidden type = module.type
 
+    hidden dbClusterIdentifier: DBClusterResolvable = (this) {
+        property = "DBClusterIdentifier"
+    }
     hidden dbClusterArn: DBClusterResolvable = (this) {
         property = "DBClusterArn"
     }
@@ -287,7 +290,7 @@ open class DBCluster extends formae.Resource {
     useLatestRestorableTime: Boolean?
 
     @aws.FieldHint
-    vpcSecurityGroupIds: Listing<String>?
+    vpcSecurityGroupIds: Listing<String|formae.Resolvable>?
 
     hidden parent = this
 

@@ -1,0 +1,90 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Aurora PostgreSQL cluster with Data API enabled.
+ * Used to test the DatastoreAuroraDataAPI implementation.
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "./infrastructure/vpc_resources.pkl"
+import "./infrastructure/rds_resources.pkl"
+
+import "./vars.pkl"
+
+description {
+    text = """
+    Aurora PostgreSQL Serverless v2 cluster with Data API enabled.
+
+    This forma provisions:
+    - VPC with two subnets across availability zones
+    - Internet gateway for external connectivity
+    - Security group allowing PostgreSQL traffic within the VPC
+    - DB subnet group for Aurora placement
+    - Aurora PostgreSQL Serverless v2 cluster with Data API enabled
+    - Aurora instance for the cluster
+
+    The resulting infrastructure is ready for testing the DatastoreAuroraDataAPI implementation.
+    """
+    confirm = true
+}
+
+properties {
+    name = new formae.Prop {
+        flag = "name"
+        default = vars.projectName
+    }
+    region = new formae.Prop {
+        flag = "region"
+        default = vars.region
+    }
+    vpcCidr = new formae.Prop {
+        flag = "vpcCidr"
+        default = vars.vpcCidr
+    }
+    subnetCidr1 = new formae.Prop {
+        flag = "subnetCidr1"
+        default = vars.subnetCidr1
+    }
+    subnetCidr2 = new formae.Prop {
+        flag = "subnetCidr2"
+        default = vars.subnetCidr2
+    }
+    availabilityZone1 = new formae.Prop {
+        flag = "az1"
+        default = vars.availabilityZone1
+    }
+    availabilityZone2 = new formae.Prop {
+        flag = "az2"
+        default = vars.availabilityZone2
+    }
+}
+
+local _vpc = new vpc_resources.VpcResources {
+    name = properties.name.value
+    vpcCidr = properties.vpcCidr.value
+    subnetCidr1 = properties.subnetCidr1.value
+    subnetCidr2 = properties.subnetCidr2.value
+    availabilityZone1 = properties.availabilityZone1.value
+    availabilityZone2 = properties.availabilityZone2.value
+}
+
+local _rds = new rds_resources.RdsResources {
+    name = properties.name.value
+    vpcCidr = properties.vpcCidr.value
+    dbName = vars.dbName
+    vpc = _vpc.vpc
+    subnet1 = _vpc.subnet1
+    subnet2 = _vpc.subnet2
+}
+
+forma {
+    vars.stack
+    vars.target
+
+    ..._vpc.resources
+    ..._rds.resources
+}

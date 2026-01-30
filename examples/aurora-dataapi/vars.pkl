@@ -1,0 +1,29 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+import "@formae/formae.pkl"
+import "@aws/aws.pkl"
+
+projectName = "aurora-dataapi"
+region = "us-east-1"
+availabilityZone1 = "us-east-1a"
+availabilityZone2 = "us-east-1b"
+vpcCidr = "10.100.0.0/16"
+subnetCidr1 = "10.100.1.0/24"
+subnetCidr2 = "10.100.2.0/24"
+dbName = "formae"
+
+stack: formae.Stack = new {
+    label = "aurora-dataapi"
+    description = "Test infrastructure for Aurora Data API datastore"
+}
+
+target: formae.Target = new formae.Target {
+    label = "aurora-dataapi-target"
+    config = new aws.Config {
+        region = module.region
+    }
+}

@@ -1,0 +1,63 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+import "@formae/formae.pkl"
+import "@aws/ec2/vpc.pkl" as awsvpc
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+
+class VpcResources {
+    name: String
+    vpcCidr: String
+    subnetCidr1: String
+    subnetCidr2: String
+    availabilityZone1: String
+    availabilityZone2: String
+
+    hidden vpc: awsvpc.VPC = new {
+        label = "\(name)-vpc"
+        cidrBlock = vpcCidr
+        enableDnsHostnames = true
+        enableDnsSupport = true
+        tags { new { key = "Name"; value = "\(name)-vpc" } }
+    }
+
+    hidden igw: internetgateway.InternetGateway = new {
+        label = "\(name)-igw"
+        tags { new { key = "Name"; value = "\(name)-igw" } }
+    }
+
+    hidden attachIgw: vpcgatewayattachment.VPCGatewayAttachment = new {
+        label = "\(name)-igw-attachment"
+        vpcId = vpc.res.id
+        internetGatewayId = igw.res.id
+    }
+
+    hidden subnet1: subnet.Subnet = new {
+        label = "\(name)-subnet-1"
+        vpcId = vpc.res.id
+        cidrBlock = subnetCidr1
+        availabilityZone = availabilityZone1
+        tags { new { key = "Name"; value = "\(name)-subnet-1" } }
+    }
+
+    hidden subnet2: subnet.Subnet = new {
+        label = "\(name)-subnet-2"
+        vpcId = vpc.res.id
+        cidrBlock = subnetCidr2
+        availabilityZone = availabilityZone2
+        tags { new { key = "Name"; value = "\(name)-subnet-2" } }
+    }
+
+    hidden resources: Listing<formae.Resource> = new {
+        vpc
+        igw
+        attachIgw
+        subnet1
+        subnet2
+    }
+}
