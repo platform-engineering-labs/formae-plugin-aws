@@ -1,0 +1,92 @@
+name: Nightly
+
+# Tests plugin against formae main branch to catch SDK regressions before release.
+# PEL-maintained plugins only.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3 AM UTC
+  workflow_dispatch:
+
+jobs:
+  conformance-tests-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Set up Pkl
+        uses: pkl-community/setup-pkl@v0
+        with:
+          pkl-version: 0.30.0
+
+      - name: Build formae from main
+        run: |
+          git clone --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
+          cd /tmp/formae && make build
+          echo "FORMAE_BINARY=/tmp/formae/bin/formae" >> $GITHUB_ENV
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: NightlyConformanceTests
+
+      - name: Install plugin
+        run: make install
+
+      - name: Run conformance tests against main
+        env:
+          AWS_REGION: us-east-1
+          FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
+        run: make conformance-test
+
+  # Notify on failure
+  notify-failure:
+    needs: [conformance-tests-main]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":warning: Nightly build failed on ${{ github.repository }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":warning: *Nightly build failed* on `${{ github.repository }}`\n\nPlugin conformance tests failed against formae main branch. This may indicate an SDK regression."
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Run"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }

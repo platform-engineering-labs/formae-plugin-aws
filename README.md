@@ -1,6 +1,7 @@
 # AWS Plugin for Formae
 
-[![CI](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/ci.yml/badge.svg)](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/ci.yml)
+[![CI](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/ci.yml)
+[![Nightly](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/nightly.yml)
 
 AWS resource plugin for
 [formae](https://github.com/platform-engineering-labs/formae). This plugin
