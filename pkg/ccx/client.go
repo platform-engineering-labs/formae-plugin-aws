@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -269,15 +270,58 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		},
 	}
 
-	// If operation status is success, run a Read to get the latest properties
+	// If operation status is success, run a Read to get the latest properties.
+	// Some resources (like DynamoDB tables) may not be immediately readable after
+	// CloudControl reports the operation as successful, so we retry with backoff.
 	if operationStatus == resource.OperationStatusSuccess && result.ProgressEvent.Operation != cctypes.OperationDelete {
-		readResult, readErr := readFunc(ctx, &resource.ReadRequest{
-			NativeID:     identifier,
-			ResourceType: *result.ProgressEvent.TypeName,
-			TargetConfig: request.TargetConfig,
-		})
-		if readErr == nil && readResult != nil {
-			statusResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
+		const maxReadRetries = 3
+		const retryDelay = 2 * time.Second
+
+		var readResult *resource.ReadResult
+		var readErr error
+
+		for attempt := 1; attempt <= maxReadRetries; attempt++ {
+			readResult, readErr = readFunc(ctx, &resource.ReadRequest{
+				NativeID:     identifier,
+				ResourceType: *result.ProgressEvent.TypeName,
+				TargetConfig: request.TargetConfig,
+			})
+
+			if readErr != nil {
+				slog.Warn("StatusResource: Read failed after successful operation",
+					"error", readErr,
+					"identifier", identifier,
+					"resourceType", *result.ProgressEvent.TypeName,
+					"attempt", attempt,
+					"maxRetries", maxReadRetries)
+			} else if readResult != nil && readResult.ErrorCode != "" {
+				slog.Warn("StatusResource: Read returned CloudControl error",
+					"errorCode", readResult.ErrorCode,
+					"identifier", identifier,
+					"resourceType", *result.ProgressEvent.TypeName,
+					"attempt", attempt,
+					"maxRetries", maxReadRetries)
+			} else if readResult != nil && readResult.Properties != "" {
+				// Success - we have properties
+				statusResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
+				break
+			}
+
+			// If not the last attempt, wait before retrying
+			if attempt < maxReadRetries {
+				slog.Info("StatusResource: Retrying Read after delay",
+					"identifier", identifier,
+					"delay", retryDelay)
+				time.Sleep(retryDelay)
+			}
+		}
+
+		// If we exhausted retries without getting properties, log an error
+		if statusResult.ProgressResult.ResourceProperties == nil {
+			slog.Error("StatusResource: Failed to read properties after retries",
+				"identifier", identifier,
+				"resourceType", *result.ProgressEvent.TypeName,
+				"maxRetries", maxReadRetries)
 		}
 	}
 
