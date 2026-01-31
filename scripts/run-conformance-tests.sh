@@ -113,9 +113,15 @@ echo "Using formae binary: ${FORMAE_BINARY}"
 "${FORMAE_BINARY}" --version
 
 # Export environment variables for the tests
-# FORMAE_VERSION is required by the plugin SDK to resolve PKL schema paths
 export FORMAE_BINARY
-export FORMAE_VERSION="${VERSION}"
+
+# FORMAE_VERSION is used by the plugin SDK to resolve PKL schema paths.
+# Only export when we have a valid semver version (not "latest").
+# For nightly tests against formae main, the built-in version should be used.
+if [[ "${VERSION}" != "latest" ]]; then
+    export FORMAE_VERSION="${VERSION}"
+    echo "Using formae version: ${VERSION}"
+fi
 
 # Pass through test filter and type if set
 if [[ -n "${FORMAE_TEST_FILTER:-}" ]]; then
