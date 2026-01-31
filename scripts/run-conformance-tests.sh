@@ -46,7 +46,9 @@ if [[ -n "${FORMAE_BINARY:-}" ]]; then
     echo "Using FORMAE_BINARY from environment: ${FORMAE_BINARY}"
     # Extract version from binary if not explicitly provided
     if [[ "${VERSION}" == "latest" ]]; then
-        VERSION=$("${FORMAE_BINARY}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        # Note: || true needed because grep returns 1 when no match, which with
+        # set -eo pipefail would exit the script before reaching the fallback below
+        VERSION=$("${FORMAE_BINARY}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
         if [[ -z "${VERSION}" ]]; then
             echo "Warning: Could not extract version from FORMAE_BINARY, using 'latest'"
             VERSION="latest"
