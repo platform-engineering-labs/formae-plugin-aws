@@ -20,7 +20,7 @@ BINARY := $(PLUGIN_NAME)
 # Installation paths
 # NOTE: Directory structure will change from <namespace> to <name> in a future version
 PLUGIN_BASE_DIR := $(HOME)/.pel/formae/plugins
-INSTALL_DIR := $(PLUGIN_BASE_DIR)/$(PLUGIN_NAMESPACE)/v$(PLUGIN_VERSION)
+INSTALL_DIR := $(PLUGIN_BASE_DIR)/$(PLUGIN_NAME)/v$(PLUGIN_VERSION)
 
 .PHONY: all build test test-unit test-integration lint verify-schema clean install help setup-credentials clean-environment conformance-test conformance-test-crud conformance-test-discovery
 
@@ -61,13 +61,13 @@ clean:
 ## Removes any existing versions of the plugin first to ensure clean state.
 install: build
 	@echo "Installing $(PLUGIN_NAME) v$(PLUGIN_VERSION) (namespace: $(PLUGIN_NAMESPACE))..."
-	@rm -rf $(PLUGIN_BASE_DIR)/$(PLUGIN_NAMESPACE)
+	@rm -rf $(PLUGIN_BASE_DIR)/$(PLUGIN_NAME)
 	@mkdir -p $(INSTALL_DIR)/schema/pkl
-	@cp bin/$(BINARY) $(INSTALL_DIR)/$(PLUGIN_NAMESPACE)
+	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY)
 	@cp -r schema/pkl/* $(INSTALL_DIR)/schema/pkl/
 	@cp formae-plugin.pkl $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)"
-	@echo "  - Binary: $(INSTALL_DIR)/$(PLUGIN_NAMESPACE)"
+	@echo "  - Binary: $(INSTALL_DIR)/$(BINARY)"
 	@echo "  - Schema: $(INSTALL_DIR)/schema/pkl/"
 	@echo "  - Manifest: $(INSTALL_DIR)/formae-plugin.pkl"
 
