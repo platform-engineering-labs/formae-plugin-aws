@@ -51,7 +51,70 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
-        run: make conformance-test
+        # Run tests in parallel (10 concurrent) since nightly uses formae main
+        # which includes the PID file isolation fix for parallel test execution
+        run: make conformance-test PARALLEL=10
+
+  # Notify when nightly is fixed (was red, now green)
+  notify-fixed:
+    needs: [conformance-tests-main]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Check if previous run failed
+        id: check_previous
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'nightly.yml',
+              per_page: 2,
+              status: 'completed'
+            });
+
+            // Get previous run (skip current which isn't completed yet)
+            const previousRun = runs.data.workflow_runs.find(run => run.id !== context.runId);
+
+            if (previousRun && previousRun.conclusion === 'failure') {
+              return 'true';
+            }
+            return 'false';
+          result-encoding: string
+
+      - name: Notify Slack (Fixed)
+        if: steps.check_previous.outputs.result == 'true'
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":white_check_mark: Nightly fixed on ${{ github.repository }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":white_check_mark: *Nightly fixed* on `${{ github.repository }}`\n\nPlugin conformance tests now passing against formae main branch."
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Run"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
 
   # Notify on failure
   notify-failure:

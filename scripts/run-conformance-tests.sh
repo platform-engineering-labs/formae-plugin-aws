@@ -13,8 +13,9 @@
 # Environment variables:
 #   FORMAE_BINARY      - Path to formae binary (skips download if set)
 #   FORMAE_INSTALL_PREFIX - Installation directory (default: temp directory)
-#   FORMAE_TEST_FILTER - Filter tests by name pattern (e.g., "s3-bucket")
-#   FORMAE_TEST_TYPE   - Select test type: "all" (default), "crud", or "discovery"
+#   FORMAE_TEST_FILTER   - Filter tests by name pattern (e.g., "s3-bucket")
+#   FORMAE_TEST_TYPE     - Select test type: "all" (default), "crud", or "discovery"
+#   FORMAE_TEST_PARALLEL - Max parallel tests (default: 1 = sequential)
 
 set -euo pipefail
 
@@ -119,6 +120,14 @@ if [[ -n "${FORMAE_TEST_TYPE:-}" ]]; then
     echo "Test type: ${FORMAE_TEST_TYPE}"
 fi
 
+# Pass through parallel setting if set
+PARALLEL_FLAG=""
+if [[ -n "${FORMAE_TEST_PARALLEL:-}" ]] && [[ "${FORMAE_TEST_PARALLEL}" -gt 1 ]]; then
+    export FORMAE_TEST_PARALLEL
+    PARALLEL_FLAG="-parallel ${FORMAE_TEST_PARALLEL}"
+    echo "Parallel: ${FORMAE_TEST_PARALLEL}"
+fi
+
 # =============================================================================
 # Update and Resolve PKL Dependencies
 # =============================================================================
@@ -171,4 +180,5 @@ echo "PKL dependencies resolved successfully"
 echo ""
 echo "Running conformance tests..."
 cd "${PROJECT_ROOT}"
-go test -tags=conformance -v -timeout 60m ./...
+# shellcheck disable=SC2086
+go test -tags=conformance -v -timeout 60m ${PARALLEL_FLAG} ./...
