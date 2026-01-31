@@ -36,8 +36,13 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Setup Formae Binary
 # =============================================================================
 
-# Check if FORMAE_BINARY is already set and valid
-if [[ -n "${FORMAE_BINARY:-}" ]] && [[ -x "${FORMAE_BINARY}" ]]; then
+# Check if FORMAE_BINARY is set
+if [[ -n "${FORMAE_BINARY:-}" ]]; then
+    # FORMAE_BINARY is set - require it to exist and be executable (fail fast)
+    if [[ ! -x "${FORMAE_BINARY}" ]]; then
+        echo "Error: FORMAE_BINARY is set but not executable: ${FORMAE_BINARY}"
+        exit 1
+    fi
     echo "Using FORMAE_BINARY from environment: ${FORMAE_BINARY}"
     # Extract version from binary if not explicitly provided
     if [[ "${VERSION}" == "latest" ]]; then

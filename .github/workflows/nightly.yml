@@ -35,7 +35,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
           cd /tmp/formae && make build
-          echo "FORMAE_BINARY=/tmp/formae/bin/formae" >> $GITHUB_ENV
+          echo "FORMAE_BINARY=/tmp/formae/formae" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
