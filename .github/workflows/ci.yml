@@ -85,6 +85,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.run_conformance == 'true'
     timeout-minutes: 60
+    # Prevent concurrent conformance tests (CI and nightly share test resources)
+    concurrency:
+      group: aws-conformance-tests
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read

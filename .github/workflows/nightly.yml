@@ -8,6 +8,11 @@ on:
     - cron: '0 3 * * *'  # 3 AM UTC
   workflow_dispatch:
 
+# Prevent concurrent conformance tests (CI and nightly share test resources)
+concurrency:
+  group: aws-conformance-tests
+  cancel-in-progress: false
+
 jobs:
   conformance-tests-main:
     runs-on: ubuntu-latest
