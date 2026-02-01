@@ -39,7 +39,10 @@ jobs:
       - name: Build formae from main
         run: |
           git clone --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
-          cd /tmp/formae && make build
+          cd /tmp/formae
+          # Fetch tags so `git describe` works (needed for version embedding)
+          git fetch --tags --depth=1
+          make build
           echo "FORMAE_BINARY=/tmp/formae/formae" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials
