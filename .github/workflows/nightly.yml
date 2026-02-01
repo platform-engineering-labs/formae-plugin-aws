@@ -40,9 +40,11 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
           cd /tmp/formae
-          # Fetch tags so `git describe` works (needed for version embedding)
-          git fetch --tags --depth=1
-          make build
+          git fetch --tags
+          # Get latest release tag (sorted by semver) and pass to make
+          LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
+          echo "Building formae with VERSION=${LATEST_TAG}"
+          make build VERSION="${LATEST_TAG}"
           echo "FORMAE_BINARY=/tmp/formae/formae" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials
