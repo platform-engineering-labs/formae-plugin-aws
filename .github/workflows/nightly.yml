@@ -56,9 +56,9 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
-        # Run tests in parallel (10 concurrent) since nightly uses formae main
-        # which includes the PID file isolation fix for parallel test execution
-        run: make conformance-test PARALLEL=10
+        # TODO: Enable PARALLEL=10 once formae stable release includes ergoPort support
+        # (requires formae with configurable Ergo port + updated conformance-tests pkg)
+        run: make conformance-test
 
   # Notify when nightly is fixed (was red, now green)
   notify-fixed:
