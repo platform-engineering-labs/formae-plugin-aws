@@ -45,6 +45,9 @@ jobs:
           LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
           echo "Building formae with VERSION=${LATEST_TAG}"
           make build VERSION="${LATEST_TAG}"
+          # Remove in-tree plugins to prevent version mismatch when agent auto-discovers them
+          # (agent loads .so files from ./plugins relative to binary location)
+          find /tmp/formae/plugins -name "*.so" -delete
           echo "FORMAE_BINARY=/tmp/formae/formae" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials
