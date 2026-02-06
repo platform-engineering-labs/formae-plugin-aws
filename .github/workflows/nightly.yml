@@ -14,10 +14,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  conformance-tests-main:
+  # Discover test cases from testdata/ directory for matrix strategy
+  discover-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    outputs:
+      test-cases: ${{ steps.discover.outputs.test-cases }}
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
 
+      - name: Discover test cases
+        id: discover
+        run: |
+          # Find all *.pkl files in testdata/, exclude -update.pkl and -replace.pkl variants,
+          # and extract the base test case name
+          TEST_CASES=$(ls testdata/*.pkl 2>/dev/null \
+            | xargs -n1 basename \
+            | grep -v '\-update\.pkl$' \
+            | grep -v '\-replace\.pkl$' \
+            | sed 's/\.pkl$//' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "Discovered test cases: ${TEST_CASES}"
+          echo "test-cases=${TEST_CASES}" >> "$GITHUB_OUTPUT"
+
+  # Conformance tests run the full CRUD lifecycle against real AWS resources.
+  # Each test case runs in its own isolated job via matrix strategy.
+  conformance-tests:
+    needs: [discover-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
+      max-parallel: 10
+      fail-fast: false
     permissions:
       id-token: write
       contents: read
@@ -57,15 +87,15 @@ jobs:
       - name: Install plugin
         run: make install
 
-      - name: Run conformance tests against main
+      - name: Run conformance test (${{ matrix.test-case }})
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
-        run: make conformance-test PARALLEL=10
+        run: make conformance-test TEST=${{ matrix.test-case }} PARALLEL=1
 
   # Notify when nightly is fixed (was red, now green)
   notify-fixed:
-    needs: [conformance-tests-main]
+    needs: [conformance-tests]
     runs-on: ubuntu-latest
     if: success()
     steps:
@@ -126,7 +156,7 @@ jobs:
 
   # Notify on failure
   notify-failure:
-    needs: [conformance-tests-main]
+    needs: [conformance-tests]
     runs-on: ubuntu-latest
     if: failure()
     steps:
