@@ -61,9 +61,7 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
-        # TODO: Enable PARALLEL=10 once formae stable release includes ergoPort support
-        # (requires formae with configurable Ergo port + updated conformance-tests pkg)
-        run: make conformance-test
+        run: make conformance-test PARALLEL=10
 
   # Notify when nightly is fixed (was red, now green)
   notify-fixed:
