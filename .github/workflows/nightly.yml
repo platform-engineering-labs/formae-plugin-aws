@@ -37,10 +37,32 @@ jobs:
           echo "Discovered test cases: ${TEST_CASES}"
           echo "test-cases=${TEST_CASES}" >> "$GITHUB_OUTPUT"
 
+  # Clean up test resources before running any conformance tests
+  pre-cleanup:
+    needs: [discover-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: NightlyPreCleanup
+
+      - name: Clean test resources
+        run: ./scripts/ci/clean-environment.sh
+
   # Conformance tests run the full CRUD lifecycle against real AWS resources.
   # Each test case runs in its own isolated job via matrix strategy.
+  # Cleanup is handled by separate pre/post-cleanup jobs, NOT per test.
   conformance-tests:
-    needs: [discover-tests]
+    needs: [pre-cleanup]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -91,11 +113,33 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
-        run: make conformance-test TEST=${{ matrix.test-case }} PARALLEL=1
+        run: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1
+
+  # Clean up test resources after all conformance tests (always runs)
+  post-cleanup:
+    needs: [conformance-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: NightlyPostCleanup
+
+      - name: Clean test resources
+        run: ./scripts/ci/clean-environment.sh
 
   # Notify when nightly is fixed (was red, now green)
   notify-fixed:
-    needs: [conformance-tests]
+    needs: [conformance-tests, post-cleanup]
     runs-on: ubuntu-latest
     if: success()
     steps:
@@ -156,7 +200,7 @@ jobs:
 
   # Notify on failure
   notify-failure:
-    needs: [conformance-tests]
+    needs: [conformance-tests, post-cleanup]
     runs-on: ubuntu-latest
     if: failure()
     steps:
