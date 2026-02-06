@@ -121,7 +121,7 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: make conformance-test
+        run: make conformance-test PARALLEL=5
 
   # Notify when build is fixed (was red, now green)
   notify-fixed:
