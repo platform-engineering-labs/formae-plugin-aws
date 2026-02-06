@@ -62,7 +62,7 @@ jobs:
   # Each test case runs in its own isolated job via matrix strategy.
   # Cleanup is handled by separate pre/post-cleanup jobs, NOT per test.
   conformance-tests:
-    needs: [pre-cleanup]
+    needs: [discover-tests, pre-cleanup]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
