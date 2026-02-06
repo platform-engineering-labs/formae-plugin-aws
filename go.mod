@@ -13,7 +13,7 @@ require (
 	github.com/aws/smithy-go v1.24.0
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.4
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.11
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.12
 	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.17
 	github.com/stretchr/testify v1.11.1
 )
