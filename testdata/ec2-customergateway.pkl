@@ -1,0 +1,39 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/customergateway.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-customergateway-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 CustomerGateway"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new customergateway.CustomerGateway {
+    label = "plugin-sdk-test-cgw"
+    ipAddress = "198.51.100.1"
+    type = "ipsec.1"
+    bgpAsn = 65000
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-cgw-\(testRunID)" }
+    }
+  }
+}

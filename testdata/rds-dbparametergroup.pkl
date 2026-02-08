@@ -1,0 +1,39 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/rds/dbparametergroup.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-rds-dbparametergroup-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for RDS DBParameterGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new dbparametergroup.DBParameterGroup {
+    label = "plugin-sdk-test-dbpg"
+    dbParameterGroupName = "formae-sdk-test-dbpg-\(testRunID)"
+    family = "mysql8.0"
+    description = "Formae SDK test DB parameter group"
+    tags {
+      new { key = "Name"; value = "formae-sdk-test-dbpg-\(testRunID)" }
+    }
+  }
+}

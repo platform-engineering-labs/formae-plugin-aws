@@ -1,0 +1,38 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/launchtemplate.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-launchtemplate-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 LaunchTemplate"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new launchtemplate.LaunchTemplate {
+    label = "plugin-sdk-test-launchtemplate"
+    launchTemplateName = "formae-plugin-sdk-test-lt-\(testRunID)"
+    launchTemplateData = new launchtemplate.LaunchTemplateData {
+      instanceType = "t3.micro"
+    }
+    versionDescription = "Initial version"
+  }
+}
