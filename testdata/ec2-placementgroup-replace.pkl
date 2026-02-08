@@ -1,0 +1,39 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/placementgroup.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-placementgroup-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 PlacementGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Changed strategy (createOnly) - triggers replace
+  new placementgroup.PlacementGroup {
+    label = "plugin-sdk-test-placementgroup"
+    strategy = "partition"
+    partitionCount = 2
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-pg-\(testRunID)" }
+    }
+  }
+}

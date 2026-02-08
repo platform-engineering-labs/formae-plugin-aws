@@ -1,0 +1,54 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/samlprovider.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-samlprovider-\(testRunID)"
+
+// Same SAML metadata as update
+local samlMetadata = #"""
+  <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://sdk-test-updated.example.com/saml">
+    <IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <KeyDescriptor use="signing">
+        <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+          <X509Data>
+            <X509Certificate>MIICpDCCAYwCCQDU+pQ4pHgSpDANBgkqhkiG9w0BAQsFADAUMRIwEAYDVQQDDAkxMjcuMC4wLjEwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAUMRIwEAYDVQQDDAkxMjcuMC4wLjEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7o4qne60TB3pOYaBy/YPrzuOKpla9VkEMB5iFsXN/IAfs93sFf3MBPgazHj3ENeJvfymKOk8FDrMEcisxQC/2JPLHV4gK6gFFclTLaMNXf/FoIN8ixFQGJsBJ3CVYrlBJq/PEasBDa2yPxKnYHuVV8jJFJqQxz2g6IYHMBPk7aFZRvFBVqS+G3oMQ1B3iViOBhjKrF6FMHCtJFmENJFi0V4VWkPBHJiW11s2dmEMzYkikMb7BECE57xfSAKmSKJcBGim3GORjBExo7aRFbTSPKwC2n8hgCEBLxje1P09skiqwGENhbFBtCaINJfmPLBRaZk1cvN/FkBLPJdO8IVAgMBAAEwDQYJKoZIhvcNAQELBQADggEBACSyJaNOCGFr6aMHrFaiv+WxJBbR3CVgrwGm/6zOH6Tk9OgdqdJBvKPaOCMC+Ub1IBOXM6AbVoMAT2t7FOE2VMmLkFSUTqWBCGxQGN0SrEgL7M2GpJFOCxV4DsCP8UC7q2VBG5adhrr6JEm76J7e3thH/c2f97Fn/J9C1VGWEJWi2Xh8E6DY2fGSWzJlQ3Yp5NoK/FRtBDdm+H1jA+miDM8BLegZW5U0ecZaO0htC1mcGS7t0nOWfB+rPMPjd0RNY0cRbKIl+4rA/tJnWBGJ5E64TX1sxIdi5jbzDHUiMA2nh64F5gBu4p5GpEtdlnPKmxz1CkOo1E9OE3DKxk=</X509Certificate>
+          </X509Data>
+        </KeyInfo>
+      </KeyDescriptor>
+      <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://sdk-test-updated.example.com/saml/sso"/>
+    </IDPSSODescriptor>
+  </EntityDescriptor>
+  """#
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM SAMLProvider"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new samlprovider.SAMLProvider {
+    label = "plugin-sdk-test-samlprovider"
+    name = "formae-plugin-sdk-test-saml-replaced-\(testRunID)"
+    samlMetadataDocument = samlMetadata
+    tags {
+      new { key = "Environment"; value = "updated" }
+    }
+  }
+}
