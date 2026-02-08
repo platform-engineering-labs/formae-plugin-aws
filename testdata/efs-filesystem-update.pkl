@@ -39,8 +39,7 @@ forma {
       }
     }
     fileSystemTags {
-      new { key = "Name"; value = "formae-plugin-sdk-test-efs-\(testRunID)" }
-      new { key = "Environment"; value = "updated" }
+      new { key = "Name"; value = "formae-plugin-sdk-test-efs-updated-\(testRunID)" }
     }
   }
 }
