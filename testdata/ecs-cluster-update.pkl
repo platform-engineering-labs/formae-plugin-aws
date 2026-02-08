@@ -27,14 +27,14 @@ forma {
     }
   }
 
-  // Updated: enabled container insights and added tag
+  // Updated: added tag (clusterSettings unchanged to avoid CloudControl duplicate name issue)
   new ecscluster.Cluster {
     label = "plugin-sdk-test-cluster"
     clusterName = "formae-plugin-sdk-test-cluster-\(testRunID)"
     clusterSettings {
       new {
         name = "containerInsights"
-        value = "enabled"
+        value = "disabled"
       }
     }
     tags {

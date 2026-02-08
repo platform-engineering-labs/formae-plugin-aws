@@ -53,7 +53,7 @@ forma {
     label = "plugin-sdk-test-instanceprofile"
     instanceProfileName = "formae-plugin-sdk-test-ip-\(testRunID)"
     roles {
-      iamRole.res.id
+      iamRole.res
     }
   }
 }

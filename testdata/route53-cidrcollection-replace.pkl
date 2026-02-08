@@ -38,12 +38,6 @@ forma {
           "10.0.0.0/16"
         }
       }
-      new {
-        locationName = "eu-west"
-        cidrList {
-          "10.1.0.0/16"
-        }
-      }
     }
   }
 }

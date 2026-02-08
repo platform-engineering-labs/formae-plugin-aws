@@ -27,7 +27,7 @@ forma {
     }
   }
 
-  // Updated: added second location
+  // Updated: changed CIDR range for existing location
   new cidrcollection.CidrCollection {
     label = "plugin-sdk-test-cidrcollection"
     name = "sdk-test-cidr-\(testRunID)"
@@ -36,11 +36,6 @@ forma {
         locationName = "us-east"
         cidrList {
           "10.0.0.0/16"
-        }
-      }
-      new {
-        locationName = "eu-west"
-        cidrList {
           "10.1.0.0/16"
         }
       }

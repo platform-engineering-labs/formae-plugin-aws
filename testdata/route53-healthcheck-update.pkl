@@ -37,6 +37,9 @@ forma {
       ["ResourcePath"] = "/healthz"
       ["RequestInterval"] = 30
       ["FailureThreshold"] = 5
+      ["EnableSNI"] = true
+      ["Inverted"] = false
+      ["MeasureLatency"] = false
     }
     tags {
       new { key = "Name"; value = "formae-plugin-sdk-test-hc-\(testRunID)" }
