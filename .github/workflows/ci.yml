@@ -140,7 +140,7 @@ jobs:
     strategy:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
-      max-parallel: 10
+      max-parallel: 5
       fail-fast: false
     permissions:
       id-token: write
