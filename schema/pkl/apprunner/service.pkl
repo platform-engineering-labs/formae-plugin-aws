@@ -1,0 +1,194 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+module aws.apprunner.service
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::AppRunner::Service"
+
+open class ServiceResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: ServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
+
+    hidden id: ServiceResolvable = (this) {
+        property = "ServiceId"
+    }
+
+    hidden url: ServiceResolvable = (this) {
+        property = "ServiceUrl"
+    }
+}
+
+typealias ConfigurationSource = "REPOSITORY"|"API"
+typealias Runtime = "PYTHON_3"|"NODEJS_12"|"NODEJS_14"|"CORRETTO_8"|"CORRETTO_11"|"NODEJS_16"|"GO_1"|"DOTNET_6"|"PHP_81"|"RUBY_31"|"PYTHON_311"|"NODEJS_18"
+typealias EgressType = "DEFAULT"|"VPC"
+typealias HealthCheckProtocol = "TCP"|"HTTP"
+typealias ImageRepositoryType = "ECR"|"ECR_PUBLIC"
+typealias IpAddressType = "IPV4"|"DUAL_STACK"
+typealias SourceCodeVersionType = "BRANCH"
+
+@aws.SubResourceHint
+open class AuthenticationConfiguration extends formae.SubResource {
+    accessRoleArn: String|formae.Resolvable?
+    connectionArn: String?
+}
+
+@aws.SubResourceHint
+open class CodeConfigurationValues extends formae.SubResource {
+    buildCommand: String?
+    port: String?
+    runtime: Runtime
+    runtimeEnvironmentSecrets: Listing<KeyValuePair>?
+    runtimeEnvironmentVariables: Listing<KeyValuePair>?
+    startCommand: String?
+}
+
+@aws.SubResourceHint
+open class CodeConfiguration extends formae.SubResource {
+    codeConfigurationValues: CodeConfigurationValues?
+    configurationSource: ConfigurationSource
+}
+
+@aws.SubResourceHint
+open class SourceCodeVersion extends formae.SubResource {
+    type: SourceCodeVersionType
+    value: String
+}
+
+@aws.SubResourceHint
+open class CodeRepository extends formae.SubResource {
+    codeConfiguration: CodeConfiguration?
+    repositoryUrl: String
+    sourceCodeVersion: SourceCodeVersion
+    sourceDirectory: String?
+}
+
+@aws.SubResourceHint
+open class EgressConfiguration extends formae.SubResource {
+    egressType: EgressType
+    vpcConnectorArn: String|formae.Resolvable?
+}
+
+@aws.SubResourceHint
+open class EncryptionConfiguration extends formae.SubResource {
+    kmsKey: String|formae.Resolvable
+}
+
+@aws.SubResourceHint
+open class HealthCheckConfiguration extends formae.SubResource {
+    healthyThreshold: Int?
+    interval: Int?
+    path: String?
+    protocol: HealthCheckProtocol?
+    timeout: Int?
+    unhealthyThreshold: Int?
+}
+
+@aws.SubResourceHint
+open class ImageConfiguration extends formae.SubResource {
+    port: String?
+    runtimeEnvironmentSecrets: Listing<KeyValuePair>?
+    runtimeEnvironmentVariables: Listing<KeyValuePair>?
+    startCommand: String?
+}
+
+@aws.SubResourceHint
+open class ImageRepository extends formae.SubResource {
+    imageConfiguration: ImageConfiguration?
+    imageIdentifier: String
+    imageRepositoryType: ImageRepositoryType
+}
+
+@aws.SubResourceHint
+open class IngressConfiguration extends formae.SubResource {
+    isPubliclyAccessible: Boolean
+}
+
+@aws.SubResourceHint
+open class InstanceConfiguration extends formae.SubResource {
+    cpu: String?
+    instanceRoleArn: String|formae.Resolvable?
+    memory: String?
+}
+
+@aws.SubResourceHint
+open class KeyValuePair extends formae.SubResource {
+    name: String?
+    value: String?
+}
+
+@aws.SubResourceHint
+open class NetworkConfiguration extends formae.SubResource {
+    egressConfiguration: EgressConfiguration?
+    ingressConfiguration: IngressConfiguration?
+    ipAddressType: IpAddressType?
+}
+
+@aws.SubResourceHint
+open class ServiceObservabilityConfiguration extends formae.SubResource {
+    observabilityConfigurationArn: String|formae.Resolvable?
+    observabilityEnabled: Boolean
+}
+
+@aws.SubResourceHint
+open class SourceConfiguration extends formae.SubResource {
+    authenticationConfiguration: AuthenticationConfiguration?
+    autoDeploymentsEnabled: Boolean?
+    codeRepository: CodeRepository?
+    imageRepository: ImageRepository?
+}
+
+// ============================================================================
+// Resource
+// ============================================================================
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "ServiceArn"
+}
+open class Service extends formae.Resource {
+
+    @aws.FieldHint
+    autoScalingConfigurationArn: String|formae.Resolvable?
+
+    @aws.FieldHint{createOnly = true}
+    encryptionConfiguration: EncryptionConfiguration?
+
+    @aws.FieldHint
+    healthCheckConfiguration: HealthCheckConfiguration?
+
+    @aws.FieldHint
+    instanceConfiguration: InstanceConfiguration?
+
+    @aws.FieldHint
+    networkConfiguration: NetworkConfiguration?
+
+    @aws.FieldHint
+    observabilityConfiguration: ServiceObservabilityConfiguration?
+
+    @aws.FieldHint{createOnly = true}
+    serviceName: String?
+
+    @aws.FieldHint{required = true}
+    sourceConfiguration: SourceConfiguration
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: ServiceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

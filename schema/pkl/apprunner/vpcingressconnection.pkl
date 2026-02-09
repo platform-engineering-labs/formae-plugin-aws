@@ -1,0 +1,60 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+module aws.apprunner.vpcingressconnection
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::AppRunner::VpcIngressConnection"
+
+open class VpcIngressConnectionResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: VpcIngressConnectionResolvable = (this) {
+        property = "VpcIngressConnectionArn"
+    }
+
+    hidden domainName: VpcIngressConnectionResolvable = (this) {
+        property = "DomainName"
+    }
+}
+
+typealias Status = "AVAILABLE"|"PENDING_CREATION"|"PENDING_UPDATE"|"PENDING_DELETION"|"FAILED_CREATION"|"FAILED_UPDATE"|"FAILED_DELETION"|"DELETED"
+
+@aws.SubResourceHint
+open class IngressVpcConfiguration extends formae.SubResource {
+    vpcEndpointId: String|formae.Resolvable
+    vpcId: String|formae.Resolvable
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "VpcIngressConnectionArn"
+}
+open class VpcIngressConnection extends formae.Resource {
+
+    @aws.FieldHint{required = true}
+    ingressVpcConfiguration: IngressVpcConfiguration
+
+    @aws.FieldHint{required = true}
+    serviceArn: String|formae.Resolvable
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    @aws.FieldHint{createOnly = true}
+    vpcIngressConnectionName: String?
+
+    local parent = this
+
+    hidden res: VpcIngressConnectionResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
