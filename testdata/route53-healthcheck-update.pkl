@@ -42,8 +42,7 @@ forma {
       ["MeasureLatency"] = false
     }
     tags {
-      new { key = "Name"; value = "formae-plugin-sdk-test-hc-\(testRunID)" }
-      new { key = "Environment"; value = "updated" }
+      new { key = "Name"; value = "formae-plugin-sdk-test-hc-updated-\(testRunID)" }
     }
   }
 }
