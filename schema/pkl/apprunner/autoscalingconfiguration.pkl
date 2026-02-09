@@ -1,0 +1,55 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+module aws.apprunner.autoscalingconfiguration
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::AppRunner::AutoScalingConfiguration"
+
+open class AutoScalingConfigurationResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: AutoScalingConfigurationResolvable = (this) {
+        property = "AutoScalingConfigurationArn"
+    }
+
+    hidden revision: AutoScalingConfigurationResolvable = (this) {
+        property = "AutoScalingConfigurationRevision"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "AutoScalingConfigurationArn"
+}
+open class AutoScalingConfiguration extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    autoScalingConfigurationName: String?
+
+    @aws.FieldHint
+    maxConcurrency: Int?
+
+    @aws.FieldHint
+    maxSize: Int?
+
+    @aws.FieldHint
+    minSize: Int?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: AutoScalingConfigurationResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

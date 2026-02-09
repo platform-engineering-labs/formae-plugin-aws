@@ -1,0 +1,56 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+module aws.apprunner.observabilityconfiguration
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::AppRunner::ObservabilityConfiguration"
+
+open class ObservabilityConfigurationResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: ObservabilityConfigurationResolvable = (this) {
+        property = "ObservabilityConfigurationArn"
+    }
+
+    hidden revision: ObservabilityConfigurationResolvable = (this) {
+        property = "ObservabilityConfigurationRevision"
+    }
+}
+
+typealias TraceVendor = "AWSXRAY"
+
+@aws.SubResourceHint
+open class TraceConfiguration extends formae.SubResource {
+    vendor: TraceVendor
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "ObservabilityConfigurationArn"
+}
+open class ObservabilityConfiguration extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    observabilityConfigurationName: String?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    @aws.FieldHint
+    traceConfiguration: TraceConfiguration?
+
+    local parent = this
+
+    hidden res: ObservabilityConfigurationResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
