@@ -48,6 +48,7 @@ typealias Region = "af-south-1" |
   "us-west-2"
 
 typealias AvailabilityZone = String((str) -> (
+  str.matches(Regex(#"af\-south\-1[a-c]"#)) ||
   str.matches(Regex(#"ap\-east\-1[a-c]"#)) ||
   str.matches(Regex(#"ap\-east\-2[a-c]"#)) ||
   str.matches(Regex(#"ap\-northeast\-1[a|c|d]"#)) ||
