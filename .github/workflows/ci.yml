@@ -88,7 +88,7 @@ jobs:
   discover-tests:
     needs: [build, lint, pkl-validate, test-unit]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || inputs.run_conformance == true
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     outputs:
       test-cases: ${{ steps.discover.outputs.test-cases }}
     steps:
