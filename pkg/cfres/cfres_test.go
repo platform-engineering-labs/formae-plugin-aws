@@ -19,3 +19,13 @@ func TestGetProvisioner(t *testing.T) {
 func TestRolePolicyRegistration(t *testing.T) {
 	assert.NotNil(t, GetProvisionerForOperation("AWS::IAM::RolePolicy", resource.OperationList, &config.Config{Region: "us-east-1"}))
 }
+
+func TestS3ObjectRegistration(t *testing.T) {
+	cfg := &config.Config{Region: "us-east-1"}
+	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationCreate, cfg))
+	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationRead, cfg))
+	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationUpdate, cfg))
+	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationDelete, cfg))
+	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationCheckStatus, cfg))
+	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationList, cfg))
+}

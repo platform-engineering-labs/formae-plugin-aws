@@ -1,0 +1,141 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.s3.object
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+
+const type = "AWS::S3::Object"
+
+open class ObjectResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: ObjectResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden etag: ObjectResolvable = (this) {
+        property = "ETag"
+    }
+
+    hidden versionId: ObjectResolvable = (this) {
+        property = "VersionId"
+    }
+
+    hidden key: ObjectResolvable = (this) {
+        property = "Key"
+    }
+
+    hidden bucket: ObjectResolvable = (this) {
+        property = "Bucket"
+    }
+}
+
+typealias StorageClass = "STANDARD"|"REDUCED_REDUNDANCY"|"STANDARD_IA"|"ONEZONE_IA"|"INTELLIGENT_TIERING"|"GLACIER"|"DEEP_ARCHIVE"|"GLACIER_IR"|"EXPRESS_ONEZONE"
+
+typealias ServerSideEncryption = "AES256"|"aws:kms"|"aws:kms:dsse"
+
+typealias ChecksumAlgorithm = "CRC32"|"CRC32C"|"SHA1"|"SHA256"|"CRC64NVME"
+
+typealias ObjectCannedACL = "private"|"public-read"|"public-read-write"|"authenticated-read"|"aws-exec-read"|"bucket-owner-read"|"bucket-owner-full-control"
+
+typealias ObjectLockLegalHoldStatus = "ON"|"OFF"
+
+typealias ObjectLockMode = "GOVERNANCE"|"COMPLIANCE"
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "$.Key"
+    discoverable = true
+    parent = "AWS::S3::Bucket"
+    listParam = new formae.ListProperty { parentProperty = "BucketName" listParameter = "BucketName" }
+}
+open class Object extends formae.Resource {
+    hidden parent = this
+
+    @aws.FieldHint {
+        createOnly = true
+    }
+    bucket: String|formae.Resolvable
+
+    @aws.FieldHint {
+        createOnly = true
+    }
+    key: String
+
+    @aws.FieldHint {
+        writeOnly = true
+    }
+    content: String?
+
+    @aws.FieldHint {
+        writeOnly = true
+    }
+    contentBase64: String?
+
+    @aws.FieldHint {
+        writeOnly = true
+    }
+    source: String?
+
+    @aws.FieldHint
+    contentType: String?
+
+    @aws.FieldHint
+    contentEncoding: String?
+
+    @aws.FieldHint
+    contentLanguage: String?
+
+    @aws.FieldHint
+    contentDisposition: String?
+
+    @aws.FieldHint
+    cacheControl: String?
+
+    @aws.FieldHint
+    storageClass: StorageClass?
+
+    @aws.FieldHint
+    serverSideEncryption: ServerSideEncryption?
+
+    @aws.FieldHint
+    kmsKeyId: (String|formae.Resolvable)?
+
+    @aws.FieldHint
+    checksumAlgorithm: ChecksumAlgorithm?
+
+    @aws.FieldHint {
+        writeOnly = true
+    }
+    acl: ObjectCannedACL?
+
+    @aws.FieldHint
+    metadata: Mapping<String, String>?
+
+    @aws.FieldHint
+    websiteRedirectLocation: String?
+
+    @aws.FieldHint
+    objectLockLegalHoldStatus: ObjectLockLegalHoldStatus?
+
+    @aws.FieldHint
+    objectLockMode: ObjectLockMode?
+
+    @aws.FieldHint
+    objectLockRetainUntilDate: String?
+
+    @aws.FieldHint {
+        outputTransformation = formae.transform.capitalizeMemberKeys
+    }
+    tags: Listing<aws.Tag>?
+
+    hidden res: ObjectResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
