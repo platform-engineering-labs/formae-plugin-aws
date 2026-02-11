@@ -48,10 +48,10 @@ forma {
 
   ebRole
 
-  // Changed applicationName (createOnly) - triggers replace
+  // Updated: changed description
   new application.Application {
     label = "plugin-sdk-test-eb-app"
-    applicationName = "formae-sdk-test-app-replaced-\(testRunID)"
+    applicationName = "formae-sdk-test-app-\(testRunID)"
     description = "Formae SDK test application - updated"
     resourceLifecycleConfig = new application.ResourceLifecycleConfig {
       serviceRole = ebRole.res.arn

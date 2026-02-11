@@ -9,10 +9,29 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
+import "@aws/iam/role.pkl"
 import "@aws/elasticbeanstalk/application.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-eb-application-\(testRunID)"
+
+// IAM Role dependency - ElasticBeanstalk requires a valid ServiceRole
+local ebRole = new role.Role {
+  label = "eb-service-role"
+  roleName = "formae-sdk-test-eb-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "elasticbeanstalk.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+}
 
 forma {
   new formae.Stack {
@@ -27,9 +46,14 @@ forma {
     }
   }
 
+  ebRole
+
   new application.Application {
     label = "plugin-sdk-test-eb-app"
     applicationName = "formae-sdk-test-app-\(testRunID)"
     description = "Formae SDK test application"
+    resourceLifecycleConfig = new application.ResourceLifecycleConfig {
+      serviceRole = ebRole.res.arn
+    }
   }
 }

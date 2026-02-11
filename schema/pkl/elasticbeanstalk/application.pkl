@@ -13,7 +13,7 @@ const type = "AWS::ElasticBeanstalk::Application"
 
 @aws.SubResourceHint
 open class ResourceLifecycleConfig extends formae.SubResource {
-    serviceRole: (String|formae.Resolvable)?
+    serviceRole: String|formae.Resolvable
     versionLifecycleConfig: VersionLifecycleConfig?
 }
 
@@ -50,5 +50,5 @@ open class Application extends formae.Resource {
     description: String?
 
     @aws.FieldHint
-    resourceLifecycleConfig: ResourceLifecycleConfig?
+    resourceLifecycleConfig: ResourceLifecycleConfig
 }
