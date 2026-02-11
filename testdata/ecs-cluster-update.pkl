@@ -1,0 +1,45 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ecs/ecscluster.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-cluster-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ECS Cluster"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Updated: added tag (clusterSettings unchanged to avoid CloudControl duplicate name issue)
+  new ecscluster.Cluster {
+    label = "plugin-sdk-test-cluster"
+    clusterName = "formae-plugin-sdk-test-cluster-\(testRunID)"
+    clusterSettings {
+      new {
+        name = "containerInsights"
+        value = "disabled"
+      }
+    }
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-cluster-\(testRunID)" }
+      new { key = "Environment"; value = "updated" }
+    }
+  }
+}

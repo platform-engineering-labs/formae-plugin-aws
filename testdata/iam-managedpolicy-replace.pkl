@@ -1,0 +1,50 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/managedpolicy.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-managedpolicy-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM ManagedPolicy"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new managedpolicy.ManagedPolicy {
+    label = "plugin-sdk-test-managedpolicy"
+    managedPolicyName = "formae-plugin-sdk-test-policy-replaced-\(testRunID)"
+    description = "Formae SDK test managed policy"
+    policyDocument {
+      ["Version"] = "2012-10-17"
+      ["Statement"] {
+        new {
+          ["Effect"] = "Allow"
+          ["Action"] = "logs:DescribeLogGroups"
+          ["Resource"] = "*"
+        }
+        new {
+          ["Effect"] = "Allow"
+          ["Action"] = "logs:DescribeLogStreams"
+          ["Resource"] = "*"
+        }
+      }
+    }
+  }
+}

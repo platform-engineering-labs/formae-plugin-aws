@@ -24,7 +24,10 @@ open class Location extends formae.SubResource {
 }
 open class CidrCollection extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{
+        updateMethod = "EntitySet"
+        indexField = "LocationName"
+    }
     locations: (Listing<Location>)?
 
     @aws.FieldHint{createOnly = true}
