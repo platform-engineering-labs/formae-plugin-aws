@@ -5,6 +5,6 @@ dependencies {
     uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.82.0"
   }
   ["aws"] {
-    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/aws/aws@0.1.1"
+    uri = "package://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0.1.1"
   }
 }
