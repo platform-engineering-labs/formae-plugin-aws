@@ -78,3 +78,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests => ../formae/pkg/plugin-conformance-tests
