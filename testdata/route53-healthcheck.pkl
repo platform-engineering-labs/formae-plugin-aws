@@ -29,16 +29,16 @@ forma {
 
   new healthcheck.HealthCheck {
     label = "plugin-sdk-test-healthcheck"
-    healthCheckConfig {
-      ["Type"] = "HTTPS"
-      ["FullyQualifiedDomainName"] = "example.com"
-      ["Port"] = 443
-      ["ResourcePath"] = "/health"
-      ["RequestInterval"] = 30
-      ["FailureThreshold"] = 3
-      ["EnableSNI"] = true
-      ["Inverted"] = false
-      ["MeasureLatency"] = false
+    healthCheckConfig = new healthcheck.HealthCheckConfig {
+      type = "HTTPS"
+      fullyQualifiedDomainName = "example.com"
+      port = 443
+      resourcePath = "/health"
+      requestInterval = 30
+      failureThreshold = 3
+      enableSNI = true
+      inverted = false
+      measureLatency = false
     }
     tags {
       new { key = "Name"; value = "formae-plugin-sdk-test-hc-\(testRunID)" }

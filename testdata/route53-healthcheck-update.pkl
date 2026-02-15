@@ -30,13 +30,13 @@ forma {
   // Updated: changed failure threshold and resource path
   new healthcheck.HealthCheck {
     label = "plugin-sdk-test-healthcheck"
-    healthCheckConfig {
-      ["Type"] = "HTTPS"
-      ["FullyQualifiedDomainName"] = "example.com"
-      ["Port"] = 443
-      ["ResourcePath"] = "/healthz"
-      ["RequestInterval"] = 30
-      ["FailureThreshold"] = 5
+    healthCheckConfig = new healthcheck.HealthCheckConfig {
+      type = "HTTPS"
+      fullyQualifiedDomainName = "example.com"
+      port = 443
+      resourcePath = "/healthz"
+      requestInterval = 30
+      failureThreshold = 5
     }
     tags {
       new { key = "Name"; value = "formae-plugin-sdk-test-hc-\(testRunID)" }

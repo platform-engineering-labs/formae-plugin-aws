@@ -607,7 +607,7 @@ open class Bucket extends formae.Resource {
     @aws.FieldHint
     analyticsConfigurations: Listing<AnalyticsConfiguration>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     bucketEncryption: BucketEncryption?
 
     @aws.FieldHint {
@@ -642,7 +642,7 @@ open class Bucket extends formae.Resource {
     @aws.FieldHint
     objectLockEnabled: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     ownershipControls: OwnershipControls?
 
     @aws.FieldHint

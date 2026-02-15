@@ -11,6 +11,71 @@ import "../aws.pkl"
 
 const type = "AWS::Route53::HealthCheck"
 
+typealias HealthCheckType = "HTTP"|"HTTPS"|"HTTP_STR_MATCH"|"HTTPS_STR_MATCH"|"TCP"|"CALCULATED"|"CLOUDWATCH_METRIC"|"RECOVERY_CONTROL"
+
+typealias InsufficientDataHealthStatus = "Healthy"|"Unhealthy"|"LastKnownStatus"
+
+@aws.SubResourceHint
+open class AlarmIdentifier extends formae.SubResource {
+    name: String
+    region: String
+}
+
+@aws.SubResourceHint
+open class HealthCheckConfig extends formae.SubResource {
+
+    @aws.FieldHint{createOnly = true}
+    type: HealthCheckType
+
+    @aws.FieldHint
+    fullyQualifiedDomainName: String?
+
+    @aws.FieldHint{createOnly = true}
+    ipAddress: String?
+
+    @aws.FieldHint
+    port: Int?
+
+    @aws.FieldHint
+    resourcePath: String?
+
+    @aws.FieldHint{createOnly = true}
+    requestInterval: Int?
+
+    @aws.FieldHint
+    failureThreshold: Int?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    enableSNI: Boolean?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    inverted: Boolean?
+
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
+    measureLatency: Boolean?
+
+    @aws.FieldHint
+    searchString: String?
+
+    @aws.FieldHint
+    alarmIdentifier: AlarmIdentifier?
+
+    @aws.FieldHint
+    insufficientDataHealthStatus: InsufficientDataHealthStatus?
+
+    @aws.FieldHint
+    childHealthChecks: Listing<String>?
+
+    @aws.FieldHint
+    healthThreshold: Int?
+
+    @aws.FieldHint
+    regions: Listing<String>?
+
+    @aws.FieldHint
+    routingControlArn: String?
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
@@ -18,7 +83,7 @@ const type = "AWS::Route53::HealthCheck"
 open class HealthCheck extends formae.Resource {
 
     @aws.FieldHint
-    healthCheckConfig: Dynamic
+    healthCheckConfig: HealthCheckConfig
 
     @aws.FieldHint{
         outputField = "HealthCheckTags"
