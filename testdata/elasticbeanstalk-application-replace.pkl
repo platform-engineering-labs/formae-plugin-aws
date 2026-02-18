@@ -55,6 +55,18 @@ forma {
     description = "Formae SDK test application - updated"
     resourceLifecycleConfig = new application.ResourceLifecycleConfig {
       serviceRole = ebRole.res.arn
+      versionLifecycleConfig = new application.VersionLifecycleConfig {
+        maxAgeRule = new application.MaxAgeRule {
+          deleteSourceFromS3 = false
+          enabled = false
+          maxAgeInDays = 180
+        }
+        maxCountRule = new application.MaxCountRule {
+          deleteSourceFromS3 = false
+          enabled = false
+          maxCount = 200
+        }
+      }
     }
   }
 }
