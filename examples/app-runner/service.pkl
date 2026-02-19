@@ -1,0 +1,50 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+import "@aws/apprunner/apprunnerservice.pkl" as apprunner
+
+description {
+  text = """
+  Deploys a simple App Runner service from a public ECR image.
+  No VPC, IAM roles, or load balancer required.
+  """
+  confirm = true
+}
+
+forma {
+  new formae.Target {
+    label = "apprunner-target"
+    namespace = "AWS"
+    config {
+      Type = "AWS"
+      Region = "us-west-2"
+    }
+  }
+
+  local arStack = new formae.Stack {
+    label = "apprunner-stack"
+    description = "App Runner hello world"
+  }
+  arStack
+
+  new apprunner.Service {
+    label = "hello-apprunner"
+    stack = arStack.res
+    serviceName = "hello-apprunner"
+    autoScalingConfigurationArn = null
+    sourceConfiguration = new apprunner.SourceConfiguration {
+      imageRepository = new apprunner.ImageRepository {
+        imageIdentifier = "public.ecr.aws/aws-containers/hello-app-runner:latest"
+        imageRepositoryType = "ECR_PUBLIC"
+        imageConfiguration = new apprunner.ImageConfiguration {
+          port = "8000"
+        }
+      }
+    }
+  }
+}

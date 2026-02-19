@@ -36,7 +36,7 @@ typealias SourceCodeVersionType = "BRANCH"
 
 @aws.SubResourceHint
 open class AuthenticationConfiguration extends formae.SubResource {
-    accessRoleArn: String|formae.Resolvable?
+    accessRoleArn: (String|formae.Resolvable)?
     connectionArn: String?
 }
 
@@ -73,7 +73,7 @@ open class CodeRepository extends formae.SubResource {
 @aws.SubResourceHint
 open class EgressConfiguration extends formae.SubResource {
     egressType: EgressType
-    vpcConnectorArn: String|formae.Resolvable?
+    vpcConnectorArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -114,7 +114,7 @@ open class IngressConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class InstanceConfiguration extends formae.SubResource {
     cpu: String?
-    instanceRoleArn: String|formae.Resolvable?
+    instanceRoleArn: (String|formae.Resolvable)?
     memory: String?
 }
 
@@ -133,7 +133,7 @@ open class NetworkConfiguration extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ServiceObservabilityConfiguration extends formae.SubResource {
-    observabilityConfigurationArn: String|formae.Resolvable?
+    observabilityConfigurationArn: (String|formae.Resolvable)?
     observabilityEnabled: Boolean
 }
 
@@ -156,7 +156,7 @@ open class SourceConfiguration extends formae.SubResource {
 open class Service extends formae.Resource {
 
     @aws.FieldHint
-    autoScalingConfigurationArn: String|formae.Resolvable?
+    autoScalingConfigurationArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     encryptionConfiguration: EncryptionConfiguration?
