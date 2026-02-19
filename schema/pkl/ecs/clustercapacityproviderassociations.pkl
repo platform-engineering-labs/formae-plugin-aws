@@ -26,7 +26,7 @@ open class CapacityProvider extends formae.SubResource {
 open class ClusterCapacityProviderAssociations extends formae.Resource {
 
     @aws.FieldHint
-    capacityProviders: Listing<String|formae.Resolvable?>
+    capacityProviders: Listing<(String|formae.Resolvable)?>
 
     @aws.FieldHint{createOnly = true}
     cluster: String
