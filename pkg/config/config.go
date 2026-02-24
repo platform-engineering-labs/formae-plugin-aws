@@ -10,7 +10,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	pkgmodel "github.com/platform-engineering-labs/formae/pkg/model"
 )
 
 type Config struct {
@@ -40,10 +39,3 @@ func FromTargetConfig(targetConfig json.RawMessage) *Config {
 	return config
 }
 
-// FromTarget extracts config from a Target struct (used by TargetBehavior interface)
-func FromTarget(target *pkgmodel.Target) *Config {
-	if target == nil || target.Config == nil {
-		return &Config{}
-	}
-	return FromTargetConfig(target.Config)
-}

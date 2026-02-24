@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-//go:build e2e
+//go:build integration
 
 package route53
 
@@ -15,7 +15,6 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/google/uuid"
-	"github.com/platform-engineering-labs/formae/pkg/model"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -36,10 +35,8 @@ func createTestHostedZone(zoneName string) (string, error) {
 	propsBytes, _ := json.Marshal(props)
 
 	createReq := &resource.CreateRequest{
-		Resource: &model.Resource{
-			Type:       "AWS::Route53::HostedZone",
-			Properties: propsBytes,
-		},
+		ResourceType: "AWS::Route53::HostedZone",
+		Properties:   propsBytes,
 	}
 
 	createRes, err := client.CreateResource(context.Background(), createReq)
@@ -73,17 +70,9 @@ func deleteTestHostedZone(t *testing.T, hostedZoneID string) {
 	client, err := ccx.NewClient(cfg)
 	assert.NoError(t, err)
 
-	// Build metadata for deletion
-	props := map[string]any{
-		"HostedZoneId": hostedZoneID,
-	}
-	propsBytes, _ := json.Marshal(props)
-	metadata := string(propsBytes)
-
 	deleteReq := &resource.DeleteRequest{
-		NativeID:     &hostedZoneID,
+		NativeID:     hostedZoneID,
 		ResourceType: "AWS::Route53::HostedZone",
-		Metadata:     json.RawMessage(metadata),
 	}
 
 	deleteRes, err := client.DeleteResource(context.Background(), deleteReq)
@@ -109,12 +98,9 @@ func deleteTestHostedZone(t *testing.T, hostedZoneID string) {
 
 func create_record_set(rs RecordSet, propsBytes json.RawMessage, t *testing.T) resource.CreateResult {
 	createRes, err := rs.Create(context.Background(), &resource.CreateRequest{
-		Resource: &model.Resource{
-			Label:      "pel-record-resolvable",
-			Type:       "AWS::Route53::RecordSet",
-			Stack:      "pel-dns",
-			Properties: propsBytes,
-		},
+		ResourceType: "AWS::Route53::RecordSet",
+		Label:        "pel-record-resolvable",
+		Properties:   propsBytes,
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -125,15 +111,15 @@ func create_record_set(rs RecordSet, propsBytes json.RawMessage, t *testing.T) r
 	return *createRes
 }
 
-func wait_for_status(rs RecordSet, requestID string, metadata string, t *testing.T) *resource.StatusResult {
+func wait_for_status(rs RecordSet, requestID string, nativeID string, t *testing.T) *resource.StatusResult {
 	for {
 		statusRes, err := rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    requestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     json.RawMessage(metadata),
 		})
 		if err != nil {
-			t.Fatalf("Status (create) failed: %v", err)
+			t.Fatalf("Status failed: %v", err)
 		}
 		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
 			return statusRes
@@ -142,11 +128,10 @@ func wait_for_status(rs RecordSet, requestID string, metadata string, t *testing
 	}
 }
 
-func delete_record_set(rs RecordSet, nativeID string, metadata string, t *testing.T) *resource.DeleteResult {
+func delete_record_set(rs RecordSet, nativeID string, t *testing.T) *resource.DeleteResult {
 	deleteReq := &resource.DeleteRequest{
-		NativeID:     &nativeID,
+		NativeID:     nativeID,
 		ResourceType: "AWS::Route53::RecordSet",
-		Metadata:     json.RawMessage(metadata),
 	}
 	deleteRes, err := rs.Delete(context.Background(), deleteReq)
 	if err != nil {
@@ -164,49 +149,26 @@ func TestCreate_Route53(t *testing.T) {
 	rs := RecordSet{cfg: cfg}
 
 	res, err := rs.Create(context.Background(), &resource.CreateRequest{
-		Resource: &model.Resource{
-			Label: "pel-record-snarf",
-			Type:  "AWS::Route53::RecordSet",
-			Stack: "pel-dns",
-			Schema: model.Schema{
-				Identifier: "Id",
-				Hints: map[string]model.FieldHint{
-					"HostedZoneId": {
-						CreateOnly: true,
-						Persist:    true,
-					},
-					"HostedZoneName": {
-						CreateOnly: true,
-						Persist:    true,
-					},
-					"Name": {
-						CreateOnly: true,
-						Persist:    true,
-					},
-					"Type": {
-						Persist: true,
-					},
-					"ResourceRecords": {
-						Persist: true,
-					},
-				},
-				Fields: []string{"AliasTarget", "CidrRoutingConfig", "Comment", "Failover", "GeoLocation", "GeoProximityLocation", "HealthCheckId", "HostedZoneId", "HostedZoneName", "MultiValueAnswer", "Name", "Region", "ResourceRecords", "SetIdentifier", "TTL", "Type", "Weight"},
-			},
-			Properties: json.RawMessage(`{"HostedZoneId":"Z03405173PGMODHWMP57N","Name":"eng.snarf.test.pel","ResourceRecords":["192.168.55.2"],"TTL":"300","Type":"A"}`),
-		},
+		ResourceType: "AWS::Route53::RecordSet",
+		Label:        "pel-record-snarf",
+		Properties:   json.RawMessage(`{"HostedZoneId":"Z03405173PGMODHWMP57N","Name":"eng.snarf.test.pel","ResourceRecords":["192.168.55.2"],"TTL":"300","Type":"A"}`),
 	})
+
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
 
 	// Wait for status to be success
 	if res == nil || res.ProgressResult == nil || res.ProgressResult.RequestID == "" {
 		t.Fatalf("Create did not return a valid RequestID")
 	}
+	nativeID := res.ProgressResult.NativeID
 	var statusRes *resource.StatusResult
-	metadata := string(`{"HostedZoneId":"Z03405173PGMODHWMP57N","Name":"eng.snarf.test.pel","Type":"A", "ResourceRecords":["192.168.55.2"]}`)
 	for {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    res.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     json.RawMessage(metadata),
 		})
 		if err != nil {
 			t.Fatalf("Status failed: %v", err)
@@ -217,22 +179,20 @@ func TestCreate_Route53(t *testing.T) {
 	}
 
 	_, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: statusRes.ProgressResult.NativeID,
-		Metadata: json.RawMessage(metadata),
+		NativeID: nativeID,
 	})
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
 
 	deleteReq := &resource.DeleteRequest{
-		NativeID: &statusRes.ProgressResult.NativeID,
-		Metadata: json.RawMessage(metadata),
+		NativeID:     nativeID,
+		ResourceType: "AWS::Route53::RecordSet",
 	}
 	_, err = rs.Delete(context.Background(), deleteReq)
 	if err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
-
 }
 
 func TestDelete_Route53(t *testing.T) {
@@ -240,18 +200,14 @@ func TestDelete_Route53(t *testing.T) {
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
-	metadata := string(`{"HostedZoneId":"Z03405173PGMODHWMP57N","Name":"eng.snarf.test.pel","Type":"A", "ResourceRecords":["192.168.55.2"]}`)
-
 	nativeID := "Z034"
 	deleteReq := &resource.DeleteRequest{
-		NativeID: &nativeID,
-		Metadata: json.RawMessage(metadata),
+		NativeID: nativeID,
 	}
 	_, err := rs.Delete(context.Background(), deleteReq)
 	if err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
-
 }
 
 func TestStatus_Route53(t *testing.T) {
@@ -259,28 +215,16 @@ func TestStatus_Route53(t *testing.T) {
 	_, err := awsconfig.LoadDefaultConfig(context.Background())
 	assert.NoError(t, err)
 
-	props := map[string]any{
-		"AliasTarget": map[string]any{
-			"DNSName":              "example.cloudfront.net",
-			"EvaluateTargetHealth": false,
-			"HostedZoneId":         "Z2FDTNDATAQYW2",
-		},
-		"HostedZoneId": "Z0019288CT0YUMA282WM",
-		"Name":         "aa.test.platform.engineering",
-		"TTL":          300,
-		"Type":         "A",
-	}
-	propsBytes, _ := json.Marshal(props)
-
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	_, err = rs.Status(context.Background(), &resource.StatusRequest{
 		RequestID:    "/change/C0143912BN0L1VGPGYWI",
 		ResourceType: "AWS::Route53::RecordSet",
-		Metadata:     propsBytes,
 	})
-
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
 }
 
 func TestRecordSet_Lifecycle(t *testing.T) {
@@ -305,12 +249,9 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	createPropsBytes, _ := json.Marshal(createProps)
 
 	createRes, err := rs.Create(context.Background(), &resource.CreateRequest{
-		Resource: &model.Resource{
-			Label:      "pel-record-snarf",
-			Type:       "AWS::Route53::RecordSet",
-			Stack:      "pel-dns",
-			Properties: createPropsBytes,
-		},
+		ResourceType: "AWS::Route53::RecordSet",
+		Label:        "pel-record-snarf",
+		Properties:   createPropsBytes,
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -319,13 +260,15 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 		t.Fatalf("Create did not return a valid RequestID")
 	}
 
+	nativeID := createRes.ProgressResult.NativeID
+
 	// Wait for create to be INSYNC
 	var statusRes *resource.StatusResult
 	for {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    createRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     createPropsBytes,
 		})
 		if err != nil {
 			t.Fatalf("Status (create) failed: %v", err)
@@ -338,8 +281,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 
 	// --- READ after create ---
 	readRes, err := rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: statusRes.ProgressResult.NativeID,
-		Metadata: createPropsBytes,
+		NativeID: nativeID,
 	})
 	if err != nil {
 		t.Fatalf("Read after create failed: %v", err)
@@ -357,8 +299,8 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	updatePropsBytes, _ := json.Marshal(updateProps)
 
 	updateRes, err := rs.Update(context.Background(), &resource.UpdateRequest{
-		OldMetadata: createPropsBytes,
-		Metadata:    updatePropsBytes,
+		PriorProperties:   createPropsBytes,
+		DesiredProperties: updatePropsBytes,
 	})
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -371,8 +313,8 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	for {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    updateRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     updatePropsBytes,
 		})
 		if err != nil {
 			t.Fatalf("Status (update) failed: %v", err)
@@ -385,8 +327,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 
 	// --- READ after update ---
 	readRes, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: statusRes.ProgressResult.NativeID,
-		Metadata: updatePropsBytes,
+		NativeID: nativeID,
 	})
 	if err != nil {
 		t.Fatalf("Read after update failed: %v", err)
@@ -395,8 +336,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 
 	// --- DELETE ---
 	deleteReq := &resource.DeleteRequest{
-		Metadata: updatePropsBytes,
-		NativeID: &statusRes.ProgressResult.NativeID,
+		NativeID: nativeID,
 	}
 	deleteRes, err := rs.Delete(context.Background(), deleteReq)
 	if err != nil {
@@ -410,8 +350,8 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	for {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    deleteRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     updatePropsBytes,
 		})
 		if err != nil {
 			t.Fatalf("Status (delete) failed: %v", err)
@@ -426,47 +366,52 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 }
 
 func TestCreate_A_Record(t *testing.T) {
+	hostedZoneID, err := createTestHostedZone("a-record.test.pel")
+	if err != nil {
+		t.Fatalf("Failed to create test hosted zone: %v", err)
+	}
+	defer deleteTestHostedZone(t, hostedZoneID)
+
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
-	// This simulates a record set with a $ref and $value for HostedZoneId
 	props := map[string]any{
-		"AliasTarget": map[string]any{
-			"DNSName":              "example.cloudfront.net",
-			"EvaluateTargetHealth": false,
-			"HostedZoneId":         "Z2FDTNDATAQYW2",
-		},
-		"HostedZoneId": HostedZoneID,
-		"Name":         "a." + Domain,
-		"TTL":          "300",
-		"Type":         "A",
+		"HostedZoneId":    hostedZoneID,
+		"Name":            "a.a-record.test.pel",
+		"TTL":             "300",
+		"Type":            "A",
+		"ResourceRecords": []string{"192.168.1.1"},
 	}
 
 	propsBytes, _ := json.Marshal(props)
-	metadata := string(propsBytes)
 
-	t.Log("Creating A record set with properties:", metadata)
+	t.Log("Creating A record set with properties:", string(propsBytes))
 	createRes := create_record_set(rs, propsBytes, t)
+	nativeID := createRes.ProgressResult.NativeID
 	t.Log("Created A record set with RequestID:", createRes.ProgressResult.RequestID)
 
-	t.Log("Waiting for create to finish: ", createRes.ProgressResult.RequestID, " to be INSYNC")
-	statusRes := wait_for_status(rs, createRes.ProgressResult.RequestID, metadata, t)
-	t.Log("Create completed for A record set:", createRes.ProgressResult)
+	t.Log("Waiting for create to finish")
+	wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
+	t.Log("Create completed for A record set")
 
-	t.Log("Deleting A record set with metadata:", metadata)
-	deleteRes := delete_record_set(rs, statusRes.ProgressResult.NativeID, metadata, t)
+	t.Log("Deleting A record set")
+	deleteRes := delete_record_set(rs, nativeID, t)
 	t.Log("Delete RequestID:", deleteRes.ProgressResult.RequestID)
 
-	t.Log("Waiting for create to finish: ", createRes.ProgressResult.RequestID, " to be INSYNC")
-	wait_for_status(rs, deleteRes.ProgressResult.RequestID, metadata, t)
-	t.Log("Deleted A record set with RequestID:", deleteRes.ProgressResult.RequestID)
+	t.Log("Waiting for delete to finish")
+	wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
+	t.Log("Deleted A record set")
 }
-
-var HostedZoneID = "Z03246931VP9HO8XZWUHU"
-var Domain = "snarf.platform.engineering"
 
 // TestCreate_Records tests creation and deletion for all supported Route53 record types.
 func TestCreate_Records(t *testing.T) {
+	domain := "records.test.pel"
+	hostedZoneID, err := createTestHostedZone(domain)
+	if err != nil {
+		t.Fatalf("Failed to create test hosted zone: %v", err)
+	}
+	defer deleteTestHostedZone(t, hostedZoneID)
+
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
@@ -477,8 +422,8 @@ func TestCreate_Records(t *testing.T) {
 		{
 			name: "A record",
 			props: map[string]any{
-				"HostedZoneId":    HostedZoneID,
-				"Name":            "a." + Domain,
+				"HostedZoneId":    hostedZoneID,
+				"Name":            "a." + domain,
 				"TTL":             "300",
 				"Type":            "A",
 				"ResourceRecords": []string{"192.168.1.1"},
@@ -487,8 +432,8 @@ func TestCreate_Records(t *testing.T) {
 		{
 			name: "AAAA record",
 			props: map[string]any{
-				"HostedZoneId":    HostedZoneID,
-				"Name":            "aaaa." + Domain,
+				"HostedZoneId":    hostedZoneID,
+				"Name":            "aaaa." + domain,
 				"TTL":             "300",
 				"Type":            "AAAA",
 				"ResourceRecords": []string{"2001:db8::1"},
@@ -497,8 +442,8 @@ func TestCreate_Records(t *testing.T) {
 		{
 			name: "CNAME record",
 			props: map[string]any{
-				"HostedZoneId":    HostedZoneID,
-				"Name":            "cname." + Domain,
+				"HostedZoneId":    hostedZoneID,
+				"Name":            "cname." + domain,
 				"TTL":             "300",
 				"Type":            "CNAME",
 				"ResourceRecords": []string{"target.example.com."},
@@ -507,8 +452,8 @@ func TestCreate_Records(t *testing.T) {
 		{
 			name: "MX record",
 			props: map[string]any{
-				"HostedZoneId":    HostedZoneID,
-				"Name":            "mx." + Domain,
+				"HostedZoneId":    hostedZoneID,
+				"Name":            "mx." + domain,
 				"TTL":             "300",
 				"Type":            "MX",
 				"ResourceRecords": []string{"10 mail1.example.com.", "20 mail2.example.com."},
@@ -517,107 +462,34 @@ func TestCreate_Records(t *testing.T) {
 		{
 			name: "TXT record",
 			props: map[string]any{
-				"HostedZoneId":    HostedZoneID,
-				"Name":            "txt." + Domain,
+				"HostedZoneId":    hostedZoneID,
+				"Name":            "txt." + domain,
 				"TTL":             "300",
 				"Type":            "TXT",
 				"ResourceRecords": []string{`"v=spf1 include:example.com ~all"`},
 			},
 		},
-		//{
-		//	name: "SRV record",
-		//	props: map[string]any{
-		//		"HostedZoneId":    HostedZoneId,
-		//		"Name":            "_sip._tcp." + Domain,
-		//		"TTL":             "300",
-		//		"Type":            "SRV",
-		//		"ResourceRecords": []string{"10 60 5060 sipserver.example.com."},
-		//	},
-		//},
-		//{
-		//	name: "NS record",
-		//	props: map[string]any{
-		//		"HostedZoneId":    HostedZoneId,
-		//		"Name":            "ns." + Domain,
-		//		"TTL":             "300",
-		//		"Type":            "NS",
-		//		"ResourceRecords": []string{"ns-123.awsdns-45.com.", "ns-234.awsdns-56.net."},
-		//	},
-		//},
-		//{
-		//	name: "PTR record",
-		//	props: map[string]any{
-		//		"HostedZoneId":    HostedZoneId,
-		//		"Name":            "1.1.168.192.in-addr.arpa",
-		//		"TTL":             "300",
-		//		"Type":            "PTR",
-		//		"ResourceRecords": []string{"ptr." + Domain + "."},
-		//	},
-		//},
-		//{
-		//	name: "SOA record",
-		//	props: map[string]any{
-		//		"HostedZoneId":    HostedZoneId,
-		//		"Name":            Domain + ".",
-		//		"TTL":             "900",
-		//		"Type":            "SOA",
-		//		"ResourceRecords": []string{"ns-123.awsdns-45.com. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400"},
-		//	},
-		//},
-		//{
-		//	name: "SPF record",
-		//	props: map[string]any{
-		//		"HostedZoneId":    HostedZoneId,
-		//		"Name":            "spf." + Domain,
-		//		"TTL":             "300",
-		//		"Type":            "SPF",
-		//		"ResourceRecords": []string{`"v=spf1 include:example.com ~all"`},
-		//	},
-		//},
-		//{
-		//	name: "CAA record",
-		//	props: map[string]any{
-		//		"HostedZoneId":    HostedZoneId,
-		//		"Name":            "caa." + Domain,
-		//		"TTL":             "300",
-		//		"Type":            "CAA",
-		//		"ResourceRecords": []string{"0 issue \"letsencrypt.org\""},
-		//	},
-		//},
-		//{
-		//	name: "Alias A record",
-		//	props: map[string]any{
-		//		"HostedZoneId": HostedZoneId,
-		//		"Name":         "alias." + Domain,
-		//		"Type":         "A",
-		//		"AliasTarget": map[string]any{
-		//			"DNSName":              "d123456abcdef8.cloudfront.net.",
-		//			"EvaluateTargetHealth": false,
-		//			"HostedZoneId":         "Z2FDTNDATAQYW2",
-		//		},
-		//	},
-		//},
 	}
 
 	for _, tc := range testCases {
 		propsBytes, _ := json.Marshal(tc.props)
-		metadata := string(propsBytes)
 
-		t.Log("Creating", tc.name, "with properties:", metadata)
+		t.Log("Creating", tc.name, "with properties:", string(propsBytes))
 		createRes := create_record_set(rs, propsBytes, t)
+		nativeID := createRes.ProgressResult.NativeID
 		t.Log("Created", tc.name, "with RequestID:", createRes.ProgressResult.RequestID)
 
-		t.Log("Waiting for create to finish: ", createRes.ProgressResult.RequestID, " to be INSYNC")
-		statusRes := wait_for_status(rs, createRes.ProgressResult.RequestID, metadata, t)
-		t.Log("Create completed for", tc.name, ":", createRes.ProgressResult)
+		t.Log("Waiting for create to finish")
+		wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
+		t.Log("Create completed for", tc.name)
 
-		t.Log("Deleting", tc.name, "with metadata:", metadata)
-		deleteRes := delete_record_set(rs, statusRes.ProgressResult.NativeID, metadata, t)
+		t.Log("Deleting", tc.name)
+		deleteRes := delete_record_set(rs, nativeID, t)
 		t.Log("Delete RequestID:", deleteRes.ProgressResult.RequestID)
 
-		t.Log("Waiting for delete to finish: ", deleteRes.ProgressResult.RequestID, " to be INSYNC")
-		wait_for_status(rs, deleteRes.ProgressResult.RequestID, metadata, t)
-		t.Log("Deleted", tc.name, "with RequestID:", deleteRes.ProgressResult.RequestID)
+		t.Log("Waiting for delete to finish")
+		wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
+		t.Log("Deleted", tc.name)
 	}
 }
 
@@ -640,34 +512,9 @@ func TestCreate_RecordSet_2(t *testing.T) {
 	propsBytes, _ := json.Marshal(props)
 
 	createRes, err := rs.Create(context.Background(), &resource.CreateRequest{
-		Resource: &model.Resource{
-			Label:      "pel-record-resolvable",
-			Type:       "AWS::Route53::RecordSet",
-			Stack:      "pel-dns",
-			Properties: propsBytes,
-			Schema: model.Schema{
-				Hints: map[string]model.FieldHint{
-					"AliasTarget": {
-						Persist: true,
-					},
-					"HostedZoneId": {
-						Persist: true,
-					},
-					"Name": {
-						Persist: true,
-					},
-					"ResourceRecords": {
-						Persist: true,
-					},
-					"TTL": {
-						Persist: true,
-					},
-					"Type": {
-						Persist: true,
-					},
-				},
-			},
-		},
+		ResourceType: "AWS::Route53::RecordSet",
+		Label:        "pel-record-resolvable",
+		Properties:   propsBytes,
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -676,13 +523,15 @@ func TestCreate_RecordSet_2(t *testing.T) {
 		t.Fatalf("Create did not return a valid RequestID")
 	}
 
+	nativeID := createRes.ProgressResult.NativeID
+
 	// Wait for create to be INSYNC
 	var statusRes *resource.StatusResult
 	for {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    createRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     createRes.ProgressResult.Metadata,
 		})
 		if err != nil {
 			t.Fatalf("Status (create) failed: %v", err)
@@ -695,8 +544,7 @@ func TestCreate_RecordSet_2(t *testing.T) {
 
 	// --- READ after create ---
 	_, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: statusRes.ProgressResult.NativeID,
-		Metadata: propsBytes,
+		NativeID: nativeID,
 	})
 	if err != nil {
 		t.Fatalf("Read after create failed: %v", err)
@@ -704,7 +552,8 @@ func TestCreate_RecordSet_2(t *testing.T) {
 
 	// --- DELETE ---
 	deleteReq := &resource.DeleteRequest{
-		Metadata: propsBytes,
+		NativeID:     nativeID,
+		ResourceType: "AWS::Route53::RecordSet",
 	}
 	deleteRes, err := rs.Delete(context.Background(), deleteReq)
 	if err != nil {
@@ -718,8 +567,8 @@ func TestCreate_RecordSet_2(t *testing.T) {
 	for {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    deleteRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     propsBytes,
 		})
 		if err != nil {
 			t.Fatalf("Status (delete) failed: %v", err)
@@ -729,7 +578,6 @@ func TestCreate_RecordSet_2(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-
 }
 
 func TestRecordSet_ListRecordSets(t *testing.T) {
@@ -763,8 +611,8 @@ func TestRecordSet_ListRecordSets(t *testing.T) {
 	})
 
 	assert.NoError(t, err)
-	assert.Len(t, firstPage.Resources, 2)
-	assert.NotEmpty(t, firstPage.NextPageToken)
+	assert.Len(t, firstPage.NativeIDs, 2)
+	assert.NotNil(t, firstPage.NextPageToken)
 
 	secondPage, err := rs.List(context.Background(), &resource.ListRequest{
 		ResourceType: "AWS::Route53::RecordSet",
@@ -776,8 +624,8 @@ func TestRecordSet_ListRecordSets(t *testing.T) {
 	})
 
 	assert.NoError(t, err)
-	assert.Len(t, secondPage.Resources, 2)
-	assert.Empty(t, secondPage.NextPageToken)
+	assert.Len(t, secondPage.NativeIDs, 2)
+	assert.Nil(t, secondPage.NextPageToken)
 }
 
 func createRecordSet(t *testing.T, rs RecordSet, hostedZoneID string, name string, records []string, ttl string, recordType string) string {
@@ -791,12 +639,9 @@ func createRecordSet(t *testing.T, rs RecordSet, hostedZoneID string, name strin
 	propsBytes, _ := json.Marshal(props)
 
 	createRes, err := rs.Create(context.Background(), &resource.CreateRequest{
-		Resource: &model.Resource{
-			Label:      fmt.Sprintf("pel-record-snarf-%s", uuid.New().String()),
-			Type:       "AWS::Route53::RecordSet",
-			Stack:      "pel-dns",
-			Properties: propsBytes,
-		},
+		ResourceType: "AWS::Route53::RecordSet",
+		Label:        fmt.Sprintf("pel-record-snarf-%s", uuid.New().String()),
+		Properties:   propsBytes,
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -805,12 +650,13 @@ func createRecordSet(t *testing.T, rs RecordSet, hostedZoneID string, name strin
 		t.Fatalf("Create did not return a valid RequestID")
 	}
 
+	nativeID := createRes.ProgressResult.NativeID
 	var statusRes *resource.StatusResult
 	assert.Eventually(t, func() bool {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    createRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     propsBytes,
 		})
 		if err != nil {
 			t.Fatalf("Status (create) failed: %v", err)
@@ -818,22 +664,13 @@ func createRecordSet(t *testing.T, rs RecordSet, hostedZoneID string, name strin
 		return statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess
 	}, 2*time.Minute, 500*time.Millisecond)
 
-	return statusRes.ProgressResult.NativeID
+	return nativeID
 }
 
 func deleteRecordSet(t *testing.T, rs RecordSet, hostedZoneID string, nativeID, name string, records []string, ttl string, recordType string) {
-	props := map[string]any{
-		"HostedZoneId":    hostedZoneID,
-		"Name":            name,
-		"ResourceRecords": records,
-		"TTL":             ttl,
-		"Type":            recordType,
-	}
-	propsBytes, _ := json.Marshal(props)
-
 	req := &resource.DeleteRequest{
-		Metadata: propsBytes,
-		NativeID: &nativeID,
+		NativeID:     nativeID,
+		ResourceType: "AWS::Route53::RecordSet",
 	}
 	deleteRes, err := rs.Delete(context.Background(), req)
 	if err != nil {
@@ -847,8 +684,8 @@ func deleteRecordSet(t *testing.T, rs RecordSet, hostedZoneID string, nativeID, 
 	assert.Eventually(t, func() bool {
 		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    deleteRes.ProgressResult.RequestID,
+			NativeID:     nativeID,
 			ResourceType: "AWS::Route53::RecordSet",
-			Metadata:     propsBytes,
 		})
 		if err != nil {
 			t.Fatalf("Status (delete) failed: %v", err)

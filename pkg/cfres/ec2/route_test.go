@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-//go:build e2e
+//go:build integration
 
 package ec2
 
@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	pkgmodel "github.com/platform-engineering-labs/formae/pkg/model"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
@@ -38,9 +37,7 @@ func TestRoute_CreateAndDelete(t *testing.T) {
 
 	// Create
 	createReq := &resource.CreateRequest{
-		Resource: &pkgmodel.Resource{
-			Properties: propsBytes,
-		},
+		Properties: propsBytes,
 	}
 	createRes, err := route.Create(context.Background(), createReq)
 	if err != nil {
@@ -63,12 +60,8 @@ func TestRoute_CreateAndDelete(t *testing.T) {
 	}
 
 	// Delete
-	metaBytes, err := json.Marshal(props)
-	if err != nil {
-		t.Fatalf("failed to marshal metadata: %v", err)
-	}
 	deleteReq := &resource.DeleteRequest{
-		Metadata: metaBytes,
+		NativeID: createRes.ProgressResult.NativeID,
 	}
 	deleteRes, err := route.Delete(context.Background(), deleteReq)
 	if err != nil {
@@ -92,27 +85,27 @@ func TestRoute_Delete(t *testing.T) {
 		"GatewayId":            gatewayID,
 	}
 
-	metaBytes, err := json.Marshal(props)
-	if err != nil {
-		t.Fatalf("failed to marshal metadata: %v", err)
-	}
+	// Build NativeID in the format Route expects
+	nativeID := routeTableID + "|" + destinationCidrBlock + "|GatewayId=" + gatewayID
+
+	_ = props // props were only used to build metadata which no longer exists
 
 	deleteReq := &resource.DeleteRequest{
-		Metadata: metaBytes,
+		NativeID: nativeID,
 	}
 
 	cfg := &config.Config{}
 	route := &Route{cfg: cfg}
 
-	_, err = route.Delete(context.Background(), deleteReq)
+	_, err := route.Delete(context.Background(), deleteReq)
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
 }
 
 func TestRoute_Read(t *testing.T) {
 	t.Skip("Skipping Route Read because it requires an existing route table and gateway in AWS.")
 	// Test data from the comments
-	routeTableID := "rtb-0e53ae2ac5ea71dc4"
-	destinationCidrBlock := "0.0.0.0/0"
-	gatewayID := "igw-09c441dbb44e8ec94"
 	nativeID := "rtb-0e53ae2ac5ea71dc4|0.0.0.0/0|GatewayId=igw-09c441dbb44e8ec94"
 
 	cfg := &config.Config{Region: "eu-central-1"}
@@ -142,22 +135,26 @@ func TestRoute_Read(t *testing.T) {
 	}
 
 	// Parse and validate the returned properties
-	var props map[string]interface{}
-	if err := json.Unmarshal([]byte(readRes.Properties), &props); err != nil {
+	var returnedProps map[string]interface{}
+	if err := json.Unmarshal([]byte(readRes.Properties), &returnedProps); err != nil {
 		t.Fatalf("Failed to parse returned properties: %v", err)
 	}
 
+	routeTableID := "rtb-0e53ae2ac5ea71dc4"
+	destinationCidrBlock := "0.0.0.0/0"
+	gatewayID := "igw-09c441dbb44e8ec94"
+
 	// Validate expected properties
-	if props["RouteTableId"] != routeTableID {
-		t.Errorf("Expected RouteTableId %s, got %v", routeTableID, props["RouteTableId"])
+	if returnedProps["RouteTableId"] != routeTableID {
+		t.Errorf("Expected RouteTableId %s, got %v", routeTableID, returnedProps["RouteTableId"])
 	}
 
-	if props["DestinationCidrBlock"] != destinationCidrBlock {
-		t.Errorf("Expected DestinationCidrBlock %s, got %v", destinationCidrBlock, props["DestinationCidrBlock"])
+	if returnedProps["DestinationCidrBlock"] != destinationCidrBlock {
+		t.Errorf("Expected DestinationCidrBlock %s, got %v", destinationCidrBlock, returnedProps["DestinationCidrBlock"])
 	}
 
-	if props["GatewayId"] != gatewayID {
-		t.Errorf("Expected GatewayId %s, got %v", gatewayID, props["GatewayId"])
+	if returnedProps["GatewayId"] != gatewayID {
+		t.Errorf("Expected GatewayId %s, got %v", gatewayID, returnedProps["GatewayId"])
 	}
 
 	// Verify resource type

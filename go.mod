@@ -12,9 +12,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.36.1
 	github.com/aws/smithy-go v1.24.0
 	github.com/google/uuid v1.6.0
-	github.com/platform-engineering-labs/formae/pkg/model v0.1.5
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.13
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.20
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.14
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.21
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -44,6 +43,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect
 	github.com/masterminds/semver v1.5.0 // indirect
 	github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 // indirect
+	github.com/platform-engineering-labs/formae/pkg/model v0.1.5 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.1 // indirect
