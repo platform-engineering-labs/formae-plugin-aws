@@ -41,7 +41,7 @@ test-unit:
 ## test-integration: Run integration tests (requires cloud credentials)
 ## Add tests with //go:build integration tag
 test-integration:
-	$(GO) test -v -tags=integration ./...
+	$(GO) test -v -tags=integration -timeout 30m ./...
 
 ## lint: Run golangci-lint
 lint:

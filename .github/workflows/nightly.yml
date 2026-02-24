@@ -167,7 +167,7 @@ jobs:
 
   # Notify when nightly is fixed (was red, now green)
   notify-fixed:
-    needs: [conformance-tests, post-cleanup]
+    needs: [test-integration, conformance-tests, post-cleanup]
     runs-on: ubuntu-latest
     if: success()
     steps:
@@ -228,7 +228,7 @@ jobs:
 
   # Notify on failure
   notify-failure:
-    needs: [conformance-tests, post-cleanup]
+    needs: [test-integration, conformance-tests, post-cleanup]
     runs-on: ubuntu-latest
     if: failure()
     steps:
