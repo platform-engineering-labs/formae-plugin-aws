@@ -14,8 +14,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Integration tests run against real AWS resources (Route53, EC2, etc.)
+  # These are self-contained: each test creates and cleans up its own resources.
+  test-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: NightlyIntegrationTests
+
+      - name: Run integration tests
+        run: make test-integration
+
   # Discover test cases from testdata/ directory for matrix strategy
   discover-tests:
+    needs: [test-integration]
     runs-on: ubuntu-latest
     outputs:
       test-cases: ${{ steps.discover.outputs.test-cases }}
