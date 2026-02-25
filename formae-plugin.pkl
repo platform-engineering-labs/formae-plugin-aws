@@ -5,7 +5,7 @@
  */
 
 name = "aws"
-version = "0.1.1"
+version = "0.1.2"
 namespace = "AWS"
 description = "AWS CloudControl resource plugin for Formae"
 license = "FSL-1.1-ALv2"
