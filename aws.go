@@ -209,6 +209,13 @@ func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*reso
 		return nil, err
 	}
 	for _, r := range result.ResourceDescriptions {
+		// CloudControl does not reliably filter by ResourceModel for all resource types.
+		// Post-filter results to ensure each resource's properties match the requested filter.
+		if len(request.AdditionalProperties) > 0 && r.Properties != nil {
+			if !matchesFilter(*r.Properties, request.AdditionalProperties) {
+				continue
+			}
+		}
 		nativeIDs = append(nativeIDs, *r.Identifier)
 	}
 
@@ -216,4 +223,33 @@ func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*reso
 		NativeIDs:     nativeIDs,
 		NextPageToken: result.NextToken,
 	}, nil
+}
+
+// matchesFilter checks if a resource's properties (JSON string from CloudControl)
+// match all the requested filter key-value pairs. This compensates for CloudControl
+// not reliably honoring ResourceModel filters across all resource types.
+func matchesFilter(propertiesJSON string, filter map[string]string) bool {
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(propertiesJSON), &props); err != nil {
+		// If we can't parse properties, include the resource (don't filter out what we can't verify)
+		return true
+	}
+
+	for filterKey, filterValue := range filter {
+		rawValue, exists := props[filterKey]
+		if !exists {
+			// Property not in response — can't verify, include the resource
+			continue
+		}
+		// Unmarshal the property value as a string for comparison
+		var propValue string
+		if err := json.Unmarshal(rawValue, &propValue); err != nil {
+			// Not a simple string (could be object/array) — can't compare, include the resource
+			continue
+		}
+		if propValue != filterValue {
+			return false
+		}
+	}
+	return true
 }
