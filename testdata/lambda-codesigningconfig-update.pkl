@@ -1,0 +1,45 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/lambda/codesigningconfig.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-lambda-codesigningconfig-\(testRunID)"
+
+// TODO: See lambda-codesigningconfig.pkl for the signing profile dependency note.
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Lambda CodeSigningConfig"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Updated: changed description and codeSigningPolicies
+  new codesigningconfig.CodeSigningConfig {
+    label = "plugin-sdk-test-csc"
+    description = "Formae SDK test code signing config - updated"
+    allowedPublishers = new codesigningconfig.AllowedPublishers {
+      signingProfileVersionArns {
+        "arn:aws:signer:us-east-1:000000000000:signing-profiles/formae-sdk-test-profile"
+      }
+    }
+    codeSigningPolicies = new codesigningconfig.CodeSigningPolicies {
+      untrustedArtifactOnDeployment = "Enforce"
+    }
+  }
+}

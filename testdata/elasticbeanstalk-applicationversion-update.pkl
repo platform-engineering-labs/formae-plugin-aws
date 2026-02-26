@@ -1,0 +1,95 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/s3/bucket.pkl"
+import "@aws/elasticbeanstalk/application.pkl"
+import "@aws/elasticbeanstalk/applicationversion.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-eb-applicationversion-\(testRunID)"
+
+// IAM Role dependency - same as create
+local ebRole = new role.Role {
+  label = "eb-service-role"
+  roleName = "formae-sdk-test-eb-appver-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "elasticbeanstalk.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+}
+
+// S3 Bucket for source bundle - same as create
+local testBucket = new bucket.Bucket {
+  label = "eb-source-bucket"
+  bucketName = "formae-sdk-test-eb-appver-\(testRunID)"
+}
+
+// EB Application - same as create
+local ebApp = new application.Application {
+  label = "plugin-sdk-test-eb-app"
+  applicationName = "formae-sdk-test-appver-\(testRunID)"
+  description = "Formae SDK test application for ApplicationVersion"
+  resourceLifecycleConfig = new application.ResourceLifecycleConfig {
+    serviceRole = ebRole.res.arn
+    versionLifecycleConfig = new application.VersionLifecycleConfig {
+      maxAgeRule = new application.MaxAgeRule {
+        deleteSourceFromS3 = false
+        enabled = false
+        maxAgeInDays = 180
+      }
+      maxCountRule = new application.MaxCountRule {
+        deleteSourceFromS3 = false
+        enabled = false
+        maxCount = 200
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ElasticBeanstalk ApplicationVersion"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  ebRole
+
+  testBucket
+
+  ebApp
+
+  // Updated: changed description
+  new applicationversion.ApplicationVersion {
+    label = "plugin-sdk-test-appversion"
+    applicationName = ebApp.res.applicationName
+    description = "Formae SDK test application version - updated"
+    sourceBundle = new applicationversion.ApplicationVersionSourceBundle {
+      s3Bucket = testBucket.res.bucketName
+      s3Key = "sample-app.zip"
+    }
+  }
+}

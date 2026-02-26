@@ -1,0 +1,66 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/sqs/queue.pkl"
+import "@aws/sqs/queueinlinepolicy.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-sqs-queueinlinepolicy-\(testRunID)"
+
+// Original queue - must remain in the forma so it is not destroyed
+local testQueue = new queue.Queue {
+  label = "test-queue"
+  queueName = "formae-plugin-sdk-test-qip-\(testRunID)"
+}
+
+// Second queue - the inline policy will be moved to this queue (triggers replace)
+local testQueue2 = new queue.Queue {
+  label = "test-queue-2"
+  queueName = "formae-plugin-sdk-test-qip-2-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for SQS QueueInlinePolicy"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Both queues must be present
+  testQueue
+  testQueue2
+
+  // QueueInlinePolicy with changed queue (createOnly field) - triggers replace
+  new queueinlinepolicy.QueueInlinePolicy {
+    label = "plugin-sdk-test-queueinlinepolicy"
+    queue = testQueue2.res.queueUrl
+    policyDocument {
+      ["Version"] = "2012-10-17"
+      ["Statement"] {
+        new {
+          ["Effect"] = "Allow"
+          ["Principal"] = "*"
+          ["Action"] {
+            "sqs:SendMessage"
+            "sqs:ReceiveMessage"
+          }
+          ["Resource"] = "*"
+        }
+      }
+    }
+  }
+}

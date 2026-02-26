@@ -1,0 +1,69 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/flowlog.pkl"
+import "@aws/logs/loggroup.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-flowlog-\(testRunID)"
+local logGroupNameValue = "/formae/plugin-sdk-test/flowlog/\(testRunID)"
+
+// VPC dependency - same as create
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-flowlog"
+  cidrBlock = "10.210.0.0/16"
+  enableDnsSupport = true
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-fl-vpc-\(testRunID)" }
+  }
+}
+
+// LogGroup dependency - same as create
+local testLogGroup = new loggroup.LogGroup {
+  label = "test-loggroup-for-flowlog"
+  logGroupName = logGroupNameValue
+  retentionInDays = 1
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 FlowLog"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for FlowLog
+  testVpc
+
+  // LogGroup required for FlowLog destination
+  testLogGroup
+
+  // Updated: added extra tag (tags is the only updatable field on FlowLog)
+  new flowlog.FlowLog {
+    label = "plugin-sdk-test-flowlog"
+    resourceId = testVpc.res.vpcId
+    resourceType = "VPC"
+    trafficType = "ALL"
+    logDestinationType = "cloud-watch-logs"
+    logGroupName = logGroupNameValue
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-fl-\(testRunID)" }
+      new { key = "Environment"; value = "updated" }
+    }
+  }
+}

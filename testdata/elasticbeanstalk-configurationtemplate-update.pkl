@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/elasticbeanstalk/application.pkl"
+import "@aws/elasticbeanstalk/configurationtemplate.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-eb-configurationtemplate-\(testRunID)"
+
+// IAM Role dependency - same as create
+local ebRole = new role.Role {
+  label = "eb-service-role"
+  roleName = "formae-sdk-test-eb-cfgtpl-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "elasticbeanstalk.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+}
+
+// EB Application - same as create
+local ebApp = new application.Application {
+  label = "plugin-sdk-test-eb-app"
+  applicationName = "formae-sdk-test-cfgtpl-\(testRunID)"
+  description = "Formae SDK test application for ConfigurationTemplate"
+  resourceLifecycleConfig = new application.ResourceLifecycleConfig {
+    serviceRole = ebRole.res.arn
+    versionLifecycleConfig = new application.VersionLifecycleConfig {
+      maxAgeRule = new application.MaxAgeRule {
+        deleteSourceFromS3 = false
+        enabled = false
+        maxAgeInDays = 180
+      }
+      maxCountRule = new application.MaxCountRule {
+        deleteSourceFromS3 = false
+        enabled = false
+        maxCount = 200
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ElasticBeanstalk ConfigurationTemplate"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  ebRole
+
+  ebApp
+
+  // Updated: changed description
+  new configurationtemplate.ConfigurationTemplate {
+    label = "plugin-sdk-test-cfgtpl"
+    applicationName = "formae-sdk-test-cfgtpl-\(testRunID)"
+    description = "Formae SDK test configuration template - updated"
+    solutionStackName = "64bit Amazon Linux 2023 v4.4.4 running Docker"
+  }
+}

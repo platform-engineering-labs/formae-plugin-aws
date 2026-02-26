@@ -1,0 +1,63 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/s3accesspoint.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-s3-accesspoint-\(testRunID)"
+
+// Bucket dependency - same as create
+local testBucket = new bucket.Bucket {
+  label = "test-bucket"
+  bucketName = "formae-plugin-sdk-test-ap-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for S3 AccessPoint"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Bucket required for AccessPoint
+  testBucket
+
+  // AccessPoint with updated policy and relaxed public access block
+  new s3accesspoint.AccessPoint {
+    label = "plugin-sdk-test-accesspoint"
+    bucket = testBucket.res.bucketName
+    name = "formae-sdk-test-ap-\(testRunID)"
+    policy {
+      ["Version"] = "2012-10-17"
+      ["Statement"] {
+        new {
+          ["Effect"] = "Allow"
+          ["Principal"] = "*"
+          ["Action"] = "s3:GetObject"
+          ["Resource"] = "*"
+        }
+      }
+    }
+    publicAccessBlockConfiguration = new s3accesspoint.PublicAccessBlockConfiguration {
+      blockPublicAcls = false
+      blockPublicPolicy = false
+      ignorePublicAcls = true
+      restrictPublicBuckets = true
+    }
+  }
+}
