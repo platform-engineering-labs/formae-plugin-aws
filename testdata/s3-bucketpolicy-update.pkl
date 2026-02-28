@@ -19,6 +19,12 @@ local stackName = "plugin-sdk-test-s3-bucketpolicy-\(testRunID)"
 local testBucket = new bucket.Bucket {
   label = "test-bucket"
   bucketName = "formae-plugin-sdk-test-bp-\(testRunID)"
+  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
+    blockPublicAcls = true
+    blockPublicPolicy = false
+    ignorePublicAcls = true
+    restrictPublicBuckets = false
+  }
 }
 
 forma {
@@ -37,7 +43,7 @@ forma {
   // Bucket required for BucketPolicy
   testBucket
 
-  // BucketPolicy with updated policyDocument - added s3:PutObject action
+  // BucketPolicy with updated policyDocument - added s3:GetBucketLocation action
   new bucketpolicy.BucketPolicy {
     label = "plugin-sdk-test-bucketpolicy"
     bucket = testBucket.res.bucketName
@@ -46,10 +52,12 @@ forma {
       ["Statement"] {
         new {
           ["Effect"] = "Allow"
-          ["Principal"] = "*"
+          ["Principal"] {
+            ["Service"] = "logging.s3.amazonaws.com"
+          }
           ["Action"] {
-            "s3:GetObject"
             "s3:PutObject"
+            "s3:GetBucketLocation"
           }
           ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-bp-\(testRunID)/*"
         }

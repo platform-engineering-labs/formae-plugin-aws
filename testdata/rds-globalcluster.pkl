@@ -32,6 +32,6 @@ forma {
     globalClusterIdentifier = "formae-sdk-test-gc-\(testRunID)"
     engine = "aurora-mysql"
     storageEncrypted = false
-    deletionProtection = false
+    deletionProtection = true
   }
 }

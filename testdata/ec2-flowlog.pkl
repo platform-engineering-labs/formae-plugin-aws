@@ -9,6 +9,7 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
+import "@aws/iam/role.pkl"
 import "@aws/ec2/vpc.pkl"
 import "@aws/ec2/flowlog.pkl"
 import "@aws/logs/loggroup.pkl"
@@ -17,14 +18,50 @@ local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-ec2-flowlog-\(testRunID)"
 local logGroupNameValue = "/formae/plugin-sdk-test/flowlog/\(testRunID)"
 
+// IAM Role for VPC Flow Logs to deliver logs to CloudWatch
+local flowLogRole = new role.Role {
+  label = "flowlog-role"
+  roleName = "formae-sdk-test-fl-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "vpc-flow-logs.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+  policies {
+    new {
+      policyName = "flowlog-cloudwatch"
+      policyDocument {
+        ["Version"] = "2012-10-17"
+        ["Statement"] {
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "logs:CreateLogGroup"
+              "logs:CreateLogStream"
+              "logs:PutLogEvents"
+              "logs:DescribeLogGroups"
+              "logs:DescribeLogStreams"
+            }
+            ["Resource"] = "*"
+          }
+        }
+      }
+    }
+  }
+}
+
 // VPC dependency - FlowLog needs a VPC to monitor
 local testVpc = new vpc.VPC {
   label = "test-vpc-for-flowlog"
   cidrBlock = "10.210.0.0/16"
   enableDnsSupport = true
-  tags {
-    new { key = "Name"; value = "formae-plugin-sdk-test-fl-vpc-\(testRunID)" }
-  }
 }
 
 // CloudWatch Logs LogGroup dependency - FlowLog destination
@@ -47,6 +84,9 @@ forma {
     }
   }
 
+  // IAM Role for FlowLog delivery
+  flowLogRole
+
   // VPC required for FlowLog
   testVpc
 
@@ -54,10 +94,6 @@ forma {
   testLogGroup
 
   // FlowLog under test - logs VPC traffic to CloudWatch Logs
-  // Note: deliverLogsPermissionArn is omitted; AWS uses the VPC Flow Logs
-  // service-linked role (AWSServiceRoleForVPCFlowLogs) by default.
-  // The schema types deliverLogsPermissionArn as String? which does not accept
-  // a Resolvable reference.
   new flowlog.FlowLog {
     label = "plugin-sdk-test-flowlog"
     resourceId = testVpc.res.vpcId
@@ -65,8 +101,6 @@ forma {
     trafficType = "ALL"
     logDestinationType = "cloud-watch-logs"
     logGroupName = logGroupNameValue
-    tags {
-      new { key = "Name"; value = "formae-plugin-sdk-test-fl-\(testRunID)" }
-    }
+    deliverLogsPermissionArn = flowLogRole.res.arn
   }
 }

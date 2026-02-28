@@ -16,9 +16,16 @@ local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-s3-bucketpolicy-\(testRunID)"
 
 // Bucket dependency - BucketPolicy needs a bucket to attach to
+// blockPublicPolicy must be false to allow service principal policies
 local testBucket = new bucket.Bucket {
   label = "test-bucket"
   bucketName = "formae-plugin-sdk-test-bp-\(testRunID)"
+  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
+    blockPublicAcls = true
+    blockPublicPolicy = false
+    ignorePublicAcls = true
+    restrictPublicBuckets = false
+  }
 }
 
 forma {
@@ -37,7 +44,7 @@ forma {
   // Bucket required for BucketPolicy
   testBucket
 
-  // BucketPolicy under test - allows s3:GetObject
+  // BucketPolicy under test - allows s3:PutObject for logging service
   new bucketpolicy.BucketPolicy {
     label = "plugin-sdk-test-bucketpolicy"
     bucket = testBucket.res.bucketName
@@ -46,8 +53,10 @@ forma {
       ["Statement"] {
         new {
           ["Effect"] = "Allow"
-          ["Principal"] = "*"
-          ["Action"] = "s3:GetObject"
+          ["Principal"] {
+            ["Service"] = "logging.s3.amazonaws.com"
+          }
+          ["Action"] = "s3:PutObject"
           ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-bp-\(testRunID)/*"
         }
       }

@@ -14,8 +14,9 @@ import "@aws/iam/samlprovider.pkl"
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-iam-samlprovider-\(testRunID)"
 
+// Updated: changed SSO Location URL to /sso/v2
 local samlMetadata = #"""
-  <?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://formae-sdk-test.example.com"><md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://formae-sdk-test.example.com/sso"/></md:IDPSSODescriptor></md:EntityDescriptor>
+  <?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://formae-sdk-test.example.com"><md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>MIICmTCCAYECBgF4Qz5OQDANBgkqhkiG9w0BAQsFADAQMQ4wDAYDVQQDDAV0ZXN0MB4XDTIxMDEwMTAwMDAwMFoXDTMxMDEwMTAwMDAwMFowEDEOMAwGA1UEAwwFdGVzdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALZgFgJUqMQ</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://formae-sdk-test.example.com/sso/v2"/><md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://formae-sdk-test.example.com/slo"/></md:IDPSSODescriptor></md:EntityDescriptor>
   """#
 
 forma {
@@ -31,13 +32,10 @@ forma {
     }
   }
 
-  // SAMLProvider with added tags
+  // SAMLProvider with updated samlMetadataDocument (different SSO Location URL)
   new samlprovider.SAMLProvider {
     label = "plugin-sdk-test-samlprovider"
     name = "formae-plugin-sdk-test-saml-\(testRunID)"
     samlMetadataDocument = samlMetadata
-    tags {
-      new { key = "Environment"; value = "updated" }
-    }
   }
 }

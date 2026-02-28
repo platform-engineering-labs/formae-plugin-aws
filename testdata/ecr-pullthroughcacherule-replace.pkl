@@ -30,7 +30,7 @@ forma {
   // Changed ecrRepositoryPrefix (createOnly) - triggers replace
   new pullthroughcacherule.PullThroughCacheRule {
     label = "plugin-sdk-test-ptcr"
-    ecrRepositoryPrefix = "formae-sdk-test-replaced-\(testRunID)"
+    ecrRepositoryPrefix = "fmae-sdk-r-\(testRunID)"
     upstreamRegistryUrl = "public.ecr.aws"
   }
 }

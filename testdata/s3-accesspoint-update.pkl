@@ -37,26 +37,15 @@ forma {
   // Bucket required for AccessPoint
   testBucket
 
-  // AccessPoint with updated policy and relaxed public access block
+  // AccessPoint with updated publicAccessBlockConfiguration (toggle booleans)
   new s3accesspoint.AccessPoint {
     label = "plugin-sdk-test-accesspoint"
     bucket = testBucket.res.bucketName
     name = "formae-sdk-test-ap-\(testRunID)"
-    policy {
-      ["Version"] = "2012-10-17"
-      ["Statement"] {
-        new {
-          ["Effect"] = "Allow"
-          ["Principal"] = "*"
-          ["Action"] = "s3:GetObject"
-          ["Resource"] = "*"
-        }
-      }
-    }
     publicAccessBlockConfiguration = new s3accesspoint.PublicAccessBlockConfiguration {
       blockPublicAcls = false
-      blockPublicPolicy = false
-      ignorePublicAcls = true
+      blockPublicPolicy = true
+      ignorePublicAcls = false
       restrictPublicBuckets = true
     }
   }

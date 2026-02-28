@@ -19,12 +19,24 @@ local stackName = "plugin-sdk-test-s3-bucketpolicy-\(testRunID)"
 local testBucket = new bucket.Bucket {
   label = "test-bucket"
   bucketName = "formae-plugin-sdk-test-bp-\(testRunID)"
+  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
+    blockPublicAcls = true
+    blockPublicPolicy = false
+    ignorePublicAcls = true
+    restrictPublicBuckets = false
+  }
 }
 
 // Second bucket - the policy will be moved to this bucket (triggers replace)
 local testBucket2 = new bucket.Bucket {
   label = "test-bucket-2"
   bucketName = "formae-plugin-sdk-test-bp-2-\(testRunID)"
+  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
+    blockPublicAcls = true
+    blockPublicPolicy = false
+    ignorePublicAcls = true
+    restrictPublicBuckets = false
+  }
 }
 
 forma {
@@ -53,10 +65,12 @@ forma {
       ["Statement"] {
         new {
           ["Effect"] = "Allow"
-          ["Principal"] = "*"
+          ["Principal"] {
+            ["Service"] = "logging.s3.amazonaws.com"
+          }
           ["Action"] {
-            "s3:GetObject"
             "s3:PutObject"
+            "s3:GetBucketLocation"
           }
           ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-bp-2-\(testRunID)/*"
         }

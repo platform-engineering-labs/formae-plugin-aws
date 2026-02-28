@@ -10,7 +10,6 @@ import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 
 import "@aws/iam/role.pkl"
-import "@aws/s3/bucket.pkl"
 import "@aws/elasticbeanstalk/application.pkl"
 import "@aws/elasticbeanstalk/applicationversion.pkl"
 
@@ -33,12 +32,6 @@ local ebRole = new role.Role {
       }
     }
   }
-}
-
-// S3 Bucket for source bundle - same as create
-local testBucket = new bucket.Bucket {
-  label = "eb-source-bucket"
-  bucketName = "formae-sdk-test-eb-appver-\(testRunID)"
 }
 
 // EB Application - same as create
@@ -78,8 +71,6 @@ forma {
 
   ebRole
 
-  testBucket
-
   ebApp
 
   // Updated: changed description
@@ -88,8 +79,8 @@ forma {
     applicationName = ebApp.res.applicationName
     description = "Formae SDK test application version - updated"
     sourceBundle = new applicationversion.ApplicationVersionSourceBundle {
-      s3Bucket = testBucket.res.bucketName
-      s3Key = "sample-app.zip"
+      s3Bucket = "elasticbeanstalk-samples-us-east-1"
+      s3Key = "docker-singlecontainer-v1.zip"
     }
   }
 }

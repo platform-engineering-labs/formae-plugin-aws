@@ -77,6 +77,6 @@ forma {
     label = "plugin-sdk-test-cfgtpl"
     applicationName = "formae-sdk-test-cfgtpl-\(testRunID)"
     description = "Formae SDK test configuration template"
-    solutionStackName = "64bit Amazon Linux 2023 v4.4.4 running Docker"
+    solutionStackName = "64bit Amazon Linux 2023 v4.10.0 running Docker"
   }
 }
