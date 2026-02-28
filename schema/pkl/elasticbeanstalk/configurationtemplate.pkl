@@ -32,7 +32,7 @@ open class SourceConfiguration extends formae.SubResource {
 open class ConfigurationTemplate extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    applicationName: String
+    applicationName: String|formae.Resolvable
 
     @aws.FieldHint
     description: String?

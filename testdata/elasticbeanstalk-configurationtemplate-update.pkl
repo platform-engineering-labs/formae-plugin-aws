@@ -76,7 +76,7 @@ forma {
   // Updated: changed description
   new configurationtemplate.ConfigurationTemplate {
     label = "plugin-sdk-test-cfgtpl"
-    applicationName = "formae-sdk-test-cfgtpl-\(testRunID)"
+    applicationName = ebApp.res.applicationName
     description = "Formae SDK test configuration template - updated"
     solutionStackName = "64bit Amazon Linux 2023 v4.10.0 running Docker"
   }
