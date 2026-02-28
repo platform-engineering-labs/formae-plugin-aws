@@ -1,0 +1,38 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/rds/globalcluster.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-rds-globalcluster-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for RDS GlobalCluster"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Updated: changed deletionProtection to false (must be false before replace/destroy)
+  new globalcluster.GlobalCluster {
+    label = "plugin-sdk-test-globalcluster"
+    globalClusterIdentifier = "formae-sdk-test-gc-\(testRunID)"
+    engine = "aurora-mysql"
+    storageEncrypted = false
+    deletionProtection = false
+  }
+}

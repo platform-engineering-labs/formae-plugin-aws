@@ -155,16 +155,40 @@ aws iam list-saml-providers --query "SAMLProviderList[].Arn" --output text 2>/de
 done
 
 # ============================================================================
-# S3 Resources (global)
+# S3 Resources (global) - delete access points before buckets
 # ============================================================================
 
-# 8. Delete S3 buckets with test prefix
+# 8a. Delete S3 access points with test prefix
+echo "Cleaning S3 test access points..."
+aws s3control list-access-points --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" \
+    --query "AccessPointList[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$TEST_PREFIX')].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
+    if [[ -n "$ap" ]]; then
+        echo "  Deleting S3 access point: $ap"
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+        aws s3control delete-access-point --account-id "$ACCOUNT_ID" --name "$ap" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 8b. Delete S3 buckets with test prefix
 echo "Cleaning S3 test buckets..."
 aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
     if [[ -n "$bucket" ]]; then
         echo "  Deleting S3 bucket: $bucket"
+        # Delete bucket policy first (if any)
+        aws s3api delete-bucket-policy --bucket "$bucket" --region "$REGION" 2>/dev/null || true
         aws s3 rm "s3://$bucket" --recursive --region "$REGION" 2>/dev/null || true
         aws s3api delete-bucket --bucket "$bucket" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 8c. Delete S3 Storage Lens Groups with test prefix
+echo "Cleaning S3 test Storage Lens Groups..."
+aws s3control list-storage-lens-groups --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" 2>/dev/null | \
+    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
+    if [[ -n "$slg" ]]; then
+        echo "  Deleting S3 Storage Lens Group: $slg"
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+        aws s3control delete-storage-lens-group --account-id "$ACCOUNT_ID" --name "$slg" --region "$REGION" 2>/dev/null || true
     fi
 done
 
@@ -341,7 +365,24 @@ aws ec2 describe-customer-gateways --region "$REGION" \
     fi
 done
 
-# 21. Delete EC2 transit gateways with test prefix (by Name tag)
+# 21a. Delete EC2 transit gateway route tables with test prefix (before TGWs)
+echo "Cleaning EC2 test transit gateway route tables..."
+aws ec2 describe-transit-gateways --region "$REGION" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
+    --query "TransitGateways[].TransitGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_id; do
+    if [[ -n "$tgw_id" ]]; then
+        aws ec2 describe-transit-gateway-route-tables --region "$REGION" \
+            --filters "Name=transit-gateway-id,Values=$tgw_id" \
+            --query "TransitGatewayRouteTables[?!DefaultAssociationRouteTable && !DefaultPropagationRouteTable].TransitGatewayRouteTableId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rt_id; do
+            if [[ -n "$rt_id" ]]; then
+                echo "  Deleting EC2 transit gateway route table: $rt_id"
+                aws ec2 delete-transit-gateway-route-table --transit-gateway-route-table-id "$rt_id" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+    fi
+done
+
+# 21b. Delete EC2 transit gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test transit gateways..."
 aws ec2 describe-transit-gateways --region "$REGION" \
     --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
@@ -369,7 +410,18 @@ aws ec2 describe-ipams --region "$REGION" \
     fi
 done
 
-# 23. Delete EC2 VPCs with test prefix (by Name tag) - after all VPC dependents
+# 23a. Delete EC2 flow logs with test prefix (before VPCs)
+echo "Cleaning EC2 test flow logs..."
+aws ec2 describe-flow-logs --region "$REGION" \
+    --filter "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --query "FlowLogs[].FlowLogId" --output text 2>/dev/null | tr '\t' '\n' | while read -r fl_id; do
+    if [[ -n "$fl_id" ]]; then
+        echo "  Deleting EC2 flow log: $fl_id"
+        aws ec2 delete-flow-logs --flow-log-ids "$fl_id" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 23b. Delete EC2 VPCs with test prefix (by Name tag) - after all VPC dependents
 echo "Cleaning EC2 test VPCs..."
 aws ec2 describe-vpcs --region "$REGION" \
     --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
@@ -445,6 +497,38 @@ aws ecr describe-repositories --region "$REGION" \
     if [[ -n "$repo" ]]; then
         echo "  Deleting ECR repository: $repo"
         aws ecr delete-repository --repository-name "$repo" --region "$REGION" --force 2>/dev/null || true
+    fi
+done
+
+# 28a. Delete ECR public repositories with test prefix
+echo "Cleaning ECR test public repositories..."
+aws ecr-public describe-repositories --region us-east-1 \
+    --query "repositories[?contains(repositoryName, '$TEST_PREFIX') || contains(repositoryName, '$FORMAE_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
+    if [[ -n "$repo" ]]; then
+        echo "  Deleting ECR public repository: $repo"
+        aws ecr-public delete-repository --repository-name "$repo" --region us-east-1 --force 2>/dev/null || true
+    fi
+done
+
+# 28b. Delete ECR pull-through cache rules with test prefix
+echo "Cleaning ECR test pull-through cache rules..."
+aws ecr describe-pull-through-cache-rules --region "$REGION" \
+    --query "pullThroughCacheRules[?contains(ecrRepositoryPrefix, '$FORMAE_PREFIX') || contains(ecrRepositoryPrefix, 'formae-sdk-test')].ecrRepositoryPrefix" --output text 2>/dev/null | tr '\t' '\n' | while read -r prefix; do
+    if [[ -n "$prefix" ]]; then
+        echo "  Deleting ECR pull-through cache rule: $prefix"
+        aws ecr delete-pull-through-cache-rule --ecr-repository-prefix "$prefix" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 28c. Delete ECR repository creation templates with test prefix
+echo "Cleaning ECR test repository creation templates..."
+aws ecr describe-repository-creation-templates --region "$REGION" \
+    --query "registryId" --output text 2>/dev/null > /dev/null  # Just check if accessible
+aws ecr describe-repository-creation-templates --region "$REGION" 2>/dev/null | \
+    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$TEST_PREFIX|formae-sdk-test\")) | .prefix" 2>/dev/null | while read -r prefix; do
+    if [[ -n "$prefix" ]]; then
+        echo "  Deleting ECR repository creation template: $prefix"
+        aws ecr delete-repository-creation-template --prefix "$prefix" --region "$REGION" 2>/dev/null || true
     fi
 done
 
@@ -535,6 +619,38 @@ aws rds describe-db-cluster-parameter-groups --region "$REGION" \
     if [[ -n "$cpg" ]]; then
         echo "  Deleting RDS DB cluster parameter group: $cpg"
         aws rds delete-db-cluster-parameter-group --db-cluster-parameter-group-name "$cpg" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 35. Delete RDS global clusters with test prefix
+echo "Cleaning RDS test global clusters..."
+aws rds describe-global-clusters --region "$REGION" \
+    --query "GlobalClusters[?contains(GlobalClusterIdentifier, '$SDK_PREFIX') || contains(GlobalClusterIdentifier, '$FORMAE_PREFIX')].GlobalClusterIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r gc; do
+    if [[ -n "$gc" ]]; then
+        echo "  Deleting RDS global cluster: $gc"
+        # Disable deletion protection first
+        aws rds modify-global-cluster --global-cluster-identifier "$gc" --no-deletion-protection --region "$REGION" 2>/dev/null || true
+        aws rds delete-global-cluster --global-cluster-identifier "$gc" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 36. Delete RDS option groups with test prefix
+echo "Cleaning RDS test option groups..."
+aws rds describe-option-groups --region "$REGION" \
+    --query "OptionGroupsList[?contains(OptionGroupName, '$SDK_PREFIX') || contains(OptionGroupName, '$FORMAE_PREFIX')].OptionGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r og; do
+    if [[ -n "$og" ]]; then
+        echo "  Deleting RDS option group: $og"
+        aws rds delete-option-group --option-group-name "$og" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 37. Delete Lambda code signing configs with test prefix
+echo "Cleaning Lambda test code signing configs..."
+aws lambda list-code-signing-configs --region "$REGION" --max-items 100 2>/dev/null | \
+    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
+    if [[ -n "$csc_arn" ]]; then
+        echo "  Deleting Lambda code signing config: $csc_arn"
+        aws lambda delete-code-signing-config --code-signing-config-arn "$csc_arn" --region "$REGION" 2>/dev/null || true
     fi
 done
 

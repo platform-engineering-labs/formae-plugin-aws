@@ -23,6 +23,10 @@ open class PublicRepositoryResolvable extends formae.Resolvable {
     }
 }
 
+@aws.ResourceHint {
+    type = module.type
+    identifier = "RepositoryName"
+}
 open class PublicRepository extends formae.Resource {
 
     @aws.FieldHint

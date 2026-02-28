@@ -13,8 +13,8 @@ const type = "AWS::ElasticBeanstalk::ApplicationVersion"
 
 @aws.SubResourceHint
 open class ApplicationVersionSourceBundle extends formae.SubResource {
-    s3Bucket: String
-    s3Key: String
+    s3Bucket: String|formae.Resolvable
+    s3Key: String|formae.Resolvable
 }
 
 @aws.ResourceHint {
