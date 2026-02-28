@@ -80,7 +80,7 @@ forma {
     description = "Formae SDK test application version - updated"
     sourceBundle = new applicationversion.ApplicationVersionSourceBundle {
       s3Bucket = "elasticbeanstalk-samples-us-east-1"
-      s3Key = "docker-singlecontainer-v1.zip"
+      s3Key = "docker-sample-v3.zip"
     }
   }
 }
