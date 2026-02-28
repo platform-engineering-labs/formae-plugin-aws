@@ -27,7 +27,7 @@ open class FlowLog extends formae.Resource {
     deliverCrossAccountRole: String?
 
     @aws.FieldHint{createOnly = true}
-    deliverLogsPermissionArn: String?
+    deliverLogsPermissionArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     destinationOptions: Dynamic?
