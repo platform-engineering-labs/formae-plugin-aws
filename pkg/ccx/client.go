@@ -26,8 +26,18 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/status"
 )
 
+// cloudControlAPI defines the CloudControl operations used by Client.
+type cloudControlAPI interface {
+	CreateResource(ctx context.Context, params *cloudcontrol.CreateResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.CreateResourceOutput, error)
+	UpdateResource(ctx context.Context, params *cloudcontrol.UpdateResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.UpdateResourceOutput, error)
+	DeleteResource(ctx context.Context, params *cloudcontrol.DeleteResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.DeleteResourceOutput, error)
+	GetResource(ctx context.Context, params *cloudcontrol.GetResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.GetResourceOutput, error)
+	GetResourceRequestStatus(ctx context.Context, params *cloudcontrol.GetResourceRequestStatusInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.GetResourceRequestStatusOutput, error)
+	ListResources(ctx context.Context, params *cloudcontrol.ListResourcesInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.ListResourcesOutput, error)
+}
+
 type Client struct {
-	*cloudcontrol.Client
+	api cloudControlAPI
 }
 
 var IgnoredFields = map[string][]string{
@@ -51,7 +61,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	})
 
 	return &Client{
-		Client: cloudcontrol.NewFromConfig(awsCfg, func(o *cloudcontrol.Options) {
+		api: cloudcontrol.NewFromConfig(awsCfg, func(o *cloudcontrol.Options) {
 			o.Retryer = retryer
 		}),
 	}, nil
@@ -79,7 +89,7 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		resourceProps = transformedProps
 	}
 
-	result, err := c.Client.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
+	result, err := c.api.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		DesiredState: ptr.Of(string(resourceProps)),
 		TypeName:     &request.ResourceType,
 	})
@@ -87,11 +97,19 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		return nil, err
 	}
 
+	identifier := ""
+	if result.ProgressEvent.Identifier != nil {
+		identifier = *result.ProgressEvent.Identifier
+	} else if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
+		return nil, fmt.Errorf("create succeeded but CloudControl returned no identifier for %s", request.ResourceType)
+	}
+
 	return &resource.CreateResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       resource.OperationCreate,
 			OperationStatus: status.FromOperationStatus(result.ProgressEvent.OperationStatus),
 			RequestID:       *result.ProgressEvent.RequestToken,
+			NativeID:        identifier,
 			StatusMessage:   aws.ToString(result.ProgressEvent.StatusMessage),
 			ErrorCode:       resource.OperationErrorCode(result.ProgressEvent.ErrorCode),
 		},
@@ -101,7 +119,7 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 // UpdateResource updates a resource using CloudControl with full request handling
 func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	// Check if resource exists first
-	_, err := c.GetResource(ctx, &cloudcontrol.GetResourceInput{
+	_, err := c.api.GetResource(ctx, &cloudcontrol.GetResourceInput{
 		Identifier: &request.NativeID,
 		TypeName:   &request.ResourceType,
 	})
@@ -131,7 +149,7 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		patchDoc = ptr.Of(string(transformedPatch))
 	}
 
-	result, err := c.Client.UpdateResource(ctx, &cloudcontrol.UpdateResourceInput{
+	result, err := c.api.UpdateResource(ctx, &cloudcontrol.UpdateResourceInput{
 		Identifier:    &request.NativeID,
 		PatchDocument: patchDoc,
 		TypeName:      ptr.Of(request.ResourceType),
@@ -153,7 +171,7 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 
 // DeleteResource deletes a resource using CloudControl with full request handling
 func (c *Client) DeleteResource(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	result, err := c.Client.DeleteResource(ctx, &cloudcontrol.DeleteResourceInput{
+	result, err := c.api.DeleteResource(ctx, &cloudcontrol.DeleteResourceInput{
 		Identifier: &request.NativeID,
 		TypeName:   ptr.Of(request.ResourceType),
 	})
@@ -187,7 +205,7 @@ func (c *Client) DeleteResource(ctx context.Context, request *resource.DeleteReq
 
 // ReadResource reads a resource using CloudControl with full request handling
 func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
-	result, err := c.GetResource(ctx, &cloudcontrol.GetResourceInput{
+	result, err := c.api.GetResource(ctx, &cloudcontrol.GetResourceInput{
 		Identifier: &request.NativeID,
 		TypeName:   ptr.Of(request.ResourceType),
 	})
@@ -233,7 +251,7 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 
 // StatusResource gets the status of a resource request using CloudControl with full request handling
 func (c *Client) StatusResource(ctx context.Context, request *resource.StatusRequest, readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error)) (*resource.StatusResult, error) {
-	result, err := c.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+	result, err := c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
 		RequestToken: &request.RequestID,
 	})
 	if err != nil {
@@ -330,7 +348,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 
 // ListResources lists resources using CloudControl
 func (c *Client) ListResources(ctx context.Context, input *cloudcontrol.ListResourcesInput) (*cloudcontrol.ListResourcesOutput, error) {
-	return c.Client.ListResources(ctx, input)
+	return c.api.ListResources(ctx, input)
 }
 
 // transformSecretStringPatch transforms replace operations to add operations for SecretString
