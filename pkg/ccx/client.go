@@ -104,7 +104,7 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		return nil, fmt.Errorf("create succeeded but CloudControl returned no identifier for %s", request.ResourceType)
 	}
 
-	return &resource.CreateResult{
+	createResult := &resource.CreateResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       resource.OperationCreate,
 			OperationStatus: status.FromOperationStatus(result.ProgressEvent.OperationStatus),
@@ -113,7 +113,13 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 			StatusMessage:   aws.ToString(result.ProgressEvent.StatusMessage),
 			ErrorCode:       resource.OperationErrorCode(result.ProgressEvent.ErrorCode),
 		},
-	}, nil
+	}
+
+	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
+		c.populateResourceProperties(ctx, createResult.ProgressResult, identifier, request.ResourceType)
+	}
+
+	return createResult, nil
 }
 
 // UpdateResource updates a resource using CloudControl with full request handling
@@ -158,15 +164,27 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		return nil, err
 	}
 
-	return &resource.UpdateResult{
+	identifier := request.NativeID
+	if result.ProgressEvent.Identifier != nil {
+		identifier = *result.ProgressEvent.Identifier
+	}
+
+	updateResult := &resource.UpdateResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       resource.OperationUpdate,
 			OperationStatus: status.FromOperationStatus(result.ProgressEvent.OperationStatus),
 			RequestID:       *result.ProgressEvent.RequestToken,
+			NativeID:        identifier,
 			StatusMessage:   aws.ToString(result.ProgressEvent.StatusMessage),
 			ErrorCode:       resource.OperationErrorCode(result.ProgressEvent.ErrorCode),
 		},
-	}, nil
+	}
+
+	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
+		c.populateResourceProperties(ctx, updateResult.ProgressResult, identifier, request.ResourceType)
+	}
+
+	return updateResult, nil
 }
 
 // DeleteResource deletes a resource using CloudControl with full request handling
@@ -344,6 +362,33 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	}
 
 	return statusResult, nil
+}
+
+// populateResourceProperties performs a post-success Read to populate ResourceProperties
+// on a ProgressResult. This is needed when CloudControl returns synchronous Success
+// (without going through StatusResource polling, which already does its own Read).
+func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) {
+	readResult, err := c.ReadResource(ctx, &resource.ReadRequest{
+		NativeID:     identifier,
+		ResourceType: resourceType,
+	})
+	if err != nil {
+		slog.Error("post-success Read failed",
+			"error", err,
+			"identifier", identifier,
+			"resourceType", resourceType)
+		return
+	}
+	if readResult.ErrorCode != "" {
+		slog.Error("post-success Read returned error",
+			"errorCode", readResult.ErrorCode,
+			"identifier", identifier,
+			"resourceType", resourceType)
+		return
+	}
+	if readResult.Properties != "" {
+		pr.ResourceProperties = json.RawMessage(readResult.Properties)
+	}
 }
 
 // ListResources lists resources using CloudControl
