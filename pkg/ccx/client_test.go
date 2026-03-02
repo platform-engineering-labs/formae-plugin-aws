@@ -94,6 +94,15 @@ func TestCreateResource_SetsNativeID(t *testing.T) {
 		}, nil,
 	)
 
+	// Post-success Read
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of("fl-test123"),
+			Properties: ptr.Of(`{"LogGroupName":"test","FlowLogId":"fl-test123"}`),
+		},
+		TypeName: ptr.Of("AWS::EC2::FlowLog"),
+	}, nil)
+
 	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
 		ResourceType: "AWS::EC2::FlowLog",
 		Properties:   json.RawMessage(`{"LogGroupName": "test"}`),
@@ -101,6 +110,42 @@ func TestCreateResource_SetsNativeID(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "fl-test123", result.ProgressResult.NativeID)
+}
+
+func TestCreateResource_SynchronousSuccess_PopulatesResourceProperties(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("CreateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusSuccess,
+				RequestToken:    ptr.Of("req-token-123"),
+				Identifier:      ptr.Of("fl-test123"),
+			},
+		}, nil,
+	)
+
+	// GetResource (post-success Read) returns full properties
+	mockAPI.On("GetResource", mock.Anything, mock.MatchedBy(func(input *cloudcontrol.GetResourceInput) bool {
+		return *input.Identifier == "fl-test123" && *input.TypeName == "AWS::EC2::FlowLog"
+	})).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of("fl-test123"),
+			Properties: ptr.Of(`{"LogGroupName":"test","FlowLogId":"fl-test123","ResourceType":"VPC"}`),
+		},
+		TypeName: ptr.Of("AWS::EC2::FlowLog"),
+	}, nil)
+
+	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
+		ResourceType: "AWS::EC2::FlowLog",
+		Properties:   json.RawMessage(`{"LogGroupName": "test"}`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "fl-test123", result.ProgressResult.NativeID)
+	require.NotNil(t, result.ProgressResult.ResourceProperties)
+	require.Contains(t, string(result.ProgressResult.ResourceProperties), "FlowLogId")
 }
 
 func TestCreateResource_InProgress_NilIdentifier(t *testing.T) {
@@ -124,6 +169,91 @@ func TestCreateResource_InProgress_NilIdentifier(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "", result.ProgressResult.NativeID)
+}
+
+func TestUpdateResource_SynchronousSuccess_PopulatesResourceProperties(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	nativeID := "my-queue-url"
+	resourceType := "AWS::SQS::QueueInlinePolicy"
+	patchDoc := `[{"op":"replace","path":"/PolicyDocument","value":{"Statement":[{"Effect":"Allow","Action":"sqs:*","Resource":"*"}]}}]`
+
+	// GetResource (existence check) returns success
+	mockAPI.On("GetResource", mock.Anything, mock.MatchedBy(func(input *cloudcontrol.GetResourceInput) bool {
+		return *input.Identifier == nativeID && *input.TypeName == resourceType
+	})).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of(nativeID),
+			Properties: ptr.Of(`{"PolicyDocument":{"Statement":[{"Effect":"Deny","Action":"sqs:*","Resource":"*"}]}}`),
+		},
+		TypeName: ptr.Of(resourceType),
+	}, nil)
+
+	// UpdateResource returns synchronous SUCCESS
+	mockAPI.On("UpdateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.UpdateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusSuccess,
+				RequestToken:    ptr.Of("req-token-update"),
+				Identifier:      ptr.Of(nativeID),
+			},
+		}, nil,
+	)
+
+	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
+		NativeID:     nativeID,
+		ResourceType: resourceType,
+		PatchDocument: ptr.Of(patchDoc),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	// The key assertion: ResourceProperties should be populated from a post-update Read
+	require.NotNil(t, result.ProgressResult.ResourceProperties)
+	require.Contains(t, string(result.ProgressResult.ResourceProperties), "PolicyDocument")
+	require.Contains(t, string(result.ProgressResult.ResourceProperties), "Statement")
+}
+
+func TestUpdateResource_InProgress_DoesNotRead(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	nativeID := "my-queue-url"
+	resourceType := "AWS::SQS::QueueInlinePolicy"
+
+	// GetResource (existence check) returns success
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of(nativeID),
+			Properties: ptr.Of(`{}`),
+		},
+		TypeName: ptr.Of(resourceType),
+	}, nil)
+
+	// UpdateResource returns IN_PROGRESS (async)
+	mockAPI.On("UpdateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.UpdateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusInProgress,
+				RequestToken:    ptr.Of("req-token-async"),
+				Identifier:      ptr.Of(nativeID),
+			},
+		}, nil,
+	)
+
+	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
+		NativeID:     nativeID,
+		ResourceType: resourceType,
+		PatchDocument: ptr.Of(`[{"op":"replace","path":"/PolicyDocument","value":{}}]`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+	// For in-progress, ResourceProperties should NOT be populated — StatusResource handles that
+	require.Nil(t, result.ProgressResult.ResourceProperties)
+	// GetResource should only be called once (existence check), not twice (no post-update Read)
+	mockAPI.AssertNumberOfCalls(t, "GetResource", 1)
 }
 
 func TestCreateResource_Success_NilIdentifier_ReturnsError(t *testing.T) {
