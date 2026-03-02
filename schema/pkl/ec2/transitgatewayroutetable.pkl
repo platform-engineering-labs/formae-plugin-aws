@@ -11,6 +11,18 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::TransitGatewayRouteTable"
 
+open class TransitGatewayRouteTableResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: TransitGatewayRouteTableResolvable = (this) {
+        property = "TransitGatewayRouteTableId"
+    }
+
+    hidden transitGatewayRouteTableId: TransitGatewayRouteTableResolvable = (this) {
+        property = "TransitGatewayRouteTableId"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "TransitGatewayRouteTableId"
@@ -25,4 +37,11 @@ open class TransitGatewayRouteTable extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     transitGatewayId: String|formae.Resolvable
+
+    local parent = this
+
+    hidden res: TransitGatewayRouteTableResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
