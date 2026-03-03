@@ -4,5 +4,7 @@ dependencies {
   ["formae"] {
     uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.82.0"
   }
-  ["aws"] = import("../schema/pkl/PklProject")
+  ["aws"] {
+    uri = "package://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0.1.2"
+  }
 }
