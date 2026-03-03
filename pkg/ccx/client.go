@@ -41,8 +41,9 @@ type Client struct {
 }
 
 var IgnoredFields = map[string][]string{
-	"AWS::EC2::SecurityGroup": {"$.SecurityGroupEgress", "$.SecurityGroupIngress"},
-	"AWS::IAM::Role":          {"$.Policies"},
+	"AWS::EC2::SecurityGroup":                      {"$.SecurityGroupEgress", "$.SecurityGroupIngress"},
+	"AWS::IAM::Role":                               {"$.Policies"},
+	"AWS::ElasticBeanstalk::ConfigurationTemplate": {"$.OptionSettings"},
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
