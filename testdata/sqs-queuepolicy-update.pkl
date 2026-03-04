@@ -51,7 +51,7 @@ forma {
             ["AWS"] = "*"
           }
           ["Action"] = "sqs:SendMessage"
-          ["Resource"] = testQueue.res.arn
+          ["Resource"] = "*"
         }
       }
     }

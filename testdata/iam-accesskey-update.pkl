@@ -38,7 +38,7 @@ forma {
   // Updated: change status to Inactive
   new accesskey.AccessKey {
     label = "plugin-sdk-test-accesskey"
-    userName = "formae-sdk-test-accesskey-user-\(testRunID)"
+    userName = testUser.res.userName
     status = "Inactive"
   }
 }

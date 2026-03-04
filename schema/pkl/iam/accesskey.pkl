@@ -25,5 +25,5 @@ open class AccessKey extends formae.Resource {
     status: String?
 
     @aws.FieldHint{createOnly = true}
-    userName: String
+    userName: String|formae.Resolvable
 }
