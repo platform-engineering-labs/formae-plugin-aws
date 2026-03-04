@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/apigateway/restapi.pkl"
+import "@aws/apigateway/resource.pkl"
+import "@aws/apigateway/method.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-apigateway-method-\(testRunID)"
+
+// RestApi dependency
+local testApi = new restapi.RestApi {
+  label = "test-restapi-for-method"
+  name = "formae-sdk-test-meth-api-\(testRunID)"
+  description = "Test API for Method"
+  endpointConfiguration = new restapi.EndpointConfiguration {
+    types = new Listing { "REGIONAL" }
+  }
+}
+
+// Resource dependency - Method needs a resource
+local testResource = new resource.Resource {
+  label = "test-resource-for-method"
+  restApiId = testApi.res.restApiId
+  parentId = testApi.res.rootResourceId
+  pathPart = "test"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ApiGateway Method"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Parent RestApi
+  testApi
+
+  // Parent Resource
+  testResource
+
+  // Method under test
+  new method.Method {
+    label = "plugin-sdk-test-method"
+    restApiId = testApi.res.restApiId
+    resourceId = testResource.res.resourceId
+    httpMethod = "GET"
+    authorizationType = "NONE"
+    integration = new method.Integration {
+      type = "MOCK"
+      requestTemplates {
+        ["application/json"] = "{\"statusCode\": 200}"
+      }
+      integrationResponses {
+        new {
+          statusCode = "200"
+          responseTemplates {
+            ["application/json"] = "{}"
+          }
+        }
+      }
+    }
+    methodResponses {
+      new {
+        statusCode = "200"
+      }
+    }
+  }
+}
