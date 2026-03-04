@@ -1,0 +1,78 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/route.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-route-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-route"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+// InternetGateway dependency - Route target
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-route"
+}
+
+// VPCGatewayAttachment - attach IGW to VPC before creating route
+local testAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-igw-attachment-for-route"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = testIgw.res.internetGatewayId
+}
+
+// RouteTable dependency
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-route"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 Route"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for Route
+  testVpc
+
+  // InternetGateway as route target
+  testIgw
+
+  // Attach IGW to VPC
+  testAttachment
+
+  // RouteTable required for Route
+  testRouteTable
+
+  // Route under test
+  new route.Route {
+    label = "plugin-sdk-test-route"
+    routeTableId = testRouteTable.res.routeTableId
+    destinationCidrBlock = "0.0.0.0/0"
+    gatewayId = testIgw.res.internetGatewayId
+  }
+}
