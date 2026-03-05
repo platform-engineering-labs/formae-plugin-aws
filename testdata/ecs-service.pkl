@@ -9,12 +9,28 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
 import "@aws/ecs/ecscluster.pkl"
 import "@aws/ecs/taskdefinition.pkl"
 import "@aws/ecs/service.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-ecs-service-\(testRunID)"
+
+// VPC + Subnet for FARGATE awsvpc networking
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-ecs-svc"
+  cidrBlock = "10.230.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-ecs-svc"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.230.1.0/24"
+  availabilityZone = "us-east-1a"
+}
 
 // ECS Cluster dependency
 local testCluster = new ecscluster.Cluster {
@@ -60,6 +76,10 @@ forma {
     }
   }
 
+  // VPC + Subnet for awsvpc networking
+  testVpc
+  testSubnet
+
   // Cluster dependency
   testCluster
 
@@ -82,7 +102,9 @@ forma {
     networkConfiguration = new service.NetworkConfiguration {
       awsvpcConfiguration = new service.AwsVpcConfiguration {
         assignPublicIp = "DISABLED"
-        subnets {}
+        subnets {
+          testSubnet.res.subnetId
+        }
       }
     }
     deploymentConfiguration = new service.DeploymentConfiguration {
