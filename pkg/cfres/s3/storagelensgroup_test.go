@@ -63,6 +63,7 @@ func TestStorageLensGroup_Update_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, "my-group", result.ProgressResult.NativeID)
+	assert.NotEmpty(t, result.ProgressResult.ResourceProperties)
 	s3Client.AssertExpectations(t)
 	stsClient.AssertExpectations(t)
 }

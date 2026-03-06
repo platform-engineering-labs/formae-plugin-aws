@@ -55,6 +55,7 @@ func TestBucketPolicy_Update_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, "my-bucket", result.ProgressResult.NativeID)
+	assert.NotEmpty(t, result.ProgressResult.ResourceProperties)
 	client.AssertExpectations(t)
 }
 

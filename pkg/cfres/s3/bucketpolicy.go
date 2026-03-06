@@ -73,9 +73,10 @@ func (bp *BucketPolicy) updateWithClient(ctx context.Context, client s3ClientInt
 
 	return &resource.UpdateResult{
 		ProgressResult: &resource.ProgressResult{
-			Operation:       resource.OperationUpdate,
-			OperationStatus: resource.OperationStatusSuccess,
-			NativeID:        request.NativeID,
+			Operation:          resource.OperationUpdate,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           request.NativeID,
+			ResourceProperties: json.RawMessage(request.DesiredProperties),
 		},
 	}, nil
 }

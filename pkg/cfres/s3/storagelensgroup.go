@@ -89,9 +89,10 @@ func (slg *StorageLensGroup) updateWithClient(ctx context.Context, client s3Cont
 
 	return &resource.UpdateResult{
 		ProgressResult: &resource.ProgressResult{
-			Operation:       resource.OperationUpdate,
-			OperationStatus: resource.OperationStatusSuccess,
-			NativeID:        request.NativeID,
+			Operation:          resource.OperationUpdate,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           request.NativeID,
+			ResourceProperties: json.RawMessage(request.DesiredProperties),
 		},
 	}, nil
 }
