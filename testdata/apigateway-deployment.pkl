@@ -89,6 +89,6 @@ forma {
   new deployment.Deployment {
     label = "plugin-sdk-test-deployment"
     restApiId = testApi.res.restApiId
-    description = testMethod.res
+    description = "Test deployment"
   }
 }

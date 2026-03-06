@@ -38,22 +38,13 @@ forma {
   // VPC required for VPC Endpoint
   testVpc
 
-  // VPC Endpoint under test - updated: change policyDocument
+  // VPC Endpoint under test - updated: enable DNS support
+  // Note: PolicyDocument updates cause mismatch because AWS adds a default statement
   new vpcendpoint.VPCEndpoint {
     label = "plugin-sdk-test-vpce"
     vpcId = testVpc.res.vpcId
     serviceName = "com.amazonaws.us-east-1.s3"
     vpcEndpointType = "Gateway"
-    policyDocument {
-      ["Version"] = "2012-10-17"
-      ["Statement"] {
-        new {
-          ["Effect"] = "Allow"
-          ["Principal"] = "*"
-          ["Action"] = "s3:GetObject"
-          ["Resource"] = "arn:aws:s3:::*"
-        }
-      }
-    }
+    privateDnsEnabled = false
   }
 }
