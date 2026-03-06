@@ -27,7 +27,7 @@ forma {
     }
   }
 
-  // StorageLensGroup with updated filter - added suffix and object size filter
+  // StorageLensGroup with updated filter - added extra prefix
   new storagelensgroup.StorageLensGroup {
     label = "plugin-sdk-test-storagelensgroup"
     name = "formae-sdk-test-slg-\(testRunID)"
@@ -36,9 +36,6 @@ forma {
         "logs/"
         "data/"
         "archive/"
-      }
-      matchObjectSize = new storagelensgroup.MatchObjectSize {
-        bytesGreaterThan = 1024
       }
     }
   }

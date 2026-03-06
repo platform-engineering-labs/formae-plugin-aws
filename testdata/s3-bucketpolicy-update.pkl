@@ -43,7 +43,7 @@ forma {
   // Bucket required for BucketPolicy
   testBucket
 
-  // BucketPolicy with updated policyDocument - added s3:GetBucketLocation action
+  // BucketPolicy with updated policyDocument - added s3:GetObject action
   new bucketpolicy.BucketPolicy {
     label = "plugin-sdk-test-bucketpolicy"
     bucket = testBucket.res.bucketName
@@ -57,7 +57,7 @@ forma {
           }
           ["Action"] {
             "s3:PutObject"
-            "s3:GetBucketLocation"
+            "s3:GetObject"
           }
           ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-bp-\(testRunID)/*"
         }
