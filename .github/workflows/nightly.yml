@@ -141,8 +141,7 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
-          FORMAE_TEST_TIMEOUT: 20
-        run: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1
+        run: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=20
 
   # Clean up test resources after all conformance tests (always runs)
   post-cleanup:
