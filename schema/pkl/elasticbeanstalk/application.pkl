@@ -37,6 +37,14 @@ open class MaxCountRule extends formae.SubResource {
     maxCount: Int?
 }
 
+open class ApplicationResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden applicationName: ApplicationResolvable = (this) {
+        property = "ApplicationName"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "ApplicationName"
@@ -51,4 +59,11 @@ open class Application extends formae.Resource {
 
     @aws.FieldHint
     resourceLifecycleConfig: ResourceLifecycleConfig
+
+    local parent = this
+
+    hidden res: ApplicationResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

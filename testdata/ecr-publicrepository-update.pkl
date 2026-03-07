@@ -9,15 +9,15 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
-import "@aws/ec2/ipam.pkl"
+import "@aws/ecr/publicrepository.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
-local stackName = "plugin-sdk-test-ec2-ipam-\(testRunID)"
+local stackName = "plugin-sdk-test-ecr-publicrepository-\(testRunID)"
 
 forma {
   new formae.Stack {
     label = stackName
-    description = "Plugin SDK test for EC2 IPAM"
+    description = "Plugin SDK test for ECR PublicRepository"
   }
 
   new formae.Target {
@@ -27,18 +27,11 @@ forma {
     }
   }
 
-  // Updated: changed description and added tag
-  new ipam.IPAM {
-    label = "plugin-sdk-test-ipam"
-    description = "Formae SDK test IPAM - updated"
-    tier = "free"
-    operatingRegions {
-      new {
-        regionName = "us-east-1"
-      }
-    }
+  // Updated: added tags
+  new publicrepository.PublicRepository {
+    label = "plugin-sdk-test-publicrepo"
+    repositoryName = "formae-plugin-sdk-test-publicrepo-\(testRunID)"
     tags {
-      new { key = "Name"; value = "formae-plugin-sdk-test-ipam-\(testRunID)" }
       new { key = "Environment"; value = "updated" }
     }
   }

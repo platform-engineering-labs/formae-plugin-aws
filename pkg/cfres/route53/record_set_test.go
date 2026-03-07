@@ -112,7 +112,14 @@ func create_record_set(rs RecordSet, propsBytes json.RawMessage, t *testing.T) r
 }
 
 func wait_for_status(rs RecordSet, requestID string, nativeID string, t *testing.T) *resource.StatusResult {
+	t.Helper()
+	deadline := time.After(2 * time.Minute)
 	for {
+		select {
+		case <-deadline:
+			t.Fatalf("Timed out waiting for status on request %s", requestID)
+		default:
+		}
 		statusRes, err := rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    requestID,
 			NativeID:     nativeID,
@@ -163,20 +170,7 @@ func TestCreate_Route53(t *testing.T) {
 		t.Fatalf("Create did not return a valid RequestID")
 	}
 	nativeID := res.ProgressResult.NativeID
-	var statusRes *resource.StatusResult
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    res.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-	}
+	wait_for_status(rs, res.ProgressResult.RequestID, nativeID, t)
 
 	_, err = rs.Read(context.Background(), &resource.ReadRequest{
 		NativeID: nativeID,
@@ -263,21 +257,8 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	nativeID := createRes.ProgressResult.NativeID
 
 	// Wait for create to be INSYNC
-	var statusRes *resource.StatusResult
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    createRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (create) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	statusRes := wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
+	_ = statusRes
 
 	// --- READ after create ---
 	readRes, err := rs.Read(context.Background(), &resource.ReadRequest{
@@ -310,20 +291,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	}
 
 	// Wait for update to be INSYNC
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    updateRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (update) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	wait_for_status(rs, updateRes.ProgressResult.RequestID, nativeID, t)
 
 	// --- READ after update ---
 	readRes, err = rs.Read(context.Background(), &resource.ReadRequest{
@@ -347,20 +315,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	}
 
 	// Wait for delete to be INSYNC
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    deleteRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (delete) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
 
 	deleteTestHostedZone(t, hostedZoneID)
 }
@@ -472,24 +427,26 @@ func TestCreate_Records(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		propsBytes, _ := json.Marshal(tc.props)
+		t.Run(tc.name, func(t *testing.T) {
+			propsBytes, _ := json.Marshal(tc.props)
 
-		t.Log("Creating", tc.name, "with properties:", string(propsBytes))
-		createRes := create_record_set(rs, propsBytes, t)
-		nativeID := createRes.ProgressResult.NativeID
-		t.Log("Created", tc.name, "with RequestID:", createRes.ProgressResult.RequestID)
+			t.Log("Creating", tc.name, "with properties:", string(propsBytes))
+			createRes := create_record_set(rs, propsBytes, t)
+			nativeID := createRes.ProgressResult.NativeID
+			t.Log("Created", tc.name, "with RequestID:", createRes.ProgressResult.RequestID)
 
-		t.Log("Waiting for create to finish")
-		wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
-		t.Log("Create completed for", tc.name)
+			t.Log("Waiting for create to finish")
+			wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
+			t.Log("Create completed for", tc.name)
 
-		t.Log("Deleting", tc.name)
-		deleteRes := delete_record_set(rs, nativeID, t)
-		t.Log("Delete RequestID:", deleteRes.ProgressResult.RequestID)
+			t.Log("Deleting", tc.name)
+			deleteRes := delete_record_set(rs, nativeID, t)
+			t.Log("Delete RequestID:", deleteRes.ProgressResult.RequestID)
 
-		t.Log("Waiting for delete to finish")
-		wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
-		t.Log("Deleted", tc.name)
+			t.Log("Waiting for delete to finish")
+			wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
+			t.Log("Deleted", tc.name)
+		})
 	}
 }
 
@@ -526,21 +483,7 @@ func TestCreate_RecordSet_2(t *testing.T) {
 	nativeID := createRes.ProgressResult.NativeID
 
 	// Wait for create to be INSYNC
-	var statusRes *resource.StatusResult
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    createRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (create) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
 
 	// --- READ after create ---
 	_, err = rs.Read(context.Background(), &resource.ReadRequest{
@@ -564,20 +507,7 @@ func TestCreate_RecordSet_2(t *testing.T) {
 	}
 
 	// Wait for delete to be INSYNC
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    deleteRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (delete) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
 }
 
 func TestRecordSet_ListRecordSets(t *testing.T) {

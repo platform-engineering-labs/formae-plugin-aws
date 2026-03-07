@@ -24,6 +24,18 @@ open class UserPolicy extends formae.SubResource {
     policyName: String
 }
 
+open class UserResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: UserResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden userName: UserResolvable = (this) {
+        property = "UserName"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "UserName"
@@ -58,4 +70,11 @@ open class User extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     userName: String?
+
+    hidden parent = this
+
+    hidden res: UserResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

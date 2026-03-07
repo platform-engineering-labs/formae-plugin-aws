@@ -9,15 +9,15 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
-import "@aws/ec2/ipam.pkl"
+import "@aws/s3/storagelensgroup.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
-local stackName = "plugin-sdk-test-ec2-ipam-\(testRunID)"
+local stackName = "plugin-sdk-test-s3-storagelensgroup-\(testRunID)"
 
 forma {
   new formae.Stack {
     label = stackName
-    description = "Plugin SDK test for EC2 IPAM"
+    description = "Plugin SDK test for S3 StorageLensGroup"
   }
 
   new formae.Target {
@@ -27,17 +27,14 @@ forma {
     }
   }
 
-  new ipam.IPAM {
-    label = "plugin-sdk-test-ipam"
-    description = "Formae SDK test IPAM"
-    tier = "free"
-    operatingRegions {
-      new {
-        regionName = "us-east-1"
+  new storagelensgroup.StorageLensGroup {
+    label = "plugin-sdk-test-storagelensgroup"
+    name = "formae-sdk-test-slg-\(testRunID)"
+    filter = new storagelensgroup.Filter {
+      matchAnyPrefix = new Listing {
+        "logs/"
+        "data/"
       }
-    }
-    tags {
-      new { key = "Name"; value = "formae-plugin-sdk-test-ipam-\(testRunID)" }
     }
   }
 }

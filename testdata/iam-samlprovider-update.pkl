@@ -1,0 +1,41 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/samlprovider.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-samlprovider-\(testRunID)"
+
+// Updated: changed SSO Location URL to /sso/v2
+local samlMetadata = #"""
+  <?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://formae-sdk-test.example.com"><md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>MIIDLTCCAhWgAwIBAgIUDBmeI8xXljM3nzdNXV+uzZnZqlIwDQYJKoZIhvcNAQELBQAwJjEkMCIGA1UEAwwbZm9ybWFlLXNkay10ZXN0LmV4YW1wbGUuY29tMB4XDTI2MDIyODA1MDMxM1oXDTM2MDIyNjA1MDMxM1owJjEkMCIGA1UEAwwbZm9ybWFlLXNkay10ZXN0LmV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmHMdRYUZ0vTcQWGTEe/dWpILGY3PxA7Lz9uQco9IoWJw0Hl087hIBFSaOWZDJd9BhFnWzyYODncq0crOyEyA8f264xdnVvep/oza5f+EygjVZz68O2fLMG2fAnwdCWQzDf7AWkLOHib3tl7k6//rv91RWgzLPaCN4JBa2R/4Uz/5K0jZQpqQSMA05lLw6UaHMipRoP6aDtN8985v8aXFGBO5l+13l70mmcAiSue+Euf2HZREolDQuhKCebWcekMQCKzKPRtr4nYsGmY6RRVW4UHJLBkezFHNmH9kOXrCVom4tvdE8oZR5hfyj103+GNBihRNg1JxVS7oCYTBR9jw5QIDAQABo1MwUTAdBgNVHQ4EFgQUROGb/18fpfBfKVWgPTAV5gqJFoYwHwYDVR0jBBgwFoAUROGb/18fpfBfKVWgPTAV5gqJFoYwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAGFFz7LvNtDLXbUq2VfawkcRZGv2dDuwu2onK3tKCRo64QzBiBeB5c8ZysIwwoYjmN3kIamUqUWKMNC6/KQrow4BMZU0oa+vzl4qZ9DdVpeAfbB78vVNkbIn+elRF7oUQd2GvLsYTZWqegUsZAMYDn2bWqbAKmEizInI8R1iURJoUp+4+OU93Qy+Qzd7rTqhwtNwsyIELYSF46f/zs2B9lvdA5PxRxmfOwxWi3+Ndm42lp3snl9ixN8WTHrE2Wx7AOVliUbTM02aGZi63L0FmZMryold1ydTjMAsxV+ewdQx6BPrEzbUaR6+o3yp3POwJzMq3G5U8Cy5hmddfXv5RFg==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://formae-sdk-test.example.com/sso/v2"/><md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://formae-sdk-test.example.com/slo"/></md:IDPSSODescriptor></md:EntityDescriptor>
+  """#
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM SAMLProvider"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // SAMLProvider with updated samlMetadataDocument (different SSO Location URL)
+  new samlprovider.SAMLProvider {
+    label = "plugin-sdk-test-samlprovider"
+    name = "formae-plugin-sdk-test-saml-\(testRunID)"
+    samlMetadataDocument = samlMetadata
+  }
+}

@@ -1,0 +1,46 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/egressonlyinternetgateway.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-eoigw-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-eoigw"
+  cidrBlock = "10.221.0.0/16"
+  enableDnsSupport = true
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 EgressOnlyInternetGateway"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for Egress Only Internet Gateway
+  testVpc
+
+  // Egress Only Internet Gateway under test
+  new egressonlyinternetgateway.EgressOnlyInternetGateway {
+    label = "plugin-sdk-test-eoigw"
+    vpcId = testVpc.res.vpcId
+  }
+}

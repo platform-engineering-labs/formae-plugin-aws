@@ -1,0 +1,106 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/lambda/func.pkl"
+import "@aws/lambda/eventsourcemapping.pkl"
+import "@aws/sqs/queue.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-lambda-eventsourcemapping-\(testRunID)"
+
+local lambdaRole = new role.Role {
+  label = "lambda-execution-role"
+  roleName = "formae-sdk-test-lambda-esm-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "lambda.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+  policies {
+    new {
+      policyName = "sqs-access"
+      policyDocument {
+        ["Version"] = "2012-10-17"
+        ["Statement"] {
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "sqs:ReceiveMessage"
+              "sqs:DeleteMessage"
+              "sqs:GetQueueAttributes"
+            }
+            ["Resource"] = "*"
+          }
+        }
+      }
+    }
+  }
+}
+
+local testFunction = new func.Function {
+  label = "test-function-for-esm"
+  functionName = "formae-sdk-test-lambda-esm-\(testRunID)"
+  role = lambdaRole.res.arn
+  runtime = "python3.12"
+  handler = "index.handler"
+  code = new func.Code {
+    zipFile = """
+      import json
+      def handler(event, context):
+          for record in event.get('Records', []):
+              print(record['body'])
+          return {'statusCode': 200}
+      """
+  }
+  memorySize = 128
+  timeout = 10
+}
+
+local testQueue = new queue.Queue {
+  label = "test-queue-for-esm"
+  queueName = "formae-sdk-test-lambda-esm-queue-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Lambda EventSourceMapping"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  lambdaRole
+
+  testFunction
+
+  testQueue
+
+  new eventsourcemapping.EventSourceMapping {
+    label = "plugin-sdk-test-lambda-esm"
+    functionName = testFunction.res.arn
+    eventSourceArn = testQueue.res.arn
+    batchSize = 5
+    enabled = false
+  }
+}
