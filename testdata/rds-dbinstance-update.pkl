@@ -82,7 +82,7 @@ forma {
     engineVersion = "8.0"
     masterUsername = "admin"
     masterUserPassword = "TestPassword123!"
-    allocatedStorage = 25
+    allocatedStorage = "25"
     dbSubnetGroupName = testSubnetGroup.res.dbSubnetGroupName
     publiclyAccessible = false
     deletionProtection = false

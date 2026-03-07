@@ -97,8 +97,14 @@ forma {
     defaultActions {
       new {
         type = "forward"
-        order = 1
-        targetGroupArn = testTg.res.targetGroupArn
+        forwardConfig = new listener.ForwardConfig {
+          targetGroups {
+            new {
+              targetGroupArn = testTg.res.targetGroupArn
+              weight = 1
+            }
+          }
+        }
       }
     }
   }

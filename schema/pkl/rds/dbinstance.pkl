@@ -92,7 +92,7 @@ open class DBInstanceResolvable extends formae.Resolvable {
 open class DBInstance extends formae.Resource {
 
     @aws.FieldHint
-    allocatedStorage: Int?
+    allocatedStorage: String?
 
     @aws.FieldHint{writeOnly = true}
     allowMajorVersionUpgrade: Boolean?

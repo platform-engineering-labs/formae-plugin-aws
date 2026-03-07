@@ -58,13 +58,18 @@ forma {
   testSubnet1
   testSubnet2
 
-  // Application Load Balancer under test - updated: change ipAddressType
+  // Application Load Balancer under test - updated: add idle timeout attribute
   new loadbalancer.LoadBalancer {
     label = "plugin-sdk-test-alb"
     name = "formae-sdk-test-\(testRunID)"
     scheme = "internal"
     type = "application"
-    ipAddressType = "ipv4"
+    loadBalancerAttributes {
+      new {
+        key = "idle_timeout.timeout_seconds"
+        value = "120"
+      }
+    }
     subnets {
       testSubnet1.res.subnetId
       testSubnet2.res.subnetId

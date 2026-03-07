@@ -37,9 +37,6 @@ forma {
         "data/"
         "archive/"
       }
-      matchObjectSize = new storagelensgroup.MatchObjectSize {
-        bytesGreaterThan = 1024
-      }
     }
   }
 }
