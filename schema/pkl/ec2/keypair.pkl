@@ -50,13 +50,14 @@ open class KeyPair extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     keyType: KeyType?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     publicKeyMaterial: String?
 
     @aws.FieldHint {
         createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

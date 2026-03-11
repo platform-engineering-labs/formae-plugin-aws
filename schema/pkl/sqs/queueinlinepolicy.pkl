@@ -18,7 +18,9 @@ const type = "AWS::SQS::QueueInlinePolicy"
 }
 open class QueueInlinePolicy extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint {
+        createOnly = true
+    }
     policyDocument: Dynamic
 
     @aws.FieldHint {

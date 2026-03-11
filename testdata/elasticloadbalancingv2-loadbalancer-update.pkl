@@ -1,0 +1,78 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-elbv2-lb-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-alb"
+  cidrBlock = "10.224.0.0/16"
+  enableDnsSupport = true
+}
+
+// Two subnets in different AZs required for ALB
+local testSubnet1 = new subnet.Subnet {
+  label = "test-subnet-1-for-alb"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.224.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnet2 = new subnet.Subnet {
+  label = "test-subnet-2-for-alb"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.224.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ELBv2 LoadBalancer"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for ALB
+  testVpc
+
+  // Subnets required for ALB (minimum 2 AZs)
+  testSubnet1
+  testSubnet2
+
+  // Application Load Balancer under test - updated: add idle timeout attribute
+  new loadbalancer.LoadBalancer {
+    label = "plugin-sdk-test-alb"
+    name = "formae-sdk-test-\(testRunID)"
+    scheme = "internal"
+    type = "application"
+    loadBalancerAttributes {
+      new {
+        key = "idle_timeout.timeout_seconds"
+        value = "120"
+      }
+    }
+    subnets {
+      testSubnet1.res.subnetId
+      testSubnet2.res.subnetId
+    }
+  }
+}

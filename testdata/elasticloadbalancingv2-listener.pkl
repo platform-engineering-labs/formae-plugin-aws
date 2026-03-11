@@ -1,0 +1,111 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/elasticloadbalancingv2/targetgroup.pkl"
+import "@aws/elasticloadbalancingv2/listener.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-elbv2-listener-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-listener"
+  cidrBlock = "10.226.0.0/16"
+  enableDnsSupport = true
+}
+
+// Two subnets in different AZs required for ALB
+local testSubnet1 = new subnet.Subnet {
+  label = "test-subnet-1-for-listener"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.226.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnet2 = new subnet.Subnet {
+  label = "test-subnet-2-for-listener"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.226.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+// Load Balancer dependency
+local testAlb = new loadbalancer.LoadBalancer {
+  label = "test-alb-for-listener"
+  name = "formae-sdk-lstnr-\(testRunID)"
+  scheme = "internal"
+  type = "application"
+  subnets {
+    testSubnet1.res.subnetId
+    testSubnet2.res.subnetId
+  }
+}
+
+// Target Group dependency
+local testTg = new targetgroup.TargetGroup {
+  label = "test-tg-for-listener"
+  name = "formae-sdk-ltg-\(testRunID)"
+  port = 80
+  protocol = "HTTP"
+  targetType = "ip"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ELBv2 Listener"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for Listener chain
+  testVpc
+
+  // Subnets required for ALB
+  testSubnet1
+  testSubnet2
+
+  // ALB required for Listener
+  testAlb
+
+  // Target Group required for Listener default action
+  testTg
+
+  // Listener under test
+  new listener.Listener {
+    label = "plugin-sdk-test-listener"
+    loadBalancerArn = testAlb.res.loadBalancerArn
+    port = 80
+    protocol = "HTTP"
+    defaultActions {
+      new {
+        type = "forward"
+        forwardConfig = new listener.ForwardConfig {
+          targetGroups {
+            new {
+              targetGroupArn = testTg.res.targetGroupArn
+              weight = 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

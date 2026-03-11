@@ -37,7 +37,7 @@ open class NatGateway extends formae.Resource {
     @aws.FieldHint{writeOnly = true}
     maxDrainDurationSeconds: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     privateIpAddress: String?
 
     @aws.FieldHint
@@ -55,6 +55,7 @@ open class NatGateway extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

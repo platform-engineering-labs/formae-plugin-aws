@@ -88,7 +88,7 @@ open class Deployment extends formae.Resource {
     deploymentCanarySettings: CanarySetting?
 
     @aws.FieldHint{createOnly = true}
-    description: String?
+    description: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     restApiId: String|formae.Resolvable

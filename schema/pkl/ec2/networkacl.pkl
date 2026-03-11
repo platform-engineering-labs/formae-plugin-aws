@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::NetworkAcl"
 
+open class NetworkAclResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: NetworkAclResolvable = (this) {
+        property = "Id"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
@@ -20,9 +28,17 @@ open class NetworkAcl extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 
     @aws.FieldHint{createOnly = true}
     vpcId: String|formae.Resolvable
+
+    local parent = this
+
+    hidden res: NetworkAclResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

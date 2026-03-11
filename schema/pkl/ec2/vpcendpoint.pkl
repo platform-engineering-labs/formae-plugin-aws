@@ -31,39 +31,40 @@ open class DnsOptions extends formae.SubResource {
 }
 open class VPCEndpoint extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     dnsOptions: DnsOptions?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     ipAddressType: VPCEndpointIpAddressType?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     policyDocument: Dynamic?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     privateDnsEnabled: Boolean?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     resourceConfigurationArn: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     routeTableIds: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     securityGroupIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}
     serviceName: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     serviceNetworkArn: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     subnetIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

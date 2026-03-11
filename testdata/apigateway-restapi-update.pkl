@@ -1,0 +1,39 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/apigateway/restapi.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-apigateway-restapi-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ApiGateway RestApi"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Updated: changed description
+  new restapi.RestApi {
+    label = "plugin-sdk-test-restapi"
+    name = "formae-sdk-test-api-\(testRunID)"
+    description = "Test API - updated"
+    endpointConfiguration = new restapi.EndpointConfiguration {
+      types = new Listing { "REGIONAL" }
+    }
+  }
+}

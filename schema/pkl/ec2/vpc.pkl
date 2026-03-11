@@ -50,7 +50,7 @@ open class VPC extends formae.Resource {
     enableDnsSupport: Boolean?
 
     // Updating InstanceTenancy requires no replacement only if you are updating its value from dedicated to default. Updating InstanceTenancy from default to dedicated requires replacement.
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     instanceTenancy: String?
 
     @aws.FieldHint{

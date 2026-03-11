@@ -1,0 +1,42 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/rds/optiongroup.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-rds-optiongroup-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for RDS OptionGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Changed optionGroupName (createOnly) - triggers replace
+  new optiongroup.OptionGroup {
+    label = "plugin-sdk-test-optiongroup"
+    optionGroupName = "formae-sdk-test-og-replaced-\(testRunID)"
+    optionGroupDescription = "Formae SDK test option group"
+    engineName = "mysql"
+    majorEngineVersion = "8.0"
+    tags {
+      new { key = "Name"; value = "formae-sdk-test-og-\(testRunID)" }
+      new { key = "Environment"; value = "updated" }
+    }
+  }
+}

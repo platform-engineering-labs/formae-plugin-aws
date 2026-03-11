@@ -62,7 +62,7 @@ open class Stage extends formae.Resource {
     @aws.FieldHint
     accessLogSetting: AccessLogSetting?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     cacheClusterEnabled: Boolean?
 
     @aws.FieldHint
@@ -98,7 +98,7 @@ open class Stage extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     tracingEnabled: Boolean?
 
     @aws.FieldHint

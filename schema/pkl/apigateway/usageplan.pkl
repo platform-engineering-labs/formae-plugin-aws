@@ -46,7 +46,7 @@ open class ThrottleSettings extends formae.SubResource {
 }
 open class UsagePlan extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     apiStages: Listing<ApiStage>?
 
     @aws.FieldHint
@@ -58,6 +58,7 @@ open class UsagePlan extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

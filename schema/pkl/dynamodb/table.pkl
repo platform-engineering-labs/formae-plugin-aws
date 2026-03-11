@@ -149,10 +149,10 @@ open class Table extends formae.Resource {
     @aws.FieldHint
     billingMode: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     contributorInsightsSpecification: ContributorInsightsSpecification?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     deletionProtectionEnabled: Boolean?
 
     @aws.FieldHint
@@ -176,7 +176,7 @@ open class Table extends formae.Resource {
     @aws.FieldHint
     onDemandThroughput: OnDemandThroughput?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     pointInTimeRecoverySpecification: PointInTimeRecoverySpecification?
 
     @aws.FieldHint
@@ -185,7 +185,7 @@ open class Table extends formae.Resource {
     @aws.FieldHint
     resourcePolicy: ResourcePolicy?
 
-    @aws.FieldHint {outputField = "SSESpecification"}
+    @aws.FieldHint {outputField = "SSESpecification"; hasProviderDefault = true}
     sseSpecification: SSESpecification?
 
     @aws.FieldHint
@@ -200,13 +200,14 @@ open class Table extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     timeToLiveSpecification: TimeToLiveSpecification?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     warmThroughput: WarmThroughput?
 
 }

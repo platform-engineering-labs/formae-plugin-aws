@@ -43,7 +43,7 @@ open class AccessPoint extends formae.Resource {
     @aws.FieldHint
     policy: Dynamic?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     publicAccessBlockConfiguration: PublicAccessBlockConfiguration?
 
     @aws.FieldHint{createOnly = true}

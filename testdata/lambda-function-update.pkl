@@ -1,0 +1,70 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/lambda/func.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-lambda-function-\(testRunID)"
+
+local lambdaRole = new role.Role {
+  label = "lambda-execution-role"
+  roleName = "formae-sdk-test-lambda-fn-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "lambda.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Lambda Function"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  lambdaRole
+
+  new func.Function {
+    label = "plugin-sdk-test-lambda-function"
+    functionName = "formae-sdk-test-lambda-fn-\(testRunID)"
+    role = lambdaRole.res.arn
+    runtime = "python3.12"
+    handler = "index.handler"
+    code = new func.Code {
+      zipFile = """
+        import json
+        def handler(event, context):
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'message': 'hello from formae'})
+            }
+        """
+    }
+    description = "Formae SDK test lambda function - updated"
+    memorySize = 256
+    timeout = 30
+  }
+}
