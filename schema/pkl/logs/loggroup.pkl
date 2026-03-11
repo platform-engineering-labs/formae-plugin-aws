@@ -39,16 +39,16 @@ open class LogGroupResolvable extends formae.Resolvable {
 }
 open class LogGroup extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     dataProtectionPolicy: Dynamic?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     fieldIndexPolicies: Listing<Dynamic>?
 
     @aws.FieldHint
     kmsKeyId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     logGroupClass: LogGroupClassType?
 
     @aws.FieldHint{createOnly = true}

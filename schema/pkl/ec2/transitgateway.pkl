@@ -29,19 +29,22 @@ open class TransitGatewayResolvable extends formae.Resolvable {
 }
 open class TransitGateway extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     amazonSideAsn: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     associationDefaultRouteTableId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     autoAcceptSharedAttachments: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     defaultRouteTableAssociation: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     defaultRouteTablePropagation: String?
 
     @aws.FieldHint
@@ -50,13 +53,16 @@ open class TransitGateway extends formae.Resource {
     @aws.FieldHint
     dnsSupport: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     multicastSupport: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     propagationDefaultRouteTableId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     securityGroupReferencingSupport: String?
 
     @aws.FieldHint {
@@ -65,7 +71,7 @@ open class TransitGateway extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     transitGatewayCidrBlocks: Listing<String>?
 
     @aws.FieldHint

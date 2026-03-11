@@ -43,16 +43,19 @@ open class Role extends formae.Resource {
     @aws.FieldHint
     assumeRolePolicyDocument: Dynamic
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     description: String?
 
     @aws.FieldHint
     managedPolicyArns: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     maxSessionDuration: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     path: String?
 
     @aws.FieldHint

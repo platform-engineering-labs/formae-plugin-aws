@@ -43,7 +43,7 @@ open class OptionGroup extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     majorEngineVersion: String
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     optionConfigurations: Listing<OptionConfiguration>?
 
     @aws.FieldHint{createOnly = true}

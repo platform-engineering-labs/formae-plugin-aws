@@ -137,7 +137,7 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint
     kmsKeyArn: (String(matches(Regex(#"(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()"#)))|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     maximumBatchingWindowInSeconds: Int?
 
     @aws.FieldHint
@@ -179,6 +179,7 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

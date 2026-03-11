@@ -34,7 +34,10 @@ open class AccessPoint extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     bucket: String|formae.Resolvable
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     bucketAccountId: String(matches(Regex(#"^\d{12}$"#)))?
 
     @aws.FieldHint{createOnly = true}

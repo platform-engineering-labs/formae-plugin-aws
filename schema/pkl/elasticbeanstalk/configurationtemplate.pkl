@@ -46,7 +46,10 @@ open class ConfigurationTemplate extends formae.Resource {
     @aws.FieldHint
     optionSettings: Listing<ConfigurationOptionSetting>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     platformArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}

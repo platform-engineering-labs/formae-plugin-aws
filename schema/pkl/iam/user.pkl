@@ -53,7 +53,7 @@ open class User extends formae.Resource {
     @aws.FieldHint
     managedPolicyArns: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     path: String?
 
     @aws.FieldHint

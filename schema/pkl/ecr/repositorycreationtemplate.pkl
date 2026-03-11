@@ -34,7 +34,7 @@ open class RepositoryCreationTemplate extends formae.Resource {
     @aws.FieldHint
     description: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     encryptionConfiguration: EncryptionConfiguration?
 
     @aws.FieldHint

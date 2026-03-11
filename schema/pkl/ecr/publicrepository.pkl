@@ -29,7 +29,7 @@ open class PublicRepositoryResolvable extends formae.Resolvable {
 }
 open class PublicRepository extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     repositoryCatalogData: Dynamic?
 
     @aws.FieldHint
@@ -41,6 +41,7 @@ open class PublicRepository extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

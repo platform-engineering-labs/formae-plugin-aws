@@ -30,10 +30,10 @@ open class GlobalCluster extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     engine: Engine?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     engineLifecycleSupport: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     engineVersion: String?
 
     @aws.FieldHint{createOnly = true}
@@ -51,6 +51,7 @@ open class GlobalCluster extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 }

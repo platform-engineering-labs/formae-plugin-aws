@@ -21,6 +21,7 @@ open class CreationInfo extends formae.SubResource {
 @aws.SubResourceHint
 open class PosixUser extends formae.SubResource {
     gid: String
+    @aws.FieldHint{hasProviderDefault = true}
     secondaryGids: Listing<String>?
     uid: String
 }
@@ -53,12 +54,13 @@ open class AccessPointResolvable extends formae.Resolvable {
 }
 open class AccessPoint extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     accessPointTags: Listing<aws.Tag>?
 
     @aws.FieldHint{
         createOnly = true
         writeOnly = true
+        hasProviderDefault = true
     }
     clientToken: (String)?
 

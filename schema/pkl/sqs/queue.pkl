@@ -110,6 +110,7 @@ open class Queue extends formae.Resource {
 
     @aws.FieldHint {
         outputTransformation = (it) -> it.toUnit("s").value
+        hasProviderDefault = true
     }
     visibilityTimeout: Duration(isBetween(0.s, 43200.s))?
 

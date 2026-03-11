@@ -59,18 +59,19 @@ open class LoadBalancerResolvable extends formae.Resolvable {
 }
 open class LoadBalancer extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enablePrefixForIpv6SourceNat: String?
 
     @aws.FieldHint
     enforceSecurityGroupInboundRulesOnPrivateLinkTraffic: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     ipAddressType: String?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     loadBalancerAttributes: Listing<LoadBalancerAttribute>?
 
@@ -83,10 +84,10 @@ open class LoadBalancer extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     scheme: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     securityGroups: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     subnetMappings: Listing<SubnetMapping>?
 
     @aws.FieldHint
@@ -95,6 +96,7 @@ open class LoadBalancer extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

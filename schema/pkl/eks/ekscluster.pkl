@@ -108,9 +108,12 @@ open class RemotePodNetwork extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ResourcesVpcConfig extends formae.SubResource {
+    @aws.FieldHint{hasProviderDefault = true}
     endpointPrivateAccess: Boolean?
     endpointPublicAccess: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     publicAccessCidrs: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     securityGroupIds: Listing<String|formae.Resolvable>?
     subnetIds: Listing<String|formae.Resolvable>
 }
@@ -151,6 +154,7 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint{
         createOnly = true
         writeOnly = true
+        hasProviderDefault = true
     }
     accessConfig: AccessConfig?
 
@@ -160,16 +164,16 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint
     computeConfig: ComputeConfig?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     encryptionConfig: Listing<EncryptionConfig>?
 
     @aws.FieldHint{writeOnly = true}
     force: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     kubernetesNetworkConfig: KubernetesNetworkConfig?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     logging: Logging?
 
     @aws.FieldHint{createOnly = true}
@@ -196,7 +200,7 @@ open class Cluster extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     upgradePolicy: UpgradePolicy?
 
     @aws.FieldHint

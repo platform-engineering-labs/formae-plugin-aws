@@ -23,6 +23,7 @@ open class OIDCProvider extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

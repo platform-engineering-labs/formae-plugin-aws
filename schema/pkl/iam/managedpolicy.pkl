@@ -22,21 +22,24 @@ open class ManagedPolicy extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     description: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     groups: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
     managedPolicyName: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     path: String?
 
     @aws.FieldHint
     policyDocument: Dynamic
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     roles: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     users: Listing<String|formae.Resolvable>?
 }

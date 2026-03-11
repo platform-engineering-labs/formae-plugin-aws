@@ -39,13 +39,16 @@ open class Repository extends formae.Resource {
     @aws.FieldHint{writeOnly = true}
     emptyOnDelete: Boolean?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     encryptionConfiguration: EncryptionConfiguration?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     imageScanningConfiguration: ImageScanningConfiguration?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     imageTagMutability: ImageTagMutability?
 
     @aws.FieldHint
@@ -60,6 +63,7 @@ open class Repository extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 }

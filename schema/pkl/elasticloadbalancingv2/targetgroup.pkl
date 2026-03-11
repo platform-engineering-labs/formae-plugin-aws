@@ -56,31 +56,34 @@ open class TargetGroupResolvable extends formae.Resolvable {
 }
 open class TargetGroup extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckEnabled: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckIntervalSeconds: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckPath: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckPort: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckProtocol: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckTimeoutSeconds: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthyThresholdCount: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     ipAddressType: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     matcher: Matcher?
 
     @aws.FieldHint{createOnly = true}
@@ -92,28 +95,33 @@ open class TargetGroup extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     protocol: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     protocolVersion: String?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     targetGroupAttributes: Listing<TargetGroupAttribute>?
 
     @aws.FieldHint{createOnly = true}
     targetType: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     targets: Listing<TargetDescription>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     unhealthyThresholdCount: Int?
 
     @aws.FieldHint{createOnly = true}
