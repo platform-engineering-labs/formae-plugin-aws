@@ -283,6 +283,21 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		identifier = *result.ProgressEvent.Identifier
 	}
 
+	// NOT_STABILIZED means the resource is still being provisioned — CloudControl's
+	// internal stabilization window expired but the operation is still in progress.
+	// Treat as InProgress so the PluginOperator keeps polling rather than consuming
+	// a retry attempt by re-invoking the entire CRUD operation.
+	if result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotStabilized {
+		operationStatus = resource.OperationStatusInProgress
+	}
+
+	// NOT_FOUND during a Create operation means the resource hasn't propagated yet
+	// in AWS's control plane. Treat as InProgress to keep polling rather than
+	// retrying the create (which could cause AlreadyExists errors).
+	if result.ProgressEvent.Operation == cctypes.OperationCreate && result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotFound {
+		operationStatus = resource.OperationStatusInProgress
+	}
+
 	// If the resource is not found, we return a success status when it is a delete operation
 	if result.ProgressEvent.Operation == cctypes.OperationDelete && result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotFound {
 		return &resource.StatusResult{

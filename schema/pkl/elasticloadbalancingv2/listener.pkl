@@ -19,6 +19,7 @@ open class Action extends formae.SubResource {
     forwardConfig: ForwardConfig?
     order: Int?
     redirectConfig: RedirectConfig?
+    @aws.FieldHint{hasProviderDefault = true}
     targetGroupArn: (String|formae.Resolvable)?
     type: String
 }
@@ -66,6 +67,7 @@ open class FixedResponseConfig extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ForwardConfig extends formae.SubResource {
+    @aws.FieldHint{hasProviderDefault = true}
     targetGroupStickinessConfig: TargetGroupStickinessConfig?
     targetGroups: Listing<TargetGroupTuple>?
 }

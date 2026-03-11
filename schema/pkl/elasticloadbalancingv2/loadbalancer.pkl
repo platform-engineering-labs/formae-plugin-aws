@@ -68,7 +68,10 @@ open class LoadBalancer extends formae.Resource {
     @aws.FieldHint
     ipAddressType: String?
 
-    @aws.FieldHint
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
     loadBalancerAttributes: Listing<LoadBalancerAttribute>?
 
     @aws.FieldHint
