@@ -32,7 +32,7 @@ open class SecurityGroupIngress extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     groupId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     groupName: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}

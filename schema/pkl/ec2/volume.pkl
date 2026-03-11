@@ -27,22 +27,22 @@ typealias VolumeType = "standard" | "io1" | "io2" | "gp2" | "sc1" | "st1" | "gp3
 }
 open class Volume extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     autoEnableIO: Boolean?
 
     @aws.FieldHint
     availabilityZone: aws.AvailabilityZone
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     encrypted: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     iops: Int?
 
     @aws.FieldHint
     kmsKeyId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     multiAttachEnabled: Boolean?
 
     @aws.FieldHint
@@ -57,10 +57,11 @@ open class Volume extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     throughput: Int?
 
     @aws.FieldHint

@@ -38,13 +38,13 @@ open class FlowLog extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     logDestinationType: FlowLogLogDestinationType?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     logFormat: String?
 
     @aws.FieldHint{createOnly = true}
     logGroupName: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     maxAggregationInterval: Int?
 
     @aws.FieldHint{createOnly = true}
@@ -56,6 +56,7 @@ open class FlowLog extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 
