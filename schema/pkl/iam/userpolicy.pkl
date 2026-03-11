@@ -14,6 +14,7 @@ const type = "AWS::IAM::UserPolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "PolicyName"
+    parent = "AWS::IAM::User"
     discoverable = false
 }
 open class UserPolicy extends formae.Resource {

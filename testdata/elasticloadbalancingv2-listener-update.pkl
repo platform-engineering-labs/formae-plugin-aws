@@ -97,6 +97,7 @@ forma {
     defaultActions {
       new {
         type = "forward"
+        order = 1
         forwardConfig = new listener.ForwardConfig {
           targetGroups {
             new {
