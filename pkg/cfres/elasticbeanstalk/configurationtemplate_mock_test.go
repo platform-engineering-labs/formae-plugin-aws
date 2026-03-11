@@ -22,6 +22,11 @@ func (m *mockEBClient) UpdateConfigurationTemplate(ctx context.Context, input *e
 	return args.Get(0).(*elasticbeanstalk.UpdateConfigurationTemplateOutput), args.Error(1)
 }
 
+func (m *mockEBClient) DescribeConfigurationSettings(ctx context.Context, input *elasticbeanstalk.DescribeConfigurationSettingsInput, optFns ...func(*elasticbeanstalk.Options)) (*elasticbeanstalk.DescribeConfigurationSettingsOutput, error) {
+	args := m.Called(ctx, input)
+	return args.Get(0).(*elasticbeanstalk.DescribeConfigurationSettingsOutput), args.Error(1)
+}
+
 func matchAppAndTemplate(appName, templateName string) any {
 	return mock.MatchedBy(func(input *elasticbeanstalk.UpdateConfigurationTemplateInput) bool {
 		return input.ApplicationName != nil && *input.ApplicationName == appName &&

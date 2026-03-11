@@ -70,7 +70,7 @@ forma {
           }
           ["Action"] {
             "s3:PutObject"
-            "s3:GetBucketLocation"
+            "s3:DeleteObject"
           }
           ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-bp-2-\(testRunID)/*"
         }

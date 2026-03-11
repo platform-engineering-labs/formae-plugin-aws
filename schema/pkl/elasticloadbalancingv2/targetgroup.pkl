@@ -101,7 +101,10 @@ open class TargetGroup extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
     targetGroupAttributes: Listing<TargetGroupAttribute>?
 
     @aws.FieldHint{createOnly = true}

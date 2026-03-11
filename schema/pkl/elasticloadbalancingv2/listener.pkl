@@ -125,7 +125,10 @@ open class Listener extends formae.Resource {
     @aws.FieldHint
     defaultActions: Listing<Action>
 
-    @aws.FieldHint
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
     listenerAttributes: Listing<ListenerAttribute>?
 
     @aws.FieldHint{createOnly = true}

@@ -21,6 +21,7 @@ import (
 
 type ebClientInterface interface {
 	UpdateConfigurationTemplate(ctx context.Context, params *elasticbeanstalk.UpdateConfigurationTemplateInput, optFns ...func(*elasticbeanstalk.Options)) (*elasticbeanstalk.UpdateConfigurationTemplateOutput, error)
+	DescribeConfigurationSettings(ctx context.Context, params *elasticbeanstalk.DescribeConfigurationSettingsInput, optFns ...func(*elasticbeanstalk.Options)) (*elasticbeanstalk.DescribeConfigurationSettingsOutput, error)
 }
 
 type ConfigurationTemplate struct {
@@ -31,7 +32,7 @@ var _ prov.Provisioner = &ConfigurationTemplate{}
 
 func init() {
 	registry.Register("AWS::ElasticBeanstalk::ConfigurationTemplate",
-		[]resource.Operation{resource.OperationUpdate},
+		[]resource.Operation{resource.OperationRead, resource.OperationUpdate},
 		func(cfg *config.Config) prov.Provisioner {
 			return &ConfigurationTemplate{cfg: cfg}
 		})
@@ -116,8 +117,66 @@ func (ct *ConfigurationTemplate) Create(_ context.Context, _ *resource.CreateReq
 	return nil, fmt.Errorf("operation not implemented - cloudcontrol handles this")
 }
 
-func (ct *ConfigurationTemplate) Read(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
-	return nil, fmt.Errorf("operation not implemented - cloudcontrol handles this")
+func (ct *ConfigurationTemplate) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	awsCfg, err := ct.cfg.ToAwsConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading AWS config: %w", err)
+	}
+	client := elasticbeanstalk.NewFromConfig(awsCfg)
+	return ct.readWithClient(ctx, client, request)
+}
+
+func (ct *ConfigurationTemplate) readWithClient(ctx context.Context, client ebClientInterface, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	appName, templateName, err := parseNativeID(request.NativeID)
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := client.DescribeConfigurationSettings(ctx, &elasticbeanstalk.DescribeConfigurationSettingsInput{
+		ApplicationName: &appName,
+		TemplateName:    &templateName,
+	})
+	if err != nil {
+		// EB returns an error if the template or application doesn't exist
+		return &resource.ReadResult{
+			ResourceType: request.ResourceType,
+			ErrorCode:    resource.OperationErrorCodeNotFound,
+		}, nil
+	}
+
+	if len(output.ConfigurationSettings) == 0 {
+		return &resource.ReadResult{
+			ResourceType: request.ResourceType,
+			ErrorCode:    resource.OperationErrorCodeNotFound,
+		}, nil
+	}
+
+	settings := output.ConfigurationSettings[0]
+
+	// Build properties in CloudFormation-compatible format
+	props := map[string]any{
+		"ApplicationName": appName,
+		"TemplateName":    templateName,
+	}
+	if settings.Description != nil && *settings.Description != "" {
+		props["Description"] = *settings.Description
+	}
+	if settings.PlatformArn != nil && *settings.PlatformArn != "" {
+		props["PlatformArn"] = *settings.PlatformArn
+	}
+	if settings.SolutionStackName != nil && *settings.SolutionStackName != "" {
+		props["SolutionStackName"] = *settings.SolutionStackName
+	}
+
+	propsJSON, err := json.Marshal(props)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling properties: %w", err)
+	}
+
+	return &resource.ReadResult{
+		ResourceType: request.ResourceType,
+		Properties:   string(propsJSON),
+	}, nil
 }
 
 func (ct *ConfigurationTemplate) Delete(_ context.Context, _ *resource.DeleteRequest) (*resource.DeleteResult, error) {
