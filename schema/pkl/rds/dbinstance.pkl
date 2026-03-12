@@ -237,7 +237,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint{hasProviderDefault = true}
     engineLifecycleSupport: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     engineVersion: String?
 
     @aws.FieldHint

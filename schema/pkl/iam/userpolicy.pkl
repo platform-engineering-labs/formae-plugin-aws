@@ -26,5 +26,5 @@ open class UserPolicy extends formae.Resource {
     policyName: String
 
     @aws.FieldHint{createOnly = true}
-    userName: String
+    userName: String|formae.Resolvable
 }

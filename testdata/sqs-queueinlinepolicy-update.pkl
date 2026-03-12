@@ -37,7 +37,7 @@ forma {
   // Queue required for QueueInlinePolicy
   testQueue
 
-  // QueueInlinePolicy with updated policyDocument - added ReceiveMessage action
+  // QueueInlinePolicy with updated policyDocument - changed action
   new queueinlinepolicy.QueueInlinePolicy {
     label = "plugin-sdk-test-queueinlinepolicy"
     queue = testQueue.res.queueUrl
@@ -47,10 +47,7 @@ forma {
         new {
           ["Effect"] = "Allow"
           ["Principal"] = "*"
-          ["Action"] {
-            "sqs:SendMessage"
-            "sqs:ReceiveMessage"
-          }
+          ["Action"] = "sqs:ReceiveMessage"
           ["Resource"] = "*"
         }
       }

@@ -41,7 +41,7 @@ forma {
   // GroupPolicy under test
   new grouppolicy.GroupPolicy {
     label = "plugin-sdk-test-grouppolicy"
-    groupName = "formae-plugin-sdk-test-gp-group-\(testRunID)"
+    groupName = parentGroup.res.groupName
     policyName = "formae-plugin-sdk-test-grouppolicy-\(testRunID)"
     policyDocument {
       ["Version"] = "2012-10-17"

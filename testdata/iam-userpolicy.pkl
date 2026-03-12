@@ -40,7 +40,7 @@ forma {
   // UserPolicy under test
   new userpolicy.UserPolicy {
     label = "plugin-sdk-test-userpolicy"
-    userName = "formae-plugin-sdk-test-up-user-\(testRunID)"
+    userName = parentUser.res.userName
     policyName = "formae-plugin-sdk-test-userpolicy-\(testRunID)"
     policyDocument {
       ["Version"] = "2012-10-17"

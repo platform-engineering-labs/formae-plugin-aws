@@ -20,7 +20,7 @@ const type = "AWS::IAM::GroupPolicy"
 open class GroupPolicy extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    groupName: String
+    groupName: String|formae.Resolvable
 
     @aws.FieldHint
     policyDocument: Dynamic?

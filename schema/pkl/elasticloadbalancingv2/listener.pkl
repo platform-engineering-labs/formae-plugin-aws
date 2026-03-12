@@ -122,7 +122,7 @@ open class Listener extends formae.Resource {
     @aws.FieldHint
     certificates: Listing<Certificate>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     defaultActions: Listing<Action>
 
     @aws.FieldHint {

@@ -17,6 +17,18 @@ open class GroupPolicy extends formae.SubResource {
     policyName: String
 }
 
+open class GroupResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: GroupResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden groupName: GroupResolvable = (this) {
+        property = "GroupName"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "GroupName"
@@ -34,4 +46,11 @@ open class Group extends formae.Resource {
 
     @aws.FieldHint
     policies: Listing<GroupPolicy>?
+
+    hidden parent = this
+
+    hidden res: GroupResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
