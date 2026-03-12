@@ -79,7 +79,7 @@ forma {
     dbInstanceIdentifier = "formae-sdk-test-db-\(testRunID)"
     dbInstanceClass = "db.t3.micro"
     engine = "mysql"
-    engineVersion = "8.0"
+
     masterUsername = "admin"
     masterUserPassword = "TestPassword123!"
     allocatedStorage = "25"

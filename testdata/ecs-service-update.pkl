@@ -83,9 +83,8 @@ forma {
   // Cluster dependency
   testCluster
 
-  // TaskDefinition NOT re-included: all its fields are createOnly,
-  // so re-sending it in patch mode would trigger NotUpdatableException.
-  // The existing TaskDefinition from the create step is referenced via Resolvable.
+  // TaskDefinition dependency (must be in forma block for Resolvable eval)
+  testTaskDef
 
   // Updated: changed deploymentConfiguration
   new service.Service {
