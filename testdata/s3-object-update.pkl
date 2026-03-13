@@ -1,0 +1,48 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/object.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-s3-object-\(testRunID)"
+
+local myBucket = new bucket.Bucket {
+  label = "s3-object-test-bucket"
+  bucketName = "formae-plugin-sdk-test-obj-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for S3 Object"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  myBucket
+
+  new object.Object {
+    label = "plugin-sdk-test-object"
+    bucket = myBucket.res.bucketName
+    key = "test-artifacts/hello.txt"
+    source = "https://raw.githubusercontent.com/aws/aws-sdk-go-v2/main/NOTICE.txt"
+    contentType = "application/octet-stream"
+    storageClass = "STANDARD"
+  }
+}

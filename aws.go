@@ -94,6 +94,8 @@ func (p *Plugin) LabelConfig() plugin.LabelConfig {
 			"AWS::IAM::Group":         "$.GroupName",
 			// Route53 records use Name property
 			"AWS::Route53::RecordSet": "$.Name",
+			// S3 objects use Key property
+			"AWS::S3::Object": "$.Key",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",
