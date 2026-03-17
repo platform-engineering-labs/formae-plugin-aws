@@ -26,9 +26,11 @@ typealias ContainerDefinitionVersionConsistency = "enabled"|"disabled"
 @aws.SubResourceHint
 open class ContainerDefinition extends formae.SubResource {
     command: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     cpu: Int?
     credentialSpecs: Listing<String>?
     dependsOn: Listing<ContainerDependency>?
+    @aws.FieldHint{hasProviderDefault = true}
     disableNetworking: Boolean?
     dnsSearchDomains: Listing<String>?
     dnsServers: Listing<String>?
@@ -37,29 +39,38 @@ open class ContainerDefinition extends formae.SubResource {
     entryPoint: Listing<String>?
     environment: Listing<KeyValuePair>?
     environmentFiles: Listing<EnvironmentFile>?
+    @aws.FieldHint{hasProviderDefault = true}
     essential: Boolean?
     extraHosts: Listing<HostEntry>?
     firelensConfiguration: FirelensConfiguration?
     healthCheck: HealthCheck?
     hostname: String?
     image: String
+    @aws.FieldHint{hasProviderDefault = true}
     interactive: Boolean?
     links: Listing<String>?
     linuxParameters: LinuxParameters?
     logConfiguration: LogConfiguration?
+    @aws.FieldHint{hasProviderDefault = true}
     memory: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     memoryReservation: Int?
     mountPoints: Listing<MountPoint>?
     name: String
     portMappings: Listing<PortMapping>?
+    @aws.FieldHint{hasProviderDefault = true}
     privileged: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     pseudoTerminal: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     readonlyRootFilesystem: Boolean?
     repositoryCredentials: RepositoryCredentials?
     resourceRequirements: Listing<ResourceRequirement>?
     restartPolicy: RestartPolicy?
     secrets: Listing<Secret>?
+    @aws.FieldHint{hasProviderDefault = true}
     startTimeout: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     stopTimeout: Int?
     systemControls: Listing<SystemControl>?
     ulimits: Listing<Ulimit>?
@@ -309,6 +320,7 @@ open class TaskDefinitionResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
+    portable = true
 }
 open class TaskDefinition extends formae.Resource {
 
