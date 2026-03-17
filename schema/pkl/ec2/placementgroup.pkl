@@ -14,6 +14,7 @@ const type = "AWS::EC2::PlacementGroup"
 @aws.ResourceHint {
     type = module.type
     identifier = "GroupName"
+    portable = true
 }
 open class PlacementGroup extends formae.Resource {
 

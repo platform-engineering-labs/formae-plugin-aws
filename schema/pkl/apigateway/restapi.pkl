@@ -46,6 +46,7 @@ open class RestApiResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "RestApiId"
+    portable = true
 }
 open class RestApi extends formae.Resource {
 

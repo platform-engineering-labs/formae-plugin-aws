@@ -16,6 +16,7 @@ const type = "AWS::EC2::TransitGatewayRouteTableAssociation"
     identifier = "TransitGatewayRouteTableId"
     parent = "AWS::EC2::TransitGatewayRouteTable"
     listParam = new formae.ListProperty { parentProperty = "TransitGatewayRouteTableId" listParameter = "TransitGatewayRouteTableId" }
+    portable = true
 }
 open class TransitGatewayRouteTableAssociation extends formae.Resource {
     @aws.FieldHint{createOnly = true}

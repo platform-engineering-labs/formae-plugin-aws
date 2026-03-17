@@ -65,6 +65,7 @@ open class TagSpecification extends formae.SubResource {
     type = module.type
     identifier = "Id"
     discoverable = false
+    portable = true
 }
 open class ClientVpnEndpoint extends formae.Resource {
 

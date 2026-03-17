@@ -14,6 +14,7 @@ const type = "AWS::EC2::VPNGateway"
 @aws.ResourceHint {
     type = module.type
     identifier = "VPNGatewayId"
+    portable = true
 }
 open class VPNGateway extends formae.Resource {
 

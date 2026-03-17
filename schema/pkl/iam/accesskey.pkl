@@ -15,6 +15,7 @@ const type = "AWS::IAM::AccessKey"
     type = module.type
     identifier = "Id"
     discoverable = false
+    portable = true
 }
 open class AccessKey extends formae.Resource {
 

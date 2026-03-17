@@ -34,6 +34,7 @@ open class OptionSetting extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "OptionGroupName"
+    portable = true
 }
 open class OptionGroup extends formae.Resource {
 

@@ -14,6 +14,7 @@ const type = "AWS::IAM::SAMLProvider"
 @aws.ResourceHint {
     type = module.type
     identifier = "Arn"
+    portable = true
 }
 open class SAMLProvider extends formae.Resource {
 

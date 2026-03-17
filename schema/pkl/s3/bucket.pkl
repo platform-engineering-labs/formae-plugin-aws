@@ -592,6 +592,7 @@ typealias AccessControl = "AuthenticatedRead"|"AwsExecRead"|"BucketOwnerFullCont
 @aws.ResourceHint {
     type = module.type
     identifier = "BucketName"
+    portable = true
 }
 open class Bucket extends formae.Resource {
     hidden parent = this

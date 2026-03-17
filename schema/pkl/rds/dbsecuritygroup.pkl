@@ -31,6 +31,7 @@ open class DBSecurityGroupResolvable extends formae.Resolvable {
     type = module.type
     identifier = "Ref"
     discoverable = false
+    portable = true
 }
 open class DBSecurityGroup extends formae.Resource {
 

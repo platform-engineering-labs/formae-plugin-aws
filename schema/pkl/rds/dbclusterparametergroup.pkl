@@ -14,6 +14,7 @@ const type = "AWS::RDS::DBClusterParameterGroup"
 @aws.ResourceHint {
     type = module.type
     identifier = "DBClusterParameterGroupName"
+    portable = true
 }
 open class DBClusterParameterGroup extends formae.Resource {
 

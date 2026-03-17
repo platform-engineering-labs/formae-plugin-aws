@@ -32,6 +32,7 @@ open class AliasVersionWeight extends formae.SubResource {
     identifier = "AliasArn"
     parent = "AWS::Lambda::Function"
     listParam = new formae.ListProperty { parentProperty = "FunctionName" listParameter = "FunctionName" }
+    portable = true
 }
 open class Alias extends formae.Resource {
 

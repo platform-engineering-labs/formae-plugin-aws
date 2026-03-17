@@ -24,6 +24,7 @@ open class Entry extends formae.SubResource {
     identifier = "PrefixListId"
     discoverable = false
     extractable = false
+    portable = true
 }
 open class PrefixList extends formae.Resource {
 

@@ -31,6 +31,7 @@ open class SourceResource extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "IpamPoolId"
+    portable = true
 }
 open class IPAMPool extends formae.Resource {
 

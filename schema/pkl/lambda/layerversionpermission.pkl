@@ -17,6 +17,7 @@ const type = "AWS::Lambda::LayerVersionPermission"
     parent = "AWS::Lambda::LayerVersion"
     listParam = new formae.ListProperty { parentProperty = "LayerVersionArn" listParameter = "LayerVersionArn" }
     discoverable = false
+    portable = true
 }
 open class LayerVersionPermission extends formae.Resource {
 

@@ -140,6 +140,7 @@ open class WarmThroughput extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "TableName"
+    portable = true
 }
 open class Table extends formae.Resource {
 

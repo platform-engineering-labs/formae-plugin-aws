@@ -15,6 +15,7 @@ const type = "AWS::EC2::Route"
     type = module.type
     identifier = "Ref"
     discoverable = false
+    portable = true
 }
 open class Route extends formae.Resource {
 

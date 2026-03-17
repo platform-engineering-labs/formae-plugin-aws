@@ -15,6 +15,7 @@ const type = "AWS::EC2::LocalGatewayRoute"
 @aws.ResourceHint {
     type = module.type
     identifier = "DestinationCidrBlock"
+    portable = true
 }
 open class LocalGatewayRoute extends formae.Resource {
 

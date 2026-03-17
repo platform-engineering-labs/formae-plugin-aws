@@ -30,6 +30,7 @@ open class AccessGrantGrantee extends formae.SubResource {
     type = module.type
     identifier = "AccessGrantId"
     discoverable = false
+    portable = true
 }
 open class AccessGrant extends formae.Resource {
 

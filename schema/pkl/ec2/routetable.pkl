@@ -28,6 +28,7 @@ open class RouteTableResolvable extends formae.Resolvable {
     type = module.type
     identifier = "Ref"
     extractable = true
+    portable = true
 }
 open class RouteTable extends formae.Resource {
 

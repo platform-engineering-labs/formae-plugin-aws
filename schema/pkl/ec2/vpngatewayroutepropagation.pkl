@@ -15,6 +15,7 @@ const type = "AWS::EC2::VPNGatewayRoutePropagation"
     type = module.type
     identifier = "Id"
     discoverable = false
+    portable = true
 }
 open class VPNGatewayRoutePropagation extends formae.Resource {
     @aws.FieldHint

@@ -14,6 +14,7 @@ const type = "AWS::S3::BucketPolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "Bucket"
+    portable = true
 }
 open class BucketPolicy extends formae.Resource {
     @aws.FieldHint { createOnly = true }

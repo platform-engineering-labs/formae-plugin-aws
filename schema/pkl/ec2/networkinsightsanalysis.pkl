@@ -14,6 +14,7 @@ const type = "AWS::EC2::NetworkInsightsAnalysis"
 @aws.ResourceHint {
     type = module.type
     identifier = "NetworkInsightsAnalysisId"
+    portable = true
 }
 open class NetworkInsightsAnalysis extends formae.Resource {
 

@@ -16,6 +16,7 @@ const type = "AWS::IAM::ManagedPolicy"
     identifier = "PolicyArn"
     discoverable = false
     extractable = true
+    portable = true
 }
 open class ManagedPolicy extends formae.Resource {
 

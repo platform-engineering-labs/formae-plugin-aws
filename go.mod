@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.36.1
 	github.com/aws/smithy-go v1.24.0
 	github.com/google/uuid v1.6.0
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.14
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.16
 	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.21
 	github.com/stretchr/testify v1.11.1
 )
