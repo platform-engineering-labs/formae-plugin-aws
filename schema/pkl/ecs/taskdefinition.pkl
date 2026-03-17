@@ -320,7 +320,6 @@ open class TaskDefinitionResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    portable = true
 }
 open class TaskDefinition extends formae.Resource {
 
