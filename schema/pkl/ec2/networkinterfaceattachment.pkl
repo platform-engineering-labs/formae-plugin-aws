@@ -22,7 +22,6 @@ open class EnaSrdSpecification extends formae.SubResource {
     identifier = "AttachmentId"
     discoverable = true
     extractable = true
-    portable = true
 }
 open class NetworkInterfaceAttachment extends formae.Resource {
 

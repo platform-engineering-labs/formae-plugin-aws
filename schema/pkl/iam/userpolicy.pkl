@@ -15,7 +15,6 @@ const type = "AWS::IAM::UserPolicy"
     type = module.type
     identifier = "PolicyName"
     discoverable = false
-    portable = true
 }
 open class UserPolicy extends formae.Resource {
 

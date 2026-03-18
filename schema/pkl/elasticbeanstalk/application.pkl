@@ -40,7 +40,6 @@ open class MaxCountRule extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "ApplicationName"
-    portable = true
 }
 open class Application extends formae.Resource {
 

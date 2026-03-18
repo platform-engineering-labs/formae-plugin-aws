@@ -68,7 +68,6 @@ open class ClusterResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    portable = true
 }
 open class Cluster extends formae.Resource {
 

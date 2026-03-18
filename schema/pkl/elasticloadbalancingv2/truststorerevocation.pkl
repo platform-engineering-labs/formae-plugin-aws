@@ -24,7 +24,6 @@ open class RevocationContent extends formae.SubResource {
     identifier = "RevocationId"
     parent = "AWS::ElasticLoadBalancingV2::TrustStore"
     listParam = new formae.ListProperty { parentProperty = "TrustStoreArn" listParameter = "TrustStoreArn" }
-    portable = true
 }
 open class TrustStoreRevocation extends formae.Resource {
 

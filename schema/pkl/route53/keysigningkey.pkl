@@ -16,7 +16,6 @@ typealias KeyStatus = "ACTIVE"|"INACTIVE"
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    portable = true
 }
 open class KeySigningKey extends formae.Resource {
 

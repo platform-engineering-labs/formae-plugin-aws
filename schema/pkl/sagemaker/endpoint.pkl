@@ -80,7 +80,6 @@ open class EndpointResolvable extends formae.Resolvable {
     type = module.type
     identifier = "Ref"
     discoverable = false
-    portable = true
 }
 open class Endpoint extends formae.Resource {
 

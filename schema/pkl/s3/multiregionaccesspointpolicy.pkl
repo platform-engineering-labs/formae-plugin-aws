@@ -15,7 +15,6 @@ const type = "AWS::S3::MultiRegionAccessPointPolicy"
     type = module.type
     identifier = "MrapName"
     discoverable = false
-    portable = true
 }
 open class MultiRegionAccessPointPolicy extends formae.Resource {
 

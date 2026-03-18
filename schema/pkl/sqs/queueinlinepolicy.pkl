@@ -15,7 +15,6 @@ const type = "AWS::SQS::QueueInlinePolicy"
     type = module.type
     identifier = "Ref"
     discoverable = false
-    portable = true
 }
 open class QueueInlinePolicy extends formae.Resource {
 

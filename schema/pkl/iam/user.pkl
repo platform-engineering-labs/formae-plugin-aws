@@ -29,7 +29,6 @@ open class UserPolicy extends formae.SubResource {
     identifier = "UserName"
     discoverable = false
     extractable = false
-    portable = true
 }
 open class User extends formae.Resource {
 

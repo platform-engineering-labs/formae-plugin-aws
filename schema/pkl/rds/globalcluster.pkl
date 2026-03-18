@@ -21,7 +21,6 @@ open class Endpoint extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "GlobalClusterIdentifier"
-    portable = true
 }
 open class GlobalCluster extends formae.Resource {
 

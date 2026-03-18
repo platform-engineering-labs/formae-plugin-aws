@@ -32,7 +32,6 @@ open class TraceConfiguration extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "ObservabilityConfigurationArn"
-    portable = true
 }
 open class ObservabilityConfiguration extends formae.Resource {
 

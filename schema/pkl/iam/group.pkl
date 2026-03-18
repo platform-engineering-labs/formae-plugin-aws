@@ -20,7 +20,6 @@ open class GroupPolicy extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "GroupName"
-    portable = true
 }
 open class Group extends formae.Resource {
 

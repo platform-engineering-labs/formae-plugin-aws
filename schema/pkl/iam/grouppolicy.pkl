@@ -15,7 +15,6 @@ const type = "AWS::IAM::GroupPolicy"
     type = module.type
     identifier = "PolicyName"
     discoverable = false
-    portable = true
 }
 open class GroupPolicy extends formae.Resource {
 

@@ -15,7 +15,6 @@ const type = "AWS::S3::AccessGrantsLocation"
     type = module.type
     identifier = "AccessGrantsLocationId"
     discoverable = false
-    portable = true
 }
 open class AccessGrantsLocation extends formae.Resource {
 

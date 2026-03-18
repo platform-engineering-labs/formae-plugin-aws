@@ -22,7 +22,6 @@ open class DBParameterGroupResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    portable = true
 }
 open class DBParameterGroup extends formae.Resource {
 

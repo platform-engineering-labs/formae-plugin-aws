@@ -17,7 +17,6 @@ const type = "AWS::EC2::VPCCidrBlock"
     parent = "AWS::EC2::VPC"
     listParam = new formae.ListProperty { parentProperty = "VpcId" listParameter = "VpcId" }
     discoverable = true
-    portable = true
 }
 open class VPCCidrBlock extends formae.Resource {
 

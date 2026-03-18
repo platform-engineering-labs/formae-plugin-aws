@@ -16,7 +16,6 @@ const type = "AWS::IAM::VirtualMFADevice"
     identifier = "SerialNumber"
     discoverable = false
     extractable = false
-    portable = true
 }
 open class VirtualMFADevice extends formae.Resource {
 

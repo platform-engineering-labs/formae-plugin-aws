@@ -14,7 +14,6 @@ const type = "AWS::EC2::VPCEndpointServicePermissions"
 @aws.ResourceHint {
     type = module.type
     identifier = "ServiceId"
-    portable = true
 }
 open class VPCEndpointServicePermissions extends formae.Resource {
     @aws.FieldHint

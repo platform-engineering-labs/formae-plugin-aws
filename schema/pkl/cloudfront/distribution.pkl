@@ -296,7 +296,6 @@ open class DistributionResolvable extends formae.Resolvable {
     identifier = "Id"
     discoverable = false
     extractable = false
-    portable = true
 }
 open class Distribution extends formae.Resource {
 

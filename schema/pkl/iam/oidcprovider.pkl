@@ -14,7 +14,6 @@ const type = "AWS::IAM::OIDCProvider"
 @aws.ResourceHint {
     type = module.type
     identifier = "Arn"
-    portable = true
 }
 open class OIDCProvider extends formae.Resource {
 

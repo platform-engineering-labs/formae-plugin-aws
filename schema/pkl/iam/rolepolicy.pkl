@@ -20,7 +20,6 @@ const type = "AWS::IAM::RolePolicy"
         listParameter = "RoleName"
     }
     discoverable = true
-    portable = true
 }
 open class RolePolicy extends formae.Resource {
 

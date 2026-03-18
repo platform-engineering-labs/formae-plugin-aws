@@ -56,7 +56,6 @@ open class StageResolvable extends formae.Resolvable {
     identifier = "StageName"
     parent = "AWS::ApiGateway::RestApi"
     listParam = new formae.ListProperty { parentProperty = "RestApiId" listParameter = "RestApiId" }
-    portable = true
 }
 open class Stage extends formae.Resource {
 

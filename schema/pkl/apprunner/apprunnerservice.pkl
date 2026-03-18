@@ -152,7 +152,6 @@ open class SourceConfiguration extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "ServiceArn"
-    portable = true
 }
 open class Service extends formae.Resource {
 

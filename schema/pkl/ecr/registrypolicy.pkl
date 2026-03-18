@@ -14,7 +14,6 @@ const type = "AWS::ECR::RegistryPolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "RegistryId"
-    portable = true
 }
 open class RegistryPolicy extends formae.Resource {
     @aws.FieldHint

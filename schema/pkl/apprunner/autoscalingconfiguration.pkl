@@ -25,7 +25,6 @@ open class AutoScalingConfigurationResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "AutoScalingConfigurationArn"
-    portable = true
 }
 open class AutoScalingConfiguration extends formae.Resource {
 

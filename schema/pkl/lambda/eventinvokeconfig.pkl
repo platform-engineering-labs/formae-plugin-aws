@@ -32,7 +32,6 @@ open class OnSuccess extends formae.SubResource {
     identifier = "Id"
     parent = "AWS::Lambda::Function"
     listParam = new formae.ListProperty { parentProperty = "FunctionName" listParameter = "FunctionName" }
-    portable = true
 }
 open class EventInvokeConfig extends formae.Resource {
 

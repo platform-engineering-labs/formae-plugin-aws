@@ -59,7 +59,6 @@ open class GeoProximityLocation extends formae.SubResource {
     parent = "AWS::Route53::HostedZone"
     listParam = new formae.ListProperty { parentProperty = "Id" listParameter = "HostedZoneId" }
     discoverable = true
-    portable = true
 }
 open class RecordSet extends formae.Resource {
     @aws.FieldHint{

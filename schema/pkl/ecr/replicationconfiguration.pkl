@@ -37,7 +37,6 @@ open class Filter extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "RegistryId"
-    portable = true
 }
 open class ReplicationConfiguration extends formae.Resource {
 

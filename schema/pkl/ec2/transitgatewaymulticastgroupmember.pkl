@@ -16,7 +16,6 @@ const type = "AWS::EC2::TransitGatewayMulticastGroupMember"
     identifier = "TransitGatewayMulticastDomainId"
     parent = "AWS::EC2::TransitGatewayMulticastDomain"
     listParam = new formae.ListProperty { parentProperty = "TransitGatewayMulticastDomainId" listParameter = "TransitGatewayMulticastDomainId" }
-    portable = true
 }
 open class TransitGatewayMulticastGroupMember extends formae.Resource {
 

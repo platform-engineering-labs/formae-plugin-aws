@@ -14,7 +14,6 @@ const type = "AWS::EC2::VPCEndpointConnectionNotification"
 @aws.ResourceHint {
     type = module.type
     identifier = "VPCEndpointConnectionNotificationId"
-    portable = true
 }
 open class VPCEndpointConnectionNotification extends formae.Resource {
 

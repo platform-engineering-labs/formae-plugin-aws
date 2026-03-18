@@ -101,7 +101,6 @@ open class SourceAccessConfiguration extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    portable = true
 }
 open class EventSourceMapping extends formae.Resource {
 

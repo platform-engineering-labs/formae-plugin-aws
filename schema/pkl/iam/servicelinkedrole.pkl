@@ -15,7 +15,6 @@ const type = "AWS::IAM::ServiceLinkedRole"
     type = module.type
     identifier = "RoleName"
     discoverable = false
-    portable = true
 }
 open class ServiceLinkedRole extends formae.Resource {
 
