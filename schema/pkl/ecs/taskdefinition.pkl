@@ -25,46 +25,65 @@ typealias ContainerDefinitionVersionConsistency = "enabled"|"disabled"
 
 @aws.SubResourceHint
 open class ContainerDefinition extends formae.SubResource {
+    @aws.FieldHint{hasProviderDefault = true}
     command: Listing<String>?
     cpu: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     credentialSpecs: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     dependsOn: Listing<ContainerDependency>?
     disableNetworking: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     dnsSearchDomains: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     dnsServers: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     dockerLabels: ContainerDefinitionDockerLabels?
+    @aws.FieldHint{hasProviderDefault = true}
     dockerSecurityOptions: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     entryPoint: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     environment: Listing<KeyValuePair>?
+    @aws.FieldHint{hasProviderDefault = true}
     environmentFiles: Listing<EnvironmentFile>?
     essential: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     extraHosts: Listing<HostEntry>?
     firelensConfiguration: FirelensConfiguration?
     healthCheck: HealthCheck?
     hostname: String?
     image: String
     interactive: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     links: Listing<String>?
     linuxParameters: LinuxParameters?
     logConfiguration: LogConfiguration?
     memory: Int?
     memoryReservation: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     mountPoints: Listing<MountPoint>?
     name: String
+    @aws.FieldHint{hasProviderDefault = true}
     portMappings: Listing<PortMapping>?
     privileged: Boolean?
     pseudoTerminal: Boolean?
     readonlyRootFilesystem: Boolean?
     repositoryCredentials: RepositoryCredentials?
+    @aws.FieldHint{hasProviderDefault = true}
     resourceRequirements: Listing<ResourceRequirement>?
     restartPolicy: RestartPolicy?
+    @aws.FieldHint{hasProviderDefault = true}
     secrets: Listing<Secret>?
     startTimeout: Int?
     stopTimeout: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     systemControls: Listing<SystemControl>?
+    @aws.FieldHint{hasProviderDefault = true}
     ulimits: Listing<Ulimit>?
     user: String?
     versionConsistency: ContainerDefinitionVersionConsistency?
+    @aws.FieldHint{hasProviderDefault = true}
     volumesFrom: Listing<VolumeFrom>?
     workingDirectory: String?
 }
