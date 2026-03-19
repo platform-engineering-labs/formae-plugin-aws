@@ -20,7 +20,6 @@ open class ApplicationVersionSourceBundle extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "ApplicationName"
-    portable = true
 }
 open class ApplicationVersion extends formae.Resource {
 

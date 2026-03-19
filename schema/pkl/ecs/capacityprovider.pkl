@@ -41,7 +41,6 @@ open class ManagedScaling extends formae.SubResource {
     identifier = "Name"
     discoverable = false
     extractable = true
-    portable = true
 }
 open class CapacityProvider extends formae.Resource {
 

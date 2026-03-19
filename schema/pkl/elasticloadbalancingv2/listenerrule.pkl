@@ -143,7 +143,6 @@ open class TargetGroupTuple extends formae.SubResource {
     parent = "AWS::ElasticLoadBalancingV2::Listener"
     listParam = new formae.ListProperty { parentProperty = "ListenerArn" listParameter = "ListenerArn" }
     discoverable = false
-    portable = true
 }
 open class ListenerRule extends formae.Resource {
 

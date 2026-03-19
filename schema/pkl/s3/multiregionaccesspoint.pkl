@@ -28,7 +28,6 @@ open class Region extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Name"
-    portable = true
 }
 open class MultiRegionAccessPoint extends formae.Resource {
 

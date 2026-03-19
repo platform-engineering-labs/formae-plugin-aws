@@ -33,7 +33,6 @@ open class IngressVpcConfiguration extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "VpcIngressConnectionArn"
-    portable = true
 }
 open class VpcIngressConnection extends formae.Resource {
 

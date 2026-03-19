@@ -56,7 +56,6 @@ open class Or extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Name"
-    portable = true
 }
 open class StorageLensGroup extends formae.Resource {
 

@@ -29,7 +29,6 @@ open class ModelPackageGroupResolvable extends formae.Resolvable {
     type = module.type
     identifier = "Ref"
     discoverable = false // Can be discovered but it shows weird behavior on changing the tag
-    portable = true
 }
 open class ModelPackageGroup extends formae.Resource {
 

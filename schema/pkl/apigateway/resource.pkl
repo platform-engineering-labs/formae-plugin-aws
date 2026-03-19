@@ -30,7 +30,6 @@ open class ResourceResolvable extends formae.Resolvable {
     listParam = new formae.ListProperty { parentProperty = "RestApiId" listParameter = "RestApiId" }
     discoverable = false
     extractable = true
-    portable = true
 }
 open class Resource extends formae.Resource {
 

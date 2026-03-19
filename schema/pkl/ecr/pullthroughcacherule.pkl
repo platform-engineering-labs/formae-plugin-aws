@@ -14,7 +14,6 @@ const type = "AWS::ECR::PullThroughCacheRule"
 @aws.ResourceHint {
     type = module.type
     identifier = "EcrRepositoryPrefix"
-    portable = true
 }
 open class PullThroughCacheRule extends formae.Resource {
 

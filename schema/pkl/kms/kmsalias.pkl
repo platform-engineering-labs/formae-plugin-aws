@@ -20,7 +20,6 @@ open class AliasResolvable extends formae.Resolvable {
     identifier = "Ref"
     discoverable = false
     extractable = true
-    portable = true
 }
 open class Alias extends formae.Resource {
 

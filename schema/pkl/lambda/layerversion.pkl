@@ -22,7 +22,6 @@ open class Content extends formae.SubResource {
     type = module.type
     identifier = "LayerVersionArn"
     discoverable = false
-    portable = true
 }
 open class LayerVersion extends formae.Resource {
 

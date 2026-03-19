@@ -15,7 +15,6 @@ const type = "AWS::S3::AccessGrantsInstance"
     type = module.type
     identifier = "AccessGrantsInstanceArn"
     discoverable = false
-    portable = true
 }
 open class AccessGrantsInstance extends formae.Resource {
 

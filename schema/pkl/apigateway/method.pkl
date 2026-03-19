@@ -76,7 +76,6 @@ open class MethodResolvable extends formae.Resolvable {
     type = module.type
     identifier = "ResourceId" //identifier = "RestApiId|ResourceId|HttpMethod"
     discoverable = false
-    portable = true
 }
 open class Method extends formae.Resource {
 

@@ -19,7 +19,6 @@ typealias FunctionUrlAuthType = "AWS_IAM"|"NONE"
     parent = "AWS::Lambda::Function"
     listParam = new formae.ListProperty { parentProperty = "FunctionName" listParameter = "FunctionName" }
     discoverable = false
-    portable = true
 }
 open class Permission extends formae.Resource {
 

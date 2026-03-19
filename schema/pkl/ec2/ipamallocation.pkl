@@ -16,7 +16,6 @@ const type = "AWS::EC2::IPAMAllocation"
     identifier = "IpamPoolId"
     parent = "AWS::EC2::IPAMPool"
     listParam = new formae.ListProperty { parentProperty = "IpamPoolId" listParameter = "IpamPoolId" }
-    portable = true
 }
 open class IPAMAllocation extends formae.Resource {
 

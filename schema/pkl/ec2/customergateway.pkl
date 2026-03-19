@@ -14,7 +14,6 @@ const type = "AWS::EC2::CustomerGateway"
 @aws.ResourceHint {
     type = module.type
     identifier = "CustomerGatewayId"
-    portable = true
 }
 open class CustomerGateway extends formae.Resource {
     @aws.FieldHint{createOnly = true}

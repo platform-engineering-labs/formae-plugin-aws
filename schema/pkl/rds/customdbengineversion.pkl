@@ -24,7 +24,6 @@ open class CustomDBEngineVersionResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    portable = true
 }
 open class CustomDBEngineVersion extends formae.Resource {
 

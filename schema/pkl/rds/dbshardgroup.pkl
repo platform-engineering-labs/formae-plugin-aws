@@ -27,7 +27,6 @@ open class DBShardGroupResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "DBShardGroupIdentifier"
-    portable = true
 }
 open class DBShardGroup extends formae.Resource {
     @aws.FieldHint
