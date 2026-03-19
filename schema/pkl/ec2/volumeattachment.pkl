@@ -14,6 +14,7 @@ const type = "AWS::EC2::VolumeAttachment"
 @aws.ResourceHint {
     type = module.type
     identifier = "VolumeId"
+    portable = true
 }
 open class VolumeAttachment extends formae.Resource {
 

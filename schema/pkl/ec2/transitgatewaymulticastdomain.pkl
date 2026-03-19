@@ -14,6 +14,7 @@ const type = "AWS::EC2::TransitGatewayMulticastDomain"
 @aws.ResourceHint {
     type = module.type
     identifier = "TransitGatewayMulticastDomainId"
+    portable = true
 }
 open class TransitGatewayMulticastDomain extends formae.Resource {
 

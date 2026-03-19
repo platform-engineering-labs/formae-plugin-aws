@@ -17,6 +17,7 @@ typealias InternetGatewayBlockMode = "block-bidirectional"|"block-ingress"
     type = module.type
     identifier = "AccountId"
     discoverable = false
+    portable = true
 }
 open class VPCBlockPublicAccessOptions extends formae.Resource {
 

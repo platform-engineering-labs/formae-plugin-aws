@@ -27,6 +27,7 @@ open class RuntimePolicy extends formae.SubResource {
     identifier = "Version"
     parent = "AWS::Lambda::Function"
     listParam = new formae.ListProperty { parentProperty = "FunctionName" listParameter = "FunctionName" }
+    portable = true
 }
 open class Version extends formae.Resource {
 

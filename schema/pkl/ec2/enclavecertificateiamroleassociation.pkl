@@ -16,6 +16,7 @@ const type = "AWS::EC2::EnclaveCertificateIamRoleAssociation"
     type = module.type
     identifier = "CertificateArn"
     discoverable = false
+    portable = true
 }
 open class EnclaveCertificateIamRoleAssociation extends formae.Resource {
 

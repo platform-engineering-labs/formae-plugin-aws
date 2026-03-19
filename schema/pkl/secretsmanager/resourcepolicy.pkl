@@ -14,6 +14,7 @@ const type = "AWS::SecretsManager::ResourcePolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
+    portable = true
 }
 open class ResourcePolicy extends formae.Resource {
 

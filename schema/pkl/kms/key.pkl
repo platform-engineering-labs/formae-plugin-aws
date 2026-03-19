@@ -30,6 +30,7 @@ open class KeyResolvable extends formae.Resolvable {
     identifier = "Ref"
     discoverable = false
     extractable = false
+    portable = true
 }
 open class Key extends formae.Resource {
 

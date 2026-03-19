@@ -26,6 +26,7 @@ open class EIPResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "PublicIp"
+    portable = true
 }
 open class EIP extends formae.Resource {
 

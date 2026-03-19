@@ -32,6 +32,7 @@ open class Cors extends formae.SubResource {
     identifier = "FunctionUrl"
     parent = "AWS::Lambda::Function"
     listParam = new formae.ListProperty { parentProperty = "Arn" listParameter = "TargetFunctionArn" }
+    portable = true
 }
 open class Url extends formae.Resource {
 

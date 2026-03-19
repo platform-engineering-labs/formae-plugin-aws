@@ -26,6 +26,7 @@ open class IntegrationResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "IntegrationArn"
+    portable = true
 }
 open class Integration extends formae.Resource {
 

@@ -171,6 +171,7 @@ open class WriteProvisionedThroughputSettings extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "TableName"
+    portable = true
 }
 open class GlobalTable extends formae.Resource {
 

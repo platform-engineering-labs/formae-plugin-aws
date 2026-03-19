@@ -15,6 +15,7 @@ const type = "AWS::RDS::DBSecurityGroupIngress"
     type = module.type
     identifier = "Id"
     discoverable = false
+    portable = true
 }
 open class DBSecurityGroupIngress extends formae.Resource {
 

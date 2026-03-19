@@ -22,6 +22,7 @@ open class CapacityProvider extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Cluster"
+    portable = true
 }
 open class ClusterCapacityProviderAssociations extends formae.Resource {
 

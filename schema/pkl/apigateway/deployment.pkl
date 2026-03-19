@@ -78,6 +78,7 @@ open class DeploymentResolvable extends formae.Resolvable {
     identifier = "DeploymentId"
     parent = "AWS::ApiGateway::RestApi"
     listParam = new formae.ListProperty { parentProperty = "RestApiId" listParameter = "RestApiId" }
+    portable = true
 }
 open class Deployment extends formae.Resource {
 

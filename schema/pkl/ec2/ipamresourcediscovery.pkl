@@ -19,6 +19,7 @@ open class IPAMResourceDiscoveryIpamOperatingRegion extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "IpamResourceDiscoveryId"
+    portable = true
 }
 open class IPAMResourceDiscovery extends formae.Resource {
 

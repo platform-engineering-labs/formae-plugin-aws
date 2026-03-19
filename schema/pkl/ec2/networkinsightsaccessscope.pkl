@@ -49,6 +49,7 @@ open class ThroughResourcesStatementRequest extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "NetworkInsightsAccessScopeId"
+    portable = true
 }
 open class NetworkInsightsAccessScope extends formae.Resource {
 

@@ -16,6 +16,7 @@ const type = "AWS::EC2::GatewayRouteTableAssociation"
     type = module.type
     identifier = "GatewayId"
     discoverable = false
+    portable = true
 }
 open class GatewayRouteTableAssociation extends formae.Resource {
 

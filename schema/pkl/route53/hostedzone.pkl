@@ -45,6 +45,7 @@ open class HostedZoneResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
+    portable = true
 }
 open class HostedZone extends formae.Resource {
 

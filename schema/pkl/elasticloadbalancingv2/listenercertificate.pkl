@@ -20,6 +20,7 @@ open class Certificate extends formae.SubResource {
     type = module.type
     identifier = "Id"
     discoverable = false
+    portable = true
 }
 open class ListenerCertificate extends formae.Resource {
 

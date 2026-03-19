@@ -19,6 +19,7 @@ open class TransitGatewayConnectTransitGatewayConnectOptions extends formae.SubR
 @aws.ResourceHint {
     type = module.type
     identifier = "TransitGatewayAttachmentId"
+    portable = true
 }
 open class TransitGatewayConnect extends formae.Resource {
 

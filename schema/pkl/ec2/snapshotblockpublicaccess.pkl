@@ -16,6 +16,7 @@ typealias SnapshotBlockPublicAccessState = "block-all-sharing"|"block-new-sharin
 @aws.ResourceHint {
     type = module.type
     identifier = "AccountId"
+    portable = true
 }
 open class SnapshotBlockPublicAccess extends formae.Resource {
 

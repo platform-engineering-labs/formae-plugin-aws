@@ -37,6 +37,7 @@ open class RoleResolvable extends formae.Resolvable {
     type = module.type
     identifier = "Ref"
     discoverable = true
+    portable = true
 }
 open class Role extends formae.Resource {
 

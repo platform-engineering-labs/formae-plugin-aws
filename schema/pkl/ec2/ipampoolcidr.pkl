@@ -16,6 +16,7 @@ const type = "AWS::EC2::IPAMPoolCidr"
     identifier = "IpamPoolId"
     parent = "AWS::EC2::IPAMPool"
     listParam = new formae.ListProperty { parentProperty = "IpamPoolId" listParameter = "IpamPoolId" }
+    portable = true
 }
 open class IPAMPoolCidr extends formae.Resource {
 

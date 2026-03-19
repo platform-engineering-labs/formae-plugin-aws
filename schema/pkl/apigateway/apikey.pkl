@@ -32,6 +32,7 @@ open class ApiKeyResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "APIKeyId"
+    portable = true
 }
 open class ApiKey extends formae.Resource {
 
