@@ -7,6 +7,7 @@ package elasticbeanstalk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -137,11 +138,21 @@ func (ct *ConfigurationTemplate) readWithClient(ctx context.Context, client ebCl
 		TemplateName:    &templateName,
 	})
 	if err != nil {
-		// EB returns an error if the template or application doesn't exist
-		return &resource.ReadResult{
-			ResourceType: request.ResourceType,
-			ErrorCode:    resource.OperationErrorCodeNotFound,
-		}, nil
+		var notFoundErr *ebtypes.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
+			return &resource.ReadResult{
+				ResourceType: request.ResourceType,
+				ErrorCode:    resource.OperationErrorCodeNotFound,
+			}, nil
+		}
+		var insufficientPrivileges *ebtypes.InsufficientPrivilegesException
+		if errors.As(err, &insufficientPrivileges) {
+			return &resource.ReadResult{
+				ResourceType: request.ResourceType,
+				ErrorCode:    resource.OperationErrorCodeAccessDenied,
+			}, nil
+		}
+		return nil, fmt.Errorf("describing configuration settings: %w", err)
 	}
 
 	if len(output.ConfigurationSettings) == 0 {

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	eb "github.com/aws/aws-sdk-go-v2/service/elasticbeanstalk"
+	ebtypes "github.com/aws/aws-sdk-go-v2/service/elasticbeanstalk/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -131,6 +132,96 @@ func TestConfigurationTemplate_Update_WithOptionSettings(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	client.AssertExpectations(t)
+}
+
+func TestConfigurationTemplate_Read_Success(t *testing.T) {
+	ctx := context.Background()
+	client := &mockEBClient{}
+
+	client.On("DescribeConfigurationSettings", ctx, mock.Anything).Return(
+		&eb.DescribeConfigurationSettingsOutput{
+			ConfigurationSettings: []ebtypes.ConfigurationSettingsDescription{
+				{
+					ApplicationName:  strPtr("my-app"),
+					TemplateName:     strPtr("my-template"),
+					SolutionStackName: strPtr("64bit Amazon Linux 2023 v4.11.0 running Docker"),
+				},
+			},
+		}, nil,
+	)
+
+	ct := &ConfigurationTemplate{cfg: &config.Config{}}
+	result, err := ct.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID:     "my-app|my-template",
+		ResourceType: "AWS::ElasticBeanstalk::ConfigurationTemplate",
+	})
+
+	assert.NoError(t, err)
+	assert.Empty(t, result.ErrorCode)
+	assert.Contains(t, result.Properties, "my-app")
+	client.AssertExpectations(t)
+}
+
+func TestConfigurationTemplate_Read_NotFound(t *testing.T) {
+	ctx := context.Background()
+	client := &mockEBClient{}
+
+	client.On("DescribeConfigurationSettings", ctx, mock.Anything).Return(
+		(*eb.DescribeConfigurationSettingsOutput)(nil),
+		&ebtypes.ResourceNotFoundException{Message: strPtr("template not found")},
+	)
+
+	ct := &ConfigurationTemplate{cfg: &config.Config{}}
+	result, err := ct.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID:     "my-app|my-template",
+		ResourceType: "AWS::ElasticBeanstalk::ConfigurationTemplate",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
+	client.AssertExpectations(t)
+}
+
+func TestConfigurationTemplate_Read_EmptySettings(t *testing.T) {
+	ctx := context.Background()
+	client := &mockEBClient{}
+
+	client.On("DescribeConfigurationSettings", ctx, mock.Anything).Return(
+		&eb.DescribeConfigurationSettingsOutput{
+			ConfigurationSettings: []ebtypes.ConfigurationSettingsDescription{},
+		}, nil,
+	)
+
+	ct := &ConfigurationTemplate{cfg: &config.Config{}}
+	result, err := ct.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID:     "my-app|my-template",
+		ResourceType: "AWS::ElasticBeanstalk::ConfigurationTemplate",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
+	client.AssertExpectations(t)
+}
+
+func TestConfigurationTemplate_Read_UnexpectedError(t *testing.T) {
+	ctx := context.Background()
+	client := &mockEBClient{}
+
+	client.On("DescribeConfigurationSettings", ctx, mock.Anything).Return(
+		(*eb.DescribeConfigurationSettingsOutput)(nil),
+		fmt.Errorf("connection timeout"),
+	)
+
+	ct := &ConfigurationTemplate{cfg: &config.Config{}}
+	result, err := ct.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID:     "my-app|my-template",
+		ResourceType: "AWS::ElasticBeanstalk::ConfigurationTemplate",
+	})
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "connection timeout")
 	client.AssertExpectations(t)
 }
 
