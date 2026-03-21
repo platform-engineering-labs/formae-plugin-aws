@@ -183,7 +183,7 @@ open class EventSourceMapping extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     topics: Listing<String>?
 
     @aws.FieldHint

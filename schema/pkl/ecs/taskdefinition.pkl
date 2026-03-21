@@ -360,7 +360,7 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     family: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     inferenceAccelerators: Listing<InferenceAccelerator>?
 
     @aws.FieldHint{createOnly = true}
@@ -375,13 +375,13 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     pidMode: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     placementConstraints: Listing<PlacementConstraint>?
 
     @aws.FieldHint{createOnly = true}
     proxyConfiguration: ProxyConfiguration?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     requiresCompatibilities: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
@@ -396,6 +396,6 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     taskRoleArn: (String|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     volumes: Listing<Volume>?
 }
