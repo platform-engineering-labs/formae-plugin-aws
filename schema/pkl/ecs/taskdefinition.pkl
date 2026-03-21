@@ -27,11 +27,13 @@ typealias ContainerDefinitionVersionConsistency = "enabled"|"disabled"
 open class ContainerDefinition extends formae.SubResource {
     @aws.FieldHint{hasProviderDefault = true}
     command: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     cpu: Int?
     @aws.FieldHint{hasProviderDefault = true}
     credentialSpecs: Listing<String>?
     @aws.FieldHint{hasProviderDefault = true}
     dependsOn: Listing<ContainerDependency>?
+    @aws.FieldHint{hasProviderDefault = true}
     disableNetworking: Boolean?
     @aws.FieldHint{hasProviderDefault = true}
     dnsSearchDomains: Listing<String>?
@@ -47,6 +49,7 @@ open class ContainerDefinition extends formae.SubResource {
     environment: Listing<KeyValuePair>?
     @aws.FieldHint{hasProviderDefault = true}
     environmentFiles: Listing<EnvironmentFile>?
+    @aws.FieldHint{hasProviderDefault = true}
     essential: Boolean?
     @aws.FieldHint{hasProviderDefault = true}
     extraHosts: Listing<HostEntry>?
@@ -54,20 +57,26 @@ open class ContainerDefinition extends formae.SubResource {
     healthCheck: HealthCheck?
     hostname: String?
     image: String
+    @aws.FieldHint{hasProviderDefault = true}
     interactive: Boolean?
     @aws.FieldHint{hasProviderDefault = true}
     links: Listing<String>?
     linuxParameters: LinuxParameters?
     logConfiguration: LogConfiguration?
+    @aws.FieldHint{hasProviderDefault = true}
     memory: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     memoryReservation: Int?
     @aws.FieldHint{hasProviderDefault = true}
     mountPoints: Listing<MountPoint>?
     name: String
     @aws.FieldHint{hasProviderDefault = true}
     portMappings: Listing<PortMapping>?
+    @aws.FieldHint{hasProviderDefault = true}
     privileged: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     pseudoTerminal: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     readonlyRootFilesystem: Boolean?
     repositoryCredentials: RepositoryCredentials?
     @aws.FieldHint{hasProviderDefault = true}
@@ -75,7 +84,9 @@ open class ContainerDefinition extends formae.SubResource {
     restartPolicy: RestartPolicy?
     @aws.FieldHint{hasProviderDefault = true}
     secrets: Listing<Secret>?
+    @aws.FieldHint{hasProviderDefault = true}
     startTimeout: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     stopTimeout: Int?
     @aws.FieldHint{hasProviderDefault = true}
     systemControls: Listing<SystemControl>?
