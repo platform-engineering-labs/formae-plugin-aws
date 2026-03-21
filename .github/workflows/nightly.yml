@@ -7,6 +7,12 @@ on:
   schedule:
     - cron: '0 3 * * *'  # 3 AM UTC
   workflow_dispatch:
+    inputs:
+      formae_branch:
+        description: "Formae branch to build from (default: main)"
+        required: false
+        default: "main"
+        type: string
 
 # Prevent concurrent conformance tests (CI and nightly share test resources)
 concurrency:
@@ -116,9 +122,11 @@ jobs:
         with:
           pkl-version: 0.30.0
 
-      - name: Build formae from main
+      - name: Build formae
         run: |
-          git clone --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
+          BRANCH="${{ inputs.formae_branch || 'main' }}"
+          echo "Building formae from branch: ${BRANCH}"
+          git clone --branch "${BRANCH}" --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
           cd /tmp/formae
           git fetch --tags
           # Get latest release tag (sorted by semver) and pass to make
