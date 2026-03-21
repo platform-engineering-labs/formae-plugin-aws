@@ -90,6 +90,15 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		resourceProps = transformedProps
 	}
 
+	// Strip empty arrays and maps from properties before sending to CloudControl.
+	// The PKL schema renders nullable Listing/Mapping fields as [] and {} when the
+	// user didn't set them. CloudControl may reject these (e.g. Lambda Architectures
+	// requires min 1 item) or interpret them differently from an absent field.
+	resourceProps, err := stripEmptyCollections(resourceProps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to strip empty collections: %w", err)
+	}
+
 	result, err := c.api.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		DesiredState: ptr.Of(string(resourceProps)),
 		TypeName:     &request.ResourceType,
@@ -480,4 +489,32 @@ func findParentAndKey(data map[string]any, components []string) (any, string, er
 
 	keyToRemove := components[len(components)-1]
 	return current, keyToRemove, nil
+}
+
+// stripEmptyCollections removes top-level properties with empty array or map
+// values from a JSON object. These arise from the PKL schema rendering nullable
+// Listing/Mapping fields as [] and {} when the user didn't set them.
+func stripEmptyCollections(data json.RawMessage) (json.RawMessage, error) {
+	var props map[string]any
+	if err := json.Unmarshal(data, &props); err != nil {
+		return data, nil
+	}
+
+	stripped := make(map[string]any, len(props))
+	for k, v := range props {
+		switch val := v.(type) {
+		case []any:
+			if len(val) > 0 {
+				stripped[k] = v
+			}
+		case map[string]any:
+			if len(val) > 0 {
+				stripped[k] = v
+			}
+		default:
+			stripped[k] = v
+		}
+	}
+
+	return json.Marshal(stripped)
 }

@@ -77,7 +77,7 @@ forma {
     label = "plugin-sdk-test-eb-env"
     applicationName = ebApp.res.applicationName
     environmentName = "formae-sdk-test-env-\(testRunID)"
-    solutionStackName = "64bit Amazon Linux 2023 v4.10.0 running Docker"
+    solutionStackName = "64bit Amazon Linux 2023 v4.11.0 running Docker"
     description = "Formae SDK test environment"
     tier = new environment.Tier {
       name = "WebServer"
