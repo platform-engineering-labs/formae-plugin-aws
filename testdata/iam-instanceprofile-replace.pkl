@@ -15,27 +15,10 @@ import "@aws/iam/instanceprofile.pkl"
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-iam-instanceprofile-\(testRunID)"
 
-// Both roles from the update variant
-local role1 = new role.Role {
+// Same role as create fixture
+local parentRole = new role.Role {
   label = "test-role-for-instanceprofile"
   roleName = "formae-plugin-sdk-test-ip-role-\(testRunID)"
-  assumeRolePolicyDocument {
-    ["Version"] = "2012-10-17"
-    ["Statement"] {
-      new {
-        ["Effect"] = "Allow"
-        ["Principal"] {
-          ["Service"] = "ec2.amazonaws.com"
-        }
-        ["Action"] = "sts:AssumeRole"
-      }
-    }
-  }
-}
-
-local role2 = new role.Role {
-  label = "test-role-for-instanceprofile-2"
-  roleName = "formae-plugin-sdk-test-ip-role2-\(testRunID)"
   assumeRolePolicyDocument {
     ["Version"] = "2012-10-17"
     ["Statement"] {
@@ -63,9 +46,8 @@ forma {
     }
   }
 
-  // Both roles in the stack
-  role1
-  role2
+  // Same role
+  parentRole
 
   // InstanceProfile with changed instanceProfileName (createOnly) - triggers replace
   new instanceprofile.InstanceProfile {
@@ -73,7 +55,7 @@ forma {
     instanceProfileName = "formae-plugin-sdk-test-ip-replaced-\(testRunID)"
     path = "/"
     roles = new Listing {
-      role2.res.roleName
+      parentRole.res.roleName
     }
   }
 }

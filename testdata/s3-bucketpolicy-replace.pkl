@@ -15,7 +15,7 @@ import "@aws/s3/bucketpolicy.pkl"
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-s3-bucketpolicy-\(testRunID)"
 
-// Original bucket - must remain in the forma so it is not destroyed
+// Same buckets as create fixture
 local testBucket = new bucket.Bucket {
   label = "test-bucket"
   bucketName = "formae-plugin-sdk-test-bp-\(testRunID)"
@@ -27,7 +27,6 @@ local testBucket = new bucket.Bucket {
   }
 }
 
-// Second bucket - the policy will be moved to this bucket (triggers replace)
 local testBucket2 = new bucket.Bucket {
   label = "test-bucket-2"
   bucketName = "formae-plugin-sdk-test-bp-2-\(testRunID)"
@@ -52,11 +51,11 @@ forma {
     }
   }
 
-  // Both buckets must be present
+  // Same buckets as create
   testBucket
   testBucket2
 
-  // BucketPolicy with changed bucket (createOnly field) - triggers replace
+  // BucketPolicy swapped to bucket2 (createOnly field) - triggers replace
   new bucketpolicy.BucketPolicy {
     label = "plugin-sdk-test-bucketpolicy"
     bucket = testBucket2.res.bucketName

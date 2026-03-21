@@ -28,6 +28,18 @@ local testBucket = new bucket.Bucket {
   }
 }
 
+// Second bucket - created upfront so the replace fixture can swap without adding resources
+local testBucket2 = new bucket.Bucket {
+  label = "test-bucket-2"
+  bucketName = "formae-plugin-sdk-test-bp-2-\(testRunID)"
+  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
+    blockPublicAcls = true
+    blockPublicPolicy = false
+    ignorePublicAcls = true
+    restrictPublicBuckets = false
+  }
+}
+
 forma {
   new formae.Stack {
     label = stackName
@@ -41,8 +53,9 @@ forma {
     }
   }
 
-  // Bucket required for BucketPolicy
+  // Both buckets created upfront for replace test
   testBucket
+  testBucket2
 
   // BucketPolicy under test - allows s3:PutObject for logging service
   new bucketpolicy.BucketPolicy {
