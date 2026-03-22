@@ -615,11 +615,52 @@ done
 
 # 23b. Delete EC2 VPCs with test prefix (by Name tag) - after all VPC dependents
 echo "Cleaning EC2 test VPCs..."
+# Delete VPCs matching the test prefix name tag
 aws ec2 describe-vpcs --region "$REGION" \
     --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
     --query "Vpcs[].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
     if [[ -n "$vpc_id" ]]; then
         echo "  Deleting EC2 VPC: $vpc_id"
+        aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+    fi
+done
+# Delete untagged VPCs (no Name tag) — these are orphaned test VPCs from
+# cancelled or failed runs. Conformance test fixtures create VPCs without
+# Name tags, so any VPC without a Name tag is safe to clean up.
+echo "Cleaning orphaned untagged VPCs..."
+DEFAULT_VPC=$(aws ec2 describe-vpcs --region "$REGION" --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text 2>/dev/null)
+aws ec2 describe-vpcs --region "$REGION" \
+    --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
+    if [[ -n "$vpc_id" && "$vpc_id" != "$DEFAULT_VPC" ]]; then
+        echo "  Cleaning orphaned VPC: $vpc_id"
+        # Delete ENIs
+        aws ec2 describe-network-interfaces --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eni_id; do
+            [[ -n "$eni_id" ]] && aws ec2 delete-network-interface --network-interface-id "$eni_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete subnets
+        aws ec2 describe-subnets --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "Subnets[].SubnetId" --output text 2>/dev/null | tr '\t' '\n' | while read -r subnet_id; do
+            [[ -n "$subnet_id" ]] && aws ec2 delete-subnet --subnet-id "$subnet_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Detach and delete internet gateways
+        aws ec2 describe-internet-gateways --region "$REGION" \
+            --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+            --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r igw_id; do
+            if [[ -n "$igw_id" ]]; then
+                aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+                aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Delete non-default security groups
+        aws ec2 describe-security-groups --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg_id; do
+            [[ -n "$sg_id" ]] && aws ec2 delete-security-group --group-id "$sg_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete VPC
         aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
     fi
 done
