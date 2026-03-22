@@ -183,6 +183,28 @@ func TestConfigurationTemplate_Read_NotFound(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
+func TestConfigurationTemplate_Read_InvalidParameterValue_DeletedTemplate(t *testing.T) {
+	ctx := context.Background()
+	client := &mockEBClient{}
+
+	// EB returns InvalidParameterValue (not ResourceNotFoundException) when
+	// a template was deleted via CloudControl
+	client.On("DescribeConfigurationSettings", ctx, mock.Anything).Return(
+		(*eb.DescribeConfigurationSettingsOutput)(nil),
+		fmt.Errorf("InvalidParameterValue: No Configuration Template named 'my-app/my-template' found."),
+	)
+
+	ct := &ConfigurationTemplate{cfg: &config.Config{}}
+	result, err := ct.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID:     "my-app|my-template",
+		ResourceType: "AWS::ElasticBeanstalk::ConfigurationTemplate",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
+	client.AssertExpectations(t)
+}
+
 func TestConfigurationTemplate_Read_EmptySettings(t *testing.T) {
 	ctx := context.Background()
 	client := &mockEBClient{}

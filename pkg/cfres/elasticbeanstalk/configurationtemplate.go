@@ -145,6 +145,14 @@ func (ct *ConfigurationTemplate) readWithClient(ctx context.Context, client ebCl
 				ErrorCode:    resource.OperationErrorCodeNotFound,
 			}, nil
 		}
+		// EB returns InvalidParameterValue (not ResourceNotFoundException) when
+		// a configuration template has been deleted via CloudControl.
+		if strings.Contains(err.Error(), "No Configuration Template named") {
+			return &resource.ReadResult{
+				ResourceType: request.ResourceType,
+				ErrorCode:    resource.OperationErrorCodeNotFound,
+			}, nil
+		}
 		var insufficientPrivileges *ebtypes.InsufficientPrivilegesException
 		if errors.As(err, &insufficientPrivileges) {
 			return &resource.ReadResult{
