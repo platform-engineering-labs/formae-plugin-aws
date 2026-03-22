@@ -16,6 +16,7 @@ import (
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/utils"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
@@ -59,6 +60,11 @@ func (slg *StorageLensGroup) updateWithClient(ctx context.Context, client s3Cont
 	if err := json.Unmarshal(request.DesiredProperties, &desired); err != nil {
 		return nil, fmt.Errorf("parsing desired properties: %w", err)
 	}
+
+	// Strip empty arrays/maps from desired properties. The 0.83.0 PKL schema
+	// renders unset nullable Listing/Mapping fields as []/{}. The S3 API
+	// rejects empty filter elements.
+	utils.StripEmptyCollections(desired)
 
 	filterRaw, ok := desired["Filter"]
 	if !ok {
