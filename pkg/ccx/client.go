@@ -157,6 +157,18 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 	}
 
 	patchDoc := request.PatchDocument
+
+	// Filter out "add" operations with empty array/map values from the patch
+	// document. These arise from the PKL schema rendering unset nullable
+	// Listing/Mapping fields as []/{}. CloudControl may reject them (e.g.
+	// "extraneous key" errors) or they may cause spurious updates.
+	if patchDoc != nil {
+		filtered, err := filterEmptyAddOps(*patchDoc)
+		if err == nil && filtered != *patchDoc {
+			patchDoc = &filtered
+		}
+	}
+
 	if request.ResourceType == "AWS::SecretsManager::Secret" && patchDoc != nil {
 		transformedPatch, err := transformSecretStringPatch([]byte(*patchDoc))
 		if err != nil {
@@ -491,7 +503,51 @@ func findParentAndKey(data map[string]any, components []string) (any, string, er
 	return current, keyToRemove, nil
 }
 
-// stripEmptyCollections removes top-level properties with empty array or map
+// filterEmptyAddOps removes "add" operations from a JSON Patch document where
+// the value is an empty array or empty map, and strips empty collections from
+// nested values inside "replace" operations. These are phantom values from the
+// PKL schema rendering unset nullable fields as []/{}. CloudControl rejects
+// them as "extraneous key" errors or they trigger unnecessary replacements.
+func filterEmptyAddOps(patchDoc string) (string, error) {
+	var ops []map[string]any
+	if err := json.Unmarshal([]byte(patchDoc), &ops); err != nil {
+		return patchDoc, err
+	}
+
+	filtered := make([]map[string]any, 0, len(ops))
+	for _, op := range ops {
+		if op["op"] == "add" {
+			switch val := op["value"].(type) {
+			case []any:
+				if len(val) == 0 {
+					continue
+				}
+			case map[string]any:
+				if len(val) == 0 {
+					continue
+				}
+			}
+		}
+		// For replace/add operations with map or array values, recursively
+		// strip empty collections from the value
+		if val, ok := op["value"].(map[string]any); ok {
+			stripEmptyCollectionsFromMap(val)
+		}
+		filtered = append(filtered, op)
+	}
+
+	if len(filtered) == len(ops) {
+		// Still need to marshal since we may have modified values in place
+	}
+
+	result, err := json.Marshal(filtered)
+	if err != nil {
+		return patchDoc, err
+	}
+	return string(result), nil
+}
+
+// stripEmptyCollections recursively removes properties with empty array or map
 // values from a JSON object. These arise from the PKL schema rendering nullable
 // Listing/Mapping fields as [] and {} when the user didn't set them.
 func stripEmptyCollections(data json.RawMessage) (json.RawMessage, error) {
@@ -500,21 +556,32 @@ func stripEmptyCollections(data json.RawMessage) (json.RawMessage, error) {
 		return data, nil
 	}
 
-	stripped := make(map[string]any, len(props))
-	for k, v := range props {
+	stripEmptyCollectionsFromMap(props)
+
+	return json.Marshal(props)
+}
+
+// stripEmptyCollectionsFromMap recursively removes empty arrays and maps from
+// a map structure. Also recurses into non-empty maps and array elements.
+func stripEmptyCollectionsFromMap(m map[string]any) {
+	for k, v := range m {
 		switch val := v.(type) {
 		case []any:
-			if len(val) > 0 {
-				stripped[k] = v
+			if len(val) == 0 {
+				delete(m, k)
+			} else {
+				for _, elem := range val {
+					if elemMap, ok := elem.(map[string]any); ok {
+						stripEmptyCollectionsFromMap(elemMap)
+					}
+				}
 			}
 		case map[string]any:
-			if len(val) > 0 {
-				stripped[k] = v
+			if len(val) == 0 {
+				delete(m, k)
+			} else {
+				stripEmptyCollectionsFromMap(val)
 			}
-		default:
-			stripped[k] = v
 		}
 	}
-
-	return json.Marshal(stripped)
 }
