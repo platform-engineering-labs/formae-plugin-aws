@@ -15,7 +15,7 @@ import "@aws/iam/instanceprofile.pkl"
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-iam-instanceprofile-\(testRunID)"
 
-// Role dependency - InstanceProfile needs a role to reference
+// Same roles as create fixture
 local role1 = new role.Role {
   label = "test-role-for-instanceprofile"
   roleName = "formae-plugin-sdk-test-ip-role-\(testRunID)"
@@ -33,7 +33,6 @@ local role1 = new role.Role {
   }
 }
 
-// Second role - created upfront so the update fixture can swap without adding resources
 local role2 = new role.Role {
   label = "test-role-for-instanceprofile-2"
   roleName = "formae-plugin-sdk-test-ip-role2-\(testRunID)"
@@ -64,14 +63,14 @@ forma {
     }
   }
 
-  // Both roles created upfront for update test
+  // Same roles
   role1
   role2
 
-  // InstanceProfile under test
+  // InstanceProfile with changed instanceProfileName (createOnly) - triggers replace
   new instanceprofile.InstanceProfile {
     label = "plugin-sdk-test-instanceprofile"
-    instanceProfileName = "formae-plugin-sdk-test-ip-\(testRunID)"
+    instanceProfileName = "formae-plugin-sdk-test-ip-replaced-\(testRunID)"
     path = "/"
     roles = new Listing {
       role1.res.roleName
