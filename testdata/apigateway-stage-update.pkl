@@ -68,7 +68,7 @@ local testMethod = new method.Method {
 local testDeployment = new deployment.Deployment {
   label = "test-deployment-for-stage"
   restApiId = testApi.res.restApiId
-  description = "Test deployment for Stage"
+  description = testMethod.res.resourceId
 }
 
 forma {

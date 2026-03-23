@@ -38,13 +38,13 @@ open class Group extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     groupName: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     managedPolicyArns: Listing<String>?
 
     @aws.FieldHint
     path: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     policies: Listing<GroupPolicy>?
 
     hidden parent = this

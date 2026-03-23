@@ -44,13 +44,13 @@ open class UserResolvable extends formae.Resolvable {
 }
 open class User extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     groups: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint
     loginProfile: UserLoginProfile?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     managedPolicyArns: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{hasProviderDefault = true}
@@ -63,6 +63,7 @@ open class User extends formae.Resource {
     policies: Listing<UserPolicy>?
 
     @aws.FieldHint {
+        hasProviderDefault = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }
