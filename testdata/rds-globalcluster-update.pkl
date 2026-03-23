@@ -27,12 +27,13 @@ forma {
     }
   }
 
-  // Updated: changed deletionProtection to false (must be false before replace/destroy)
+  // Updated: changed engineLifecycleSupport
   new globalcluster.GlobalCluster {
     label = "plugin-sdk-test-globalcluster"
     globalClusterIdentifier = "formae-sdk-test-gc-\(testRunID)"
     engine = "aurora-mysql"
     storageEncrypted = false
     deletionProtection = false
+    engineLifecycleSupport = "open-source-rds-extended-support"
   }
 }
