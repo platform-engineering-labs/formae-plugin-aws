@@ -194,4 +194,8 @@ echo ""
 echo "Running conformance tests..."
 cd "${PROJECT_ROOT}"
 # shellcheck disable=SC2086
-go test -tags=conformance -v -timeout 60m ${PARALLEL_FLAG} ./...
+# Use FORMAE_TEST_TIMEOUT for the go test timeout (defaults to 60m).
+# EB environments can take 30-60 min per create, and the full lifecycle
+# (CRUD + OOB) has two create cycles.
+TEST_TIMEOUT="${FORMAE_TEST_TIMEOUT:-60}m"
+go test -tags=conformance -v -timeout "${TEST_TIMEOUT}" ${PARALLEL_FLAG} ./...
