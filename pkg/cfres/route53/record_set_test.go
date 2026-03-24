@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
+	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/google/uuid"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
@@ -50,80 +52,71 @@ func createTestHostedZoneWithCleanup(t *testing.T, zoneName string) string {
 }
 
 func createTestHostedZone(zoneName string) (string, error) {
-	cfg := &config.Config{}
-
-	client, err := ccx.NewClient(cfg)
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
 	if err != nil {
-		return "", fmt.Errorf("failed to create client: %w", err)
+		return "", fmt.Errorf("failed to load AWS config: %w", err)
 	}
+	client := route53.NewFromConfig(cfg)
 
-	props := map[string]any{
-		"Name": zoneName,
-	}
-	propsBytes, _ := json.Marshal(props)
-
-	createReq := &resource.CreateRequest{
-		ResourceType: "AWS::Route53::HostedZone",
-		Properties:   propsBytes,
-	}
-
-	createRes, err := client.CreateResource(context.Background(), createReq)
+	callerRef := uuid.New().String()
+	out, err := client.CreateHostedZone(context.Background(), &route53.CreateHostedZoneInput{
+		Name:            &zoneName,
+		CallerReference: &callerRef,
+	})
 	if err != nil {
 		return "", fmt.Errorf("create failed: %w", err)
 	}
-	if createRes == nil || createRes.ProgressResult == nil || createRes.ProgressResult.RequestID == "" {
-		return "", fmt.Errorf("create did not return a valid request ID")
-	}
-
-	for i := 0; i < 20; i++ {
-		statusRes, err := client.StatusResource(context.Background(), &resource.StatusRequest{
-			RequestID: createRes.ProgressResult.RequestID,
-		}, func(ctx context.Context, req *resource.ReadRequest) (*resource.ReadResult, error) {
-			return client.ReadResource(ctx, req)
-		})
-		if err != nil {
-			return "", fmt.Errorf("status failed: %w", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			return statusRes.ProgressResult.NativeID, nil
-		}
-		time.Sleep(3 * time.Second)
-	}
-	return "", fmt.Errorf("timeout waiting for hosted zone creation")
+	// Route53 returns IDs like "/hostedzone/Z1234", extract just the ID
+	hostedZoneID := strings.TrimPrefix(*out.HostedZone.Id, "/hostedzone/")
+	return hostedZoneID, nil
 }
 
 func deleteTestHostedZone(t *testing.T, hostedZoneID string) {
 	t.Helper()
 
-	cfg := &config.Config{}
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		t.Logf("Warning: failed to load AWS config for cleanup: %v", err)
+		return
+	}
+	client := route53.NewFromConfig(cfg)
 
-	client, err := ccx.NewClient(cfg)
-	assert.NoError(t, err)
-
-	deleteReq := &resource.DeleteRequest{
-		NativeID:     hostedZoneID,
-		ResourceType: "AWS::Route53::HostedZone",
+	// List and delete all non-NS/SOA record sets first
+	fullID := "/hostedzone/" + hostedZoneID
+	listOut, err := client.ListResourceRecordSets(context.Background(), &route53.ListResourceRecordSetsInput{
+		HostedZoneId: &fullID,
+	})
+	if err != nil {
+		t.Logf("Warning: failed to list record sets for cleanup: %v", err)
+		return
 	}
 
-	deleteRes, err := client.DeleteResource(context.Background(), deleteReq)
-	assert.NoError(t, err)
-
-	if deleteRes == nil || deleteRes.ProgressResult == nil || deleteRes.ProgressResult.RequestID == "" {
-		t.Fatalf("Delete did not return a valid RequestID")
+	var changes []r53types.Change
+	for _, rs := range listOut.ResourceRecordSets {
+		if rs.Type == r53types.RRTypeNs || rs.Type == r53types.RRTypeSoa {
+			continue
+		}
+		changes = append(changes, r53types.Change{
+			Action:            r53types.ChangeActionDelete,
+			ResourceRecordSet: &rs,
+		})
 	}
-
-	// Wait for deletion to complete
-	assert.Eventually(t, func() bool {
-		statusRes, err := client.StatusResource(context.Background(), &resource.StatusRequest{
-			RequestID: deleteRes.ProgressResult.RequestID,
-		}, func(ctx context.Context, req *resource.ReadRequest) (*resource.ReadResult, error) {
-			return client.ReadResource(ctx, req)
+	if len(changes) > 0 {
+		_, err = client.ChangeResourceRecordSets(context.Background(), &route53.ChangeResourceRecordSetsInput{
+			HostedZoneId: &fullID,
+			ChangeBatch:  &r53types.ChangeBatch{Changes: changes},
 		})
 		if err != nil {
-			t.Fatalf("Status failed: %v", err)
+			t.Logf("Warning: failed to delete record sets: %v", err)
 		}
-		return statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess
-	}, 2*time.Minute, 5*time.Second, "Timed out waiting for hosted zone deletion")
+	}
+
+	_, err = client.DeleteHostedZone(context.Background(), &route53.DeleteHostedZoneInput{
+		Id: &fullID,
+	})
+	if err != nil {
+		t.Logf("Warning: failed to delete hosted zone: %v", err)
+	}
 }
 
 func create_record_set(rs RecordSet, propsBytes json.RawMessage, t *testing.T) resource.CreateResult {
