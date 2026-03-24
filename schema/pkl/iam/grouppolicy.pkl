@@ -22,7 +22,7 @@ open class GroupPolicy extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     groupName: String|formae.Resolvable
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic?
 
     @aws.FieldHint{createOnly = true}

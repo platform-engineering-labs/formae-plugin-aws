@@ -24,7 +24,7 @@ const type = "AWS::IAM::RolePolicy"
 }
 open class RolePolicy extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic?
 
     @aws.FieldHint{createOnly = true}

@@ -19,7 +19,7 @@ const type = "AWS::IAM::UserPolicy"
 }
 open class UserPolicy extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic?
 
     @aws.FieldHint{createOnly = true}

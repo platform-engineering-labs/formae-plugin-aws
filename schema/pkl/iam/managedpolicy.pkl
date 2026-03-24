@@ -34,7 +34,7 @@ open class ManagedPolicy extends formae.Resource {
     }
     path: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic
 
     @aws.FieldHint{hasProviderDefault = true}

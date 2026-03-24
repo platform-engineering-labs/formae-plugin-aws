@@ -99,10 +99,10 @@ open class Method extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     httpMethod: String
 
-    @aws.FieldHint
+    @aws.FieldHint { updateMethod = "Atomic" }
     integration: Integration?
 
-    @aws.FieldHint
+    @aws.FieldHint { updateMethod = "Atomic" }
     methodResponses: Listing<MethodResponse>?
 
     @aws.FieldHint

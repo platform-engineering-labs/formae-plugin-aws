@@ -40,7 +40,7 @@ open class RoleResolvable extends formae.Resolvable {
 }
 open class Role extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     assumeRolePolicyDocument: Dynamic
 
     @aws.FieldHint{hasProviderDefault = true}
