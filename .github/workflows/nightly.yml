@@ -141,6 +141,7 @@ jobs:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: NightlyConformanceTests
+          role-duration-seconds: 7200
 
       - name: Install plugin
         run: make install
