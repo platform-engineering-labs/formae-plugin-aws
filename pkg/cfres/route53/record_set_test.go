@@ -12,13 +12,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/google/uuid"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
-	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 	"github.com/stretchr/testify/assert"
 )
