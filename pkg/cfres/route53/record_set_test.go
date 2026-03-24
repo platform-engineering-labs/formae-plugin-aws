@@ -10,16 +10,44 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/google/uuid"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 	"github.com/stretchr/testify/assert"
 )
+
+// uniqueDomain generates a unique domain name for test isolation.
+// Uses a short UUID prefix under example.com to avoid conflicts between
+// concurrent or repeated test runs.
+func uniqueDomain(prefix string) string {
+	short := strings.ReplaceAll(uuid.New().String()[:8], "-", "")
+	return fmt.Sprintf("formae-test-%s-%s.example.com", prefix, short)
+}
+
+// createTestHostedZoneWithCleanup creates a Route53 hosted zone and registers
+// a t.Cleanup function to delete it when the test finishes, even on failure.
+// Returns the hosted zone ID.
+func createTestHostedZoneWithCleanup(t *testing.T, zoneName string) string {
+	t.Helper()
+
+	hostedZoneID, err := createTestHostedZone(zoneName)
+	if err != nil {
+		t.Fatalf("Failed to create test hosted zone %q: %v", zoneName, err)
+	}
+	t.Logf("Created hosted zone %q with ID: %s", zoneName, hostedZoneID)
+
+	t.Cleanup(func() {
+		t.Logf("Cleaning up hosted zone %s (%s)", hostedZoneID, zoneName)
+		deleteTestHostedZone(t, hostedZoneID)
+	})
+
+	return hostedZoneID
+}
 
 func createTestHostedZone(zoneName string) (string, error) {
 	cfg := &config.Config{}
@@ -65,6 +93,8 @@ func createTestHostedZone(zoneName string) (string, error) {
 }
 
 func deleteTestHostedZone(t *testing.T, hostedZoneID string) {
+	t.Helper()
+
 	cfg := &config.Config{}
 
 	client, err := ccx.NewClient(cfg)
@@ -150,92 +180,17 @@ func delete_record_set(rs RecordSet, nativeID string, t *testing.T) *resource.De
 	return deleteRes
 }
 
-func TestCreate_Route53(t *testing.T) {
-	t.Skip("Skipping Route53 create test - WIP")
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	res, err := rs.Create(context.Background(), &resource.CreateRequest{
-		ResourceType: "AWS::Route53::RecordSet",
-		Label:        "pel-record-snarf",
-		Properties:   json.RawMessage(`{"HostedZoneId":"Z03405173PGMODHWMP57N","Name":"eng.snarf.test.pel","ResourceRecords":["192.168.55.2"],"TTL":"300","Type":"A"}`),
-	})
-
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-
-	// Wait for status to be success
-	if res == nil || res.ProgressResult == nil || res.ProgressResult.RequestID == "" {
-		t.Fatalf("Create did not return a valid RequestID")
-	}
-	nativeID := res.ProgressResult.NativeID
-	wait_for_status(rs, res.ProgressResult.RequestID, nativeID, t)
-
-	_, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: nativeID,
-	})
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-
-	deleteReq := &resource.DeleteRequest{
-		NativeID:     nativeID,
-		ResourceType: "AWS::Route53::RecordSet",
-	}
-	_, err = rs.Delete(context.Background(), deleteReq)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-}
-
-func TestDelete_Route53(t *testing.T) {
-	t.Skip("Skipping Route53 delete test - WIP")
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	nativeID := "Z034"
-	deleteReq := &resource.DeleteRequest{
-		NativeID: nativeID,
-	}
-	_, err := rs.Delete(context.Background(), deleteReq)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-}
-
-func TestStatus_Route53(t *testing.T) {
-	t.Skip("Skipping Route53 status test - WIP")
-	_, err := awsconfig.LoadDefaultConfig(context.Background())
-	assert.NoError(t, err)
-
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	_, err = rs.Status(context.Background(), &resource.StatusRequest{
-		RequestID:    "/change/C0143912BN0L1VGPGYWI",
-		ResourceType: "AWS::Route53::RecordSet",
-	})
-	if err != nil {
-		t.Fatalf("Status failed: %v", err)
-	}
-}
-
 func TestRecordSet_Lifecycle(t *testing.T) {
-	//t.Skip("Skipping Route53 record set lifecycle test - WIP")
-	hostedZoneID, err := createTestHostedZone("snarf.test.pel")
-	if err != nil {
-		t.Fatalf("Failed to create test hosted zone: %v", err)
-		return
-	}
-	t.Logf("Created hosted zone with ID: %s", hostedZoneID)
+	domain := uniqueDomain("lifecycle")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
+
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	// --- CREATE ---
 	createProps := map[string]any{
 		"HostedZoneId":    hostedZoneID,
-		"Name":            "eng.snarf.test.pel",
+		"Name":            "eng." + domain,
 		"ResourceRecords": []string{"192.168.55.2"},
 		"TTL":             300,
 		"Type":            "A",
@@ -272,7 +227,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	// --- UPDATE ---
 	updateProps := map[string]any{
 		"HostedZoneId":    hostedZoneID,
-		"Name":            "eng.snarf.test.pel",
+		"Name":            "eng." + domain,
 		"ResourceRecords": []string{"192.168.55.3"}, // change IP
 		"TTL":             600,                      // change TTL
 		"Type":            "A",
@@ -302,7 +257,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	}
 	t.Logf("Updated record: %s", readRes.Properties)
 
-	// --- DELETE ---
+	// --- DELETE record set ---
 	deleteReq := &resource.DeleteRequest{
 		NativeID: nativeID,
 	}
@@ -317,22 +272,19 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	// Wait for delete to be INSYNC
 	wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
 
-	deleteTestHostedZone(t, hostedZoneID)
+	// Hosted zone cleanup is handled by t.Cleanup via createTestHostedZoneWithCleanup
 }
 
 func TestCreate_A_Record(t *testing.T) {
-	hostedZoneID, err := createTestHostedZone("a-record.test.pel")
-	if err != nil {
-		t.Fatalf("Failed to create test hosted zone: %v", err)
-	}
-	defer deleteTestHostedZone(t, hostedZoneID)
+	domain := uniqueDomain("a-record")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
 
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	props := map[string]any{
 		"HostedZoneId":    hostedZoneID,
-		"Name":            "a.a-record.test.pel",
+		"Name":            "a." + domain,
 		"TTL":             "300",
 		"Type":            "A",
 		"ResourceRecords": []string{"192.168.1.1"},
@@ -360,12 +312,8 @@ func TestCreate_A_Record(t *testing.T) {
 
 // TestCreate_Records tests creation and deletion for all supported Route53 record types.
 func TestCreate_Records(t *testing.T) {
-	domain := "records.test.pel"
-	hostedZoneID, err := createTestHostedZone(domain)
-	if err != nil {
-		t.Fatalf("Failed to create test hosted zone: %v", err)
-	}
-	defer deleteTestHostedZone(t, hostedZoneID)
+	domain := uniqueDomain("records")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
 
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
@@ -450,84 +398,22 @@ func TestCreate_Records(t *testing.T) {
 	}
 }
 
-func TestCreate_RecordSet_2(t *testing.T) {
-	t.Skip("Skipping Route53 record set test - WIP")
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	// This simulates a record set with a $ref and $value for HostedZoneId
-	props := map[string]any{
-		"AliasTarget": map[string]any{
-			"DNSName":              "d123456abcdef8.cloudfront.net",
-			"EvaluateTargetHealth": false,
-			"HostedZoneId":         "Z2FDTNDATAQYW2",
-		},
-		"HostedZoneId": "Z07395323V6QPG5XX24K3",
-		"Name":         "test.platform.engineering",
-		"Type":         "A",
-	}
-	propsBytes, _ := json.Marshal(props)
-
-	createRes, err := rs.Create(context.Background(), &resource.CreateRequest{
-		ResourceType: "AWS::Route53::RecordSet",
-		Label:        "pel-record-resolvable",
-		Properties:   propsBytes,
-	})
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-	if createRes == nil || createRes.ProgressResult == nil || createRes.ProgressResult.RequestID == "" {
-		t.Fatalf("Create did not return a valid RequestID")
-	}
-
-	nativeID := createRes.ProgressResult.NativeID
-
-	// Wait for create to be INSYNC
-	wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
-
-	// --- READ after create ---
-	_, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: nativeID,
-	})
-	if err != nil {
-		t.Fatalf("Read after create failed: %v", err)
-	}
-
-	// --- DELETE ---
-	deleteReq := &resource.DeleteRequest{
-		NativeID:     nativeID,
-		ResourceType: "AWS::Route53::RecordSet",
-	}
-	deleteRes, err := rs.Delete(context.Background(), deleteReq)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-	if deleteRes == nil || deleteRes.ProgressResult == nil || deleteRes.ProgressResult.RequestID == "" {
-		t.Fatalf("Delete did not return a valid RequestID")
-	}
-
-	// Wait for delete to be INSYNC
-	wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
-}
-
 func TestRecordSet_ListRecordSets(t *testing.T) {
-	hostedZoneID, err := createTestHostedZone("snarf.test.pel")
-	assert.NoError(t, err)
+	domain := uniqueDomain("list")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
+
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	// create two recordsets in AWS (a hosted zone comes with two default recordsets)
-	nativeID1 := createRecordSet(t, rs, hostedZoneID, "eng1.snarf.test.pel", []string{"192.168.55.2"}, "300", "A")
-	nativeID2 := createRecordSet(t, rs, hostedZoneID, "eng2.snarf.test.pel", []string{"192.168.55.3"}, "300", "A")
+	nativeID1 := createRecordSet(t, rs, hostedZoneID, "eng1."+domain, []string{"192.168.55.2"}, "300", "A")
+	nativeID2 := createRecordSet(t, rs, hostedZoneID, "eng2."+domain, []string{"192.168.55.3"}, "300", "A")
 
-	defer func() {
-		// delete the record sets
-		deleteRecordSet(t, rs, hostedZoneID, nativeID1, "eng1.snarf.test.pel", []string{"192.168.55.2"}, "300", "A")
-		deleteRecordSet(t, rs, hostedZoneID, nativeID2, "eng2.snarf.test.pel", []string{"192.168.55.3"}, "300", "A")
-
-		// delete hosted zone
-		deleteTestHostedZone(t, hostedZoneID)
-	}()
+	t.Cleanup(func() {
+		// delete the record sets before the hosted zone cleanup runs
+		deleteRecordSet(t, rs, hostedZoneID, nativeID1, "eng1."+domain, []string{"192.168.55.2"}, "300", "A")
+		deleteRecordSet(t, rs, hostedZoneID, nativeID2, "eng2."+domain, []string{"192.168.55.3"}, "300", "A")
+	})
 
 	var pageSize int32 = 2
 
