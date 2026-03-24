@@ -28,7 +28,7 @@ import (
 // concurrent or repeated test runs.
 func uniqueDomain(prefix string) string {
 	short := strings.ReplaceAll(uuid.New().String()[:8], "-", "")
-	return fmt.Sprintf("formae-test-%s-%s.example.com", prefix, short)
+	return fmt.Sprintf("formae-test-%s-%s.test", prefix, short)
 }
 
 // createTestHostedZoneWithCleanup creates a Route53 hosted zone and registers
