@@ -83,6 +83,7 @@ forma {
     masterUsername = "admin"
     masterUserPassword = "TestPassword123!"
     allocatedStorage = "25"
+    backupRetentionPeriod = 0
     dbSubnetGroupName = testSubnetGroup.res.dbSubnetGroupName
     publiclyAccessible = false
     deletionProtection = false
