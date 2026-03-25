@@ -73,7 +73,7 @@ forma {
   // DB Subnet Group required for DB Instance
   testSubnetGroup
 
-  // DB Instance under test - updated: change allocatedStorage to 25
+  // DB Instance under test - updated: enable copyTagsToSnapshot (metadata-only, applies instantly)
   new dbinstance.DBInstance {
     label = "plugin-sdk-test-dbinst"
     dbInstanceIdentifier = "formae-sdk-test-db-\(testRunID)"
@@ -82,8 +82,9 @@ forma {
 
     masterUsername = "admin"
     masterUserPassword = "TestPassword123!"
-    allocatedStorage = "25"
+    allocatedStorage = "20"
     backupRetentionPeriod = 0
+    copyTagsToSnapshot = true
     dbSubnetGroupName = testSubnetGroup.res.dbSubnetGroupName
     publiclyAccessible = false
     deletionProtection = false
