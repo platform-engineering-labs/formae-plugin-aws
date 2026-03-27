@@ -1,0 +1,17 @@
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+import "@aws/aws.pkl"
+
+forma {
+    new formae.Stack {
+        label = "test-inline-stack"
+        description = "Test inline stack"
+    }
+    
+    new formae.Target {
+        label = "aws-target"
+        config = new aws.Config {
+            region = "us-east-1"
+        }
+    }
+}

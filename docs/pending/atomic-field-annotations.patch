@@ -1,0 +1,320 @@
+diff --git a/schema/pkl/apigateway/restapi.pkl b/schema/pkl/apigateway/restapi.pkl
+index 9d3df1f..3a60618 100644
+--- a/schema/pkl/apigateway/restapi.pkl
++++ b/schema/pkl/apigateway/restapi.pkl
+@@ -103,7 +103,7 @@ open class RestApi extends formae.Resource {
+     }
+     parameters: Mapping<String, Any>?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policy: Dynamic?
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/ec2/vpcendpoint.pkl b/schema/pkl/ec2/vpcendpoint.pkl
+index 7ba98f7..d79a83d 100644
+--- a/schema/pkl/ec2/vpcendpoint.pkl
++++ b/schema/pkl/ec2/vpcendpoint.pkl
+@@ -37,7 +37,7 @@ open class VPCEndpoint extends formae.Resource {
+     @aws.FieldHint
+     ipAddressType: VPCEndpointIpAddressType?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic?
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/ecr/publicrepository.pkl b/schema/pkl/ecr/publicrepository.pkl
+index c6f2df9..5c35aba 100644
+--- a/schema/pkl/ecr/publicrepository.pkl
++++ b/schema/pkl/ecr/publicrepository.pkl
+@@ -25,13 +25,13 @@ open class PublicRepositoryResolvable extends formae.Resolvable {
+ 
+ open class PublicRepository extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     repositoryCatalogData: Dynamic?
+ 
+     @aws.FieldHint
+     repositoryName: String(matches(Regex(#"^(?=.{2,256}$)((?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*)$"#)))?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     repositoryPolicyText: Dynamic?
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/ecr/registrypolicy.pkl b/schema/pkl/ecr/registrypolicy.pkl
+index 93dd100..e502fee 100644
+--- a/schema/pkl/ecr/registrypolicy.pkl
++++ b/schema/pkl/ecr/registrypolicy.pkl
+@@ -16,6 +16,6 @@ const type = "AWS::ECR::RegistryPolicy"
+     identifier = "RegistryId"
+ }
+ open class RegistryPolicy extends formae.Resource {
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyText: Dynamic
+ }
+diff --git a/schema/pkl/ecr/repository.pkl b/schema/pkl/ecr/repository.pkl
+index 49e5331..25225e9 100644
+--- a/schema/pkl/ecr/repository.pkl
++++ b/schema/pkl/ecr/repository.pkl
+@@ -54,7 +54,7 @@ open class Repository extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     repositoryName: (String(matches(Regex(#"^(?=.{2,256}$)((?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*)$"#))))?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     repositoryPolicyText: Dynamic?
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/efs/filesystem.pkl b/schema/pkl/efs/filesystem.pkl
+index bc4e387..74ba396 100644
+--- a/schema/pkl/efs/filesystem.pkl
++++ b/schema/pkl/efs/filesystem.pkl
+@@ -78,7 +78,7 @@ open class FileSystem extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     encrypted: Boolean?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     fileSystemPolicy: Dynamic?
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/iam/grouppolicy.pkl b/schema/pkl/iam/grouppolicy.pkl
+index da366d3..d3e88bb 100644
+--- a/schema/pkl/iam/grouppolicy.pkl
++++ b/schema/pkl/iam/grouppolicy.pkl
+@@ -21,7 +21,7 @@ open class GroupPolicy extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     groupName: String
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic?
+ 
+     @aws.FieldHint{createOnly = true}
+diff --git a/schema/pkl/iam/managedpolicy.pkl b/schema/pkl/iam/managedpolicy.pkl
+index 37ce653..ec77522 100644
+--- a/schema/pkl/iam/managedpolicy.pkl
++++ b/schema/pkl/iam/managedpolicy.pkl
+@@ -31,7 +31,7 @@ open class ManagedPolicy extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     path: String?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/iam/policy.pkl b/schema/pkl/iam/policy.pkl
+index ea694a7..6378f58 100644
+--- a/schema/pkl/iam/policy.pkl
++++ b/schema/pkl/iam/policy.pkl
+@@ -21,7 +21,7 @@ open class Policy extends formae.Resource {
+     @aws.FieldHint
+     groups: Listing<String>?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/iam/role.pkl b/schema/pkl/iam/role.pkl
+index 2fe3844..19cf575 100644
+--- a/schema/pkl/iam/role.pkl
++++ b/schema/pkl/iam/role.pkl
+@@ -40,7 +40,7 @@ open class RoleResolvable extends formae.Resolvable {
+ }
+ open class Role extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     assumeRolePolicyDocument: Dynamic
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/iam/rolepolicy.pkl b/schema/pkl/iam/rolepolicy.pkl
+index a26cb98..0eb1d12 100644
+--- a/schema/pkl/iam/rolepolicy.pkl
++++ b/schema/pkl/iam/rolepolicy.pkl
+@@ -23,7 +23,7 @@ const type = "AWS::IAM::RolePolicy"
+ }
+ open class RolePolicy extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic?
+ 
+     @aws.FieldHint{createOnly = true}
+diff --git a/schema/pkl/iam/userpolicy.pkl b/schema/pkl/iam/userpolicy.pkl
+index fd8553e..0350af6 100644
+--- a/schema/pkl/iam/userpolicy.pkl
++++ b/schema/pkl/iam/userpolicy.pkl
+@@ -18,7 +18,7 @@ const type = "AWS::IAM::UserPolicy"
+ }
+ open class UserPolicy extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic?
+ 
+     @aws.FieldHint{createOnly = true}
+diff --git a/schema/pkl/kms/key.pkl b/schema/pkl/kms/key.pkl
+index e493a0e..bb3e8e9 100644
+--- a/schema/pkl/kms/key.pkl
++++ b/schema/pkl/kms/key.pkl
+@@ -45,7 +45,7 @@ open class Key extends formae.Resource {
+     @aws.FieldHint
+     enabled: Boolean?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     keyPolicy: Dynamic?
+ 
+     @aws.FieldHint{createOnly = true}
+diff --git a/schema/pkl/logs/loggroup.pkl b/schema/pkl/logs/loggroup.pkl
+index f9232a3..1962260 100644
+--- a/schema/pkl/logs/loggroup.pkl
++++ b/schema/pkl/logs/loggroup.pkl
+@@ -39,7 +39,7 @@ open class LogGroupResolvable extends formae.Resolvable {
+ }
+ open class LogGroup extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     dataProtectionPolicy: Dynamic?
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/rds/dbclusterparametergroup.pkl b/schema/pkl/rds/dbclusterparametergroup.pkl
+index 546a834..d239f9f 100644
+--- a/schema/pkl/rds/dbclusterparametergroup.pkl
++++ b/schema/pkl/rds/dbclusterparametergroup.pkl
+@@ -29,7 +29,7 @@ open class DBClusterParameterGroup extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     family: String
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     parameters: Dynamic
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/rds/dbparametergroup.pkl b/schema/pkl/rds/dbparametergroup.pkl
+index 25fe3f3..c058cb9 100644
+--- a/schema/pkl/rds/dbparametergroup.pkl
++++ b/schema/pkl/rds/dbparametergroup.pkl
+@@ -37,7 +37,7 @@ open class DBParameterGroup extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     family: String
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     parameters: Dynamic?
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/s3/bucketpolicy.pkl b/schema/pkl/s3/bucketpolicy.pkl
+index 4e3d6f4..5cc3f24 100644
+--- a/schema/pkl/s3/bucketpolicy.pkl
++++ b/schema/pkl/s3/bucketpolicy.pkl
+@@ -19,6 +19,6 @@ open class BucketPolicy extends formae.Resource {
+     @aws.FieldHint { createOnly = true }
+     bucket: String|formae.Resolvable
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic
+ }
+diff --git a/schema/pkl/s3/multiregionaccesspointpolicy.pkl b/schema/pkl/s3/multiregionaccesspointpolicy.pkl
+index 152aeb0..55ef0f9 100644
+--- a/schema/pkl/s3/multiregionaccesspointpolicy.pkl
++++ b/schema/pkl/s3/multiregionaccesspointpolicy.pkl
+@@ -21,6 +21,6 @@ open class MultiRegionAccessPointPolicy extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     mrapName: String(matches(Regex(#"^[a-z0-9][-a-z0-9]{1,48}[a-z0-9]$"#)))
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policy: Dynamic
+ }
+diff --git a/schema/pkl/s3/s3accesspoint.pkl b/schema/pkl/s3/s3accesspoint.pkl
+index ef7a45c..82f3abd 100644
+--- a/schema/pkl/s3/s3accesspoint.pkl
++++ b/schema/pkl/s3/s3accesspoint.pkl
+@@ -40,7 +40,7 @@ open class AccessPoint extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     name: String(matches(Regex(#"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$"#)))?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policy: Dynamic?
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/sagemaker/modelpackagegroup.pkl b/schema/pkl/sagemaker/modelpackagegroup.pkl
+index 478f63e..b69b0c6 100644
+--- a/schema/pkl/sagemaker/modelpackagegroup.pkl
++++ b/schema/pkl/sagemaker/modelpackagegroup.pkl
+@@ -38,7 +38,7 @@ open class ModelPackageGroup extends formae.Resource {
+     @aws.FieldHint{createOnly = true}
+     modelPackageGroupName: String
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     modelPackageGroupPolicy: Dynamic?
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/secretsmanager/resourcepolicy.pkl b/schema/pkl/secretsmanager/resourcepolicy.pkl
+index 17a3230..30aa7a6 100644
+--- a/schema/pkl/secretsmanager/resourcepolicy.pkl
++++ b/schema/pkl/secretsmanager/resourcepolicy.pkl
+@@ -20,7 +20,7 @@ open class ResourcePolicy extends formae.Resource {
+     @aws.FieldHint{writeOnly = true}
+     blockPublicPolicy: Boolean?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     resourcePolicy: Dynamic
+ 
+     @aws.FieldHint{createOnly = true}
+diff --git a/schema/pkl/sqs/queue.pkl b/schema/pkl/sqs/queue.pkl
+index 8edd89e..ba19b08 100644
+--- a/schema/pkl/sqs/queue.pkl
++++ b/schema/pkl/sqs/queue.pkl
+@@ -92,10 +92,10 @@ open class Queue extends formae.Resource {
+     }
+     receiveMessageWaitTimeSeconds: Duration(isBetween(0.s, 20.s))? = 0.s
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     redriveAllowPolicy: Dynamic?
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     redrivePolicy: Dynamic?
+ 
+     @aws.FieldHint
+diff --git a/schema/pkl/sqs/queueinlinepolicy.pkl b/schema/pkl/sqs/queueinlinepolicy.pkl
+index cc4c59e..fbc3401 100644
+--- a/schema/pkl/sqs/queueinlinepolicy.pkl
++++ b/schema/pkl/sqs/queueinlinepolicy.pkl
+@@ -18,7 +18,7 @@ const type = "AWS::SQS::QueueInlinePolicy"
+ }
+ open class QueueInlinePolicy extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic
+ 
+     @aws.FieldHint {
+diff --git a/schema/pkl/sqs/queuepolicy.pkl b/schema/pkl/sqs/queuepolicy.pkl
+index af66d0c..77335d9 100644
+--- a/schema/pkl/sqs/queuepolicy.pkl
++++ b/schema/pkl/sqs/queuepolicy.pkl
+@@ -18,7 +18,7 @@ const type = "AWS::SQS::QueuePolicy"
+ }
+ open class QueuePolicy extends formae.Resource {
+ 
+-    @aws.FieldHint
++    @aws.FieldHint { updateMethod = "Atomic" }
+     policyDocument: Dynamic
+ 
+     @aws.FieldHint
