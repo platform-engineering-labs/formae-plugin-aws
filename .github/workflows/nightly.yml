@@ -135,6 +135,32 @@ jobs:
           make build VERSION="${LATEST_TAG}"
           echo "FORMAE_BINARY=/tmp/formae/formae" >> $GITHUB_ENV
 
+      - name: Track formae clone
+        if: env.POSTHOG_API_KEY != ''
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+        run: |
+          REPO=$(basename "$(git remote get-url origin)" .git 2>/dev/null || echo "unknown")
+          curl -sf -o /dev/null https://us.i.posthog.com/capture/ \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg api_key "$POSTHOG_API_KEY" \
+              --arg repo "$REPO" \
+              --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --arg run_id "${GITHUB_RUN_ID:-}" \
+              '{
+                api_key: $api_key,
+                distinct_id: "formae-ci",
+                event: "ci_repo_clone",
+                timestamp: $ts,
+                properties: {
+                  "$process_person_profile": false,
+                  repo: $repo,
+                  cloned_repo: "formae",
+                  ci_run_id: $run_id
+                }
+              }')" || echo "[telemetry] event send failed (non-critical)" >&2
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -149,6 +175,7 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 
   # Clean up test resources after all conformance tests (always runs)

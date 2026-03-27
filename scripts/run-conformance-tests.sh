@@ -28,6 +28,45 @@ sed_inplace() {
     fi
 }
 
+# Sends a telemetry event to PostHog for tracking CI/dev binary downloads.
+# Gated on POSTHOG_API_KEY — silently no-ops when unset.
+formae_track_event() {
+  local api_key="${POSTHOG_API_KEY:-}"
+  if [[ -z "$api_key" ]]; then return; fi
+
+  local event="$1"; shift
+  local repo
+  repo=$(basename "$(git remote get-url origin 2>/dev/null)" .git 2>/dev/null || echo "unknown")
+
+  local payload
+  payload=$(jq -n \
+    --arg api_key "$api_key" \
+    --arg event "$event" \
+    --arg repo "$repo" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg run_id "${GITHUB_RUN_ID:-}" \
+    '{
+      api_key: $api_key,
+      distinct_id: "formae-ci",
+      event: $event,
+      timestamp: $ts,
+      properties: {
+        "$process_person_profile": false,
+        repo: $repo,
+        ci_run_id: $run_id
+      }
+    }')
+
+  for kv in "$@"; do
+    local key="${kv%%=*}" val="${kv#*=}"
+    payload=$(echo "$payload" | jq --arg k "$key" --arg v "$val" '.properties[$k] = $v')
+  done
+
+  curl -sf -o /dev/null https://us.i.posthog.com/capture/ \
+    -H "Content-Type: application/json" \
+    -d "$payload" || echo "[telemetry] event send failed (non-critical)" >&2 &
+}
+
 VERSION="${1:-latest}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -107,6 +146,8 @@ else
         fi
     fi
 fi
+
+formae_track_event "ci_binary_download" "version=${VERSION}" "os=${DETECTED_OS}" "arch=${DETECTED_ARCH}"
 
 echo ""
 echo "Using formae binary: ${FORMAE_BINARY}"
