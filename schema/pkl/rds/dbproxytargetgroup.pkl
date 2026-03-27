@@ -27,7 +27,7 @@ open class DBProxyTargetGroupResolvable extends formae.Resolvable {
     type = module.type
 
     targetGroupArn: DBProxyTargetGroupResolvable = (this) {
-        Property = "TargetGroupArn"
+        property = "TargetGroupArn"
     }
 }
 

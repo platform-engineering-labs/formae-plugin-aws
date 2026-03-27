@@ -14,14 +14,15 @@ const type = "AWS::IAM::GroupPolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "PolicyName"
+    parent = "AWS::IAM::Group"
     discoverable = false
 }
 open class GroupPolicy extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    groupName: String
+    groupName: String|formae.Resolvable
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic?
 
     @aws.FieldHint{createOnly = true}

@@ -1,0 +1,92 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/rds/dbsubnetgroup.pkl"
+import "@aws/rds/dbinstance.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-rds-dbinstance-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-dbinst"
+  cidrBlock = "10.229.0.0/16"
+  enableDnsSupport = true
+}
+
+// Two subnets in different AZs required for DB Subnet Group
+local testSubnet1 = new subnet.Subnet {
+  label = "test-subnet-1-for-dbinst"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.229.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnet2 = new subnet.Subnet {
+  label = "test-subnet-2-for-dbinst"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.229.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+// DB Subnet Group dependency
+local testSubnetGroup = new dbsubnetgroup.DBSubnetGroup {
+  label = "test-dbsg-for-dbinst"
+  dbSubnetGroupName = "formae-sdk-test-dbi-sg-\(testRunID)"
+  dbSubnetGroupDescription = "DB subnet group for DB instance test"
+  subnetIds {
+    testSubnet1.res.subnetId
+    testSubnet2.res.subnetId
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for RDS DBInstance"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for DB Instance
+  testVpc
+
+  // Subnets required for DB Subnet Group
+  testSubnet1
+  testSubnet2
+
+  // DB Subnet Group required for DB Instance
+  testSubnetGroup
+
+  // DB Instance under test - updated: enable copyTagsToSnapshot (metadata-only, applies instantly)
+  new dbinstance.DBInstance {
+    label = "plugin-sdk-test-dbinst"
+    dbInstanceIdentifier = "formae-sdk-test-db-\(testRunID)"
+    dbInstanceClass = "db.t3.micro"
+    engine = "mysql"
+
+    masterUsername = "admin"
+    masterUserPassword = "TestPassword123!"
+    allocatedStorage = "20"
+    backupRetentionPeriod = 0
+    copyTagsToSnapshot = true
+    dbSubnetGroupName = testSubnetGroup.res.dbSubnetGroupName
+    publiclyAccessible = false
+    deletionProtection = false
+  }
+}

@@ -1,0 +1,59 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/natgateway.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-natgateway-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-natgw"
+  cidrBlock = "10.220.0.0/16"
+  enableDnsSupport = true
+}
+
+// Subnet dependency - NAT Gateway needs a subnet
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-natgw"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.220.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 NatGateway"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for NAT Gateway
+  testVpc
+
+  // Subnet required for NAT Gateway
+  testSubnet
+
+  // Private NAT Gateway under test (no IGW/EIP needed)
+  new natgateway.NatGateway {
+    label = "plugin-sdk-test-natgw"
+    subnetId = testSubnet.res.subnetId
+    connectivityType = "private"
+  }
+}

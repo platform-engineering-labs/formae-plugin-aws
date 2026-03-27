@@ -92,15 +92,15 @@ open class DBInstanceResolvable extends formae.Resolvable {
 open class DBInstance extends formae.Resource {
 
     @aws.FieldHint
-    allocatedStorage: Int?
+    allocatedStorage: String?
 
     @aws.FieldHint{writeOnly = true}
     allowMajorVersionUpgrade: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     associatedRoles: Listing<Role>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     autoMinorVersionUpgrade: Boolean?
 
     @aws.FieldHint{writeOnly = true}
@@ -109,18 +109,19 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     automaticBackupReplicationRegion: aws.Region?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     availabilityZone: aws.AvailabilityZone?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     backupRetentionPeriod: Int?
 
     @aws.FieldHint{
         outputField = "CACertificateIdentifier"
+        hasProviderDefault = true
     }
     caCertificateIdentifier: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     certificateDetails: CertificateDetails?
 
     @aws.FieldHint{writeOnly = true}
@@ -129,7 +130,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     characterSetName: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     copyTagsToSnapshot: Boolean?
 
     @aws.FieldHint{createOnly = true}
@@ -165,6 +166,7 @@ open class DBInstance extends formae.Resource {
 
     @aws.FieldHint{
         outputField = "DBParameterGroupName"
+        hasProviderDefault = true
     }
     dbParameterGroupName: String?
 
@@ -190,7 +192,7 @@ open class DBInstance extends formae.Resource {
         }
     dbSystemId: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     dedicatedLogVolume: Boolean?
 
     @aws.FieldHint{writeOnly = true}
@@ -217,25 +219,25 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     domainOu: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enableCloudwatchLogsExports: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enableIAMDatabaseAuthentication: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enablePerformanceInsights: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     endpoint: Endpoint?
 
     @aws.FieldHint
     engine: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     engineLifecycleSupport: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     engineVersion: String?
 
     @aws.FieldHint
@@ -244,16 +246,16 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     kmsKeyId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     licenseModel: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     manageMasterUserPassword: Boolean?
 
     @aws.FieldHint{writeOnly = true}
     masterUserPassword: (String|formae.Resolvable|formae.Value)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     masterUserSecret: MasterUserSecret?
 
     @aws.FieldHint{createOnly = true}
@@ -262,22 +264,22 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     maxAllocatedStorage: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     monitoringInterval: Int?
 
     @aws.FieldHint
     monitoringRoleArn: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     multiAZ: Boolean?
 
     @aws.FieldHint{createOnly = true}
     ncharCharacterSetName: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     networkType: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     optionGroupName: String?
 
     @aws.FieldHint{createOnly = true}
@@ -286,16 +288,16 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint
     performanceInsightsRetentionPeriod: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     port: (String(matches(Regex(#"^\d*$"#))))?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     preferredBackupWindow: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     preferredMaintenanceWindow: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     processorFeatures: Listing<ProcessorFeature>?
 
     @aws.FieldHint
@@ -328,18 +330,22 @@ open class DBInstance extends formae.Resource {
     }
     sourceRegion: aws.Region?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     storageEncrypted: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     storageThroughput: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     storageType: String?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 
@@ -358,7 +364,10 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint{writeOnly = true}
     useLatestRestorableTime: Boolean?
 
-    @aws.FieldHint{outputField = "VPCSecurityGroups"}
+    @aws.FieldHint{
+        outputField = "VPCSecurityGroups"
+        hasProviderDefault = true
+    }
     vpcSecurityGroups: Listing<String|formae.Resolvable>?
 
     hidden parent = this

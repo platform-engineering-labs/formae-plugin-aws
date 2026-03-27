@@ -1,0 +1,115 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+import "@aws/ecs/service.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-service-\(testRunID)"
+
+// VPC + Subnet for FARGATE awsvpc networking - same as create
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-ecs-svc"
+  cidrBlock = "10.230.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-ecs-svc"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.230.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// ECS Cluster dependency - same as create
+local testCluster = new ecscluster.Cluster {
+  label = "test-cluster-for-service"
+  clusterName = "formae-sdk-test-svc-cluster-\(testRunID)"
+  clusterSettings {
+    new {
+      name = "containerInsights"
+      value = "disabled"
+    }
+  }
+}
+
+// ECS TaskDefinition dependency - same as create
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "test-taskdef-for-service"
+  family = "formae-sdk-test-svc-taskdef-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "256"
+  memory = "512"
+  containerDefinitions {
+    new {
+      name = "test-container"
+      image = "nginx:latest"
+      essential = true
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ECS Service"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC + Subnet for awsvpc networking
+  testVpc
+  testSubnet
+
+  // Cluster dependency
+  testCluster
+
+  // TaskDefinition dependency (must be in forma block for Resolvable eval)
+  testTaskDef
+
+  // Updated: changed deploymentConfiguration
+  new service.Service {
+    label = "plugin-sdk-test-ecs-service"
+    serviceName = "formae-sdk-test-svc-\(testRunID)"
+    cluster = testCluster.res.arn
+    taskDefinition = new formae.Resolvable {
+      label = testTaskDef.label
+      type = "AWS::ECS::TaskDefinition"
+      property = "TaskDefinitionArn"
+    }
+    desiredCount = 0
+    schedulingStrategy = "REPLICA"
+    launchType = "FARGATE"
+    networkConfiguration = new service.NetworkConfiguration {
+      awsvpcConfiguration = new service.AwsVpcConfiguration {
+        assignPublicIp = "DISABLED"
+        subnets {
+          testSubnet.res.subnetId
+        }
+      }
+    }
+    deploymentConfiguration = new service.DeploymentConfiguration {
+      maximumPercent = 200
+      minimumHealthyPercent = 0
+    }
+  }
+}

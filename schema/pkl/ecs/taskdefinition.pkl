@@ -25,22 +25,33 @@ typealias ContainerDefinitionVersionConsistency = "enabled"|"disabled"
 
 @aws.SubResourceHint
 open class ContainerDefinition extends formae.SubResource {
+    @aws.FieldHint{hasProviderDefault = true}
     command: Listing<String>?
     @aws.FieldHint{hasProviderDefault = true}
     cpu: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     credentialSpecs: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     dependsOn: Listing<ContainerDependency>?
     @aws.FieldHint{hasProviderDefault = true}
     disableNetworking: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     dnsSearchDomains: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     dnsServers: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     dockerLabels: ContainerDefinitionDockerLabels?
+    @aws.FieldHint{hasProviderDefault = true}
     dockerSecurityOptions: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     entryPoint: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     environment: Listing<KeyValuePair>?
+    @aws.FieldHint{hasProviderDefault = true}
     environmentFiles: Listing<EnvironmentFile>?
     @aws.FieldHint{hasProviderDefault = true}
     essential: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     extraHosts: Listing<HostEntry>?
     firelensConfiguration: FirelensConfiguration?
     healthCheck: HealthCheck?
@@ -48,6 +59,7 @@ open class ContainerDefinition extends formae.SubResource {
     image: String
     @aws.FieldHint{hasProviderDefault = true}
     interactive: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     links: Listing<String>?
     linuxParameters: LinuxParameters?
     logConfiguration: LogConfiguration?
@@ -55,8 +67,10 @@ open class ContainerDefinition extends formae.SubResource {
     memory: Int?
     @aws.FieldHint{hasProviderDefault = true}
     memoryReservation: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     mountPoints: Listing<MountPoint>?
     name: String
+    @aws.FieldHint{hasProviderDefault = true}
     portMappings: Listing<PortMapping>?
     @aws.FieldHint{hasProviderDefault = true}
     privileged: Boolean?
@@ -65,17 +79,22 @@ open class ContainerDefinition extends formae.SubResource {
     @aws.FieldHint{hasProviderDefault = true}
     readonlyRootFilesystem: Boolean?
     repositoryCredentials: RepositoryCredentials?
+    @aws.FieldHint{hasProviderDefault = true}
     resourceRequirements: Listing<ResourceRequirement>?
     restartPolicy: RestartPolicy?
+    @aws.FieldHint{hasProviderDefault = true}
     secrets: Listing<Secret>?
     @aws.FieldHint{hasProviderDefault = true}
     startTimeout: Int?
     @aws.FieldHint{hasProviderDefault = true}
     stopTimeout: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     systemControls: Listing<SystemControl>?
+    @aws.FieldHint{hasProviderDefault = true}
     ulimits: Listing<Ulimit>?
     user: String?
     versionConsistency: ContainerDefinitionVersionConsistency?
+    @aws.FieldHint{hasProviderDefault = true}
     volumesFrom: Listing<VolumeFrom>?
     workingDirectory: String?
 }
@@ -309,11 +328,11 @@ open class TaskDefinitionResolvable extends formae.Resolvable {
     hidden type = module.type
 
     hidden id: TaskDefinitionResolvable = (this) {
-        Property = "Ref"
+        property = "Ref"
     }
 
     hidden taskDefinitionArn: TaskDefinitionResolvable = (this) {
-        Property = "TaskDefinitionArn"
+        property = "TaskDefinitionArn"
     }
 }
 
@@ -341,7 +360,7 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     family: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     inferenceAccelerators: Listing<InferenceAccelerator>?
 
     @aws.FieldHint{createOnly = true}
@@ -356,13 +375,13 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     pidMode: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     placementConstraints: Listing<PlacementConstraint>?
 
     @aws.FieldHint{createOnly = true}
     proxyConfiguration: ProxyConfiguration?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     requiresCompatibilities: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
@@ -377,6 +396,6 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     taskRoleArn: (String|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     volumes: Listing<Volume>?
 }

@@ -40,19 +40,22 @@ open class RoleResolvable extends formae.Resolvable {
 }
 open class Role extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     assumeRolePolicyDocument: Dynamic
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     description: String?
 
     @aws.FieldHint
     managedPolicyArns: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     maxSessionDuration: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     path: String?
 
     @aws.FieldHint

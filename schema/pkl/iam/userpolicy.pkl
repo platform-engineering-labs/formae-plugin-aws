@@ -14,16 +14,17 @@ const type = "AWS::IAM::UserPolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "PolicyName"
+    parent = "AWS::IAM::User"
     discoverable = false
 }
 open class UserPolicy extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic?
 
     @aws.FieldHint{createOnly = true}
     policyName: String
 
     @aws.FieldHint{createOnly = true}
-    userName: String
+    userName: String|formae.Resolvable
 }

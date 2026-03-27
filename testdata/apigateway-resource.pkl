@@ -1,0 +1,51 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/apigateway/restapi.pkl"
+import "@aws/apigateway/resource.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-apigateway-resource-\(testRunID)"
+
+// RestApi dependency - Resource needs a REST API
+local testApi = new restapi.RestApi {
+  label = "test-restapi-for-resource"
+  name = "formae-sdk-test-res-api-\(testRunID)"
+  description = "Test API for Resource"
+  endpointConfiguration = new restapi.EndpointConfiguration {
+    types = new Listing { "REGIONAL" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ApiGateway Resource"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Parent RestApi
+  testApi
+
+  // Resource under test
+  new resource.Resource {
+    label = "plugin-sdk-test-resource"
+    restApiId = testApi.res.restApiId
+    parentId = testApi.res.rootResourceId
+    pathPart = "test"
+  }
+}

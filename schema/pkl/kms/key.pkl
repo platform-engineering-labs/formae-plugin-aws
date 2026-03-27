@@ -39,25 +39,37 @@ open class Key extends formae.Resource {
     @aws.FieldHint
     description: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enableKeyRotation: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enabled: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     keyPolicy: Dynamic?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     keySpec: KeySpec?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     keyUsage: KeyUsage?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     multiRegion: Boolean?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint {
+        createOnly = true
+        hasProviderDefault = true
+    }
     origin: Origin?
 
     @aws.FieldHint{writeOnly = true}
@@ -69,6 +81,7 @@ open class Key extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 

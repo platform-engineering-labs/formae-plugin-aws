@@ -10,90 +10,113 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
+	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/google/uuid"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
-	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 	"github.com/stretchr/testify/assert"
 )
 
-func createTestHostedZone(zoneName string) (string, error) {
-	cfg := &config.Config{}
+// uniqueDomain generates a unique domain name for test isolation.
+// Uses a short UUID prefix under example.com to avoid conflicts between
+// concurrent or repeated test runs.
+func uniqueDomain(prefix string) string {
+	short := strings.ReplaceAll(uuid.New().String()[:8], "-", "")
+	return fmt.Sprintf("formae-test-%s-%s.test", prefix, short)
+}
 
-	client, err := ccx.NewClient(cfg)
+// createTestHostedZoneWithCleanup creates a Route53 hosted zone and registers
+// a t.Cleanup function to delete it when the test finishes, even on failure.
+// Returns the hosted zone ID.
+func createTestHostedZoneWithCleanup(t *testing.T, zoneName string) string {
+	t.Helper()
+
+	hostedZoneID, err := createTestHostedZone(zoneName)
 	if err != nil {
-		return "", fmt.Errorf("failed to create client: %w", err)
+		t.Fatalf("Failed to create test hosted zone %q: %v", zoneName, err)
 	}
+	t.Logf("Created hosted zone %q with ID: %s", zoneName, hostedZoneID)
 
-	props := map[string]any{
-		"Name": zoneName,
+	t.Cleanup(func() {
+		t.Logf("Cleaning up hosted zone %s (%s)", hostedZoneID, zoneName)
+		deleteTestHostedZone(t, hostedZoneID)
+	})
+
+	return hostedZoneID
+}
+
+func createTestHostedZone(zoneName string) (string, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	propsBytes, _ := json.Marshal(props)
+	client := route53.NewFromConfig(cfg)
 
-	createReq := &resource.CreateRequest{
-		ResourceType: "AWS::Route53::HostedZone",
-		Properties:   propsBytes,
-	}
-
-	createRes, err := client.CreateResource(context.Background(), createReq)
+	callerRef := uuid.New().String()
+	out, err := client.CreateHostedZone(context.Background(), &route53.CreateHostedZoneInput{
+		Name:            &zoneName,
+		CallerReference: &callerRef,
+	})
 	if err != nil {
 		return "", fmt.Errorf("create failed: %w", err)
 	}
-	if createRes == nil || createRes.ProgressResult == nil || createRes.ProgressResult.RequestID == "" {
-		return "", fmt.Errorf("create did not return a valid request ID")
-	}
-
-	for i := 0; i < 20; i++ {
-		statusRes, err := client.StatusResource(context.Background(), &resource.StatusRequest{
-			RequestID: createRes.ProgressResult.RequestID,
-		}, func(ctx context.Context, req *resource.ReadRequest) (*resource.ReadResult, error) {
-			return client.ReadResource(ctx, req)
-		})
-		if err != nil {
-			return "", fmt.Errorf("status failed: %w", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			return statusRes.ProgressResult.NativeID, nil
-		}
-		time.Sleep(3 * time.Second)
-	}
-	return "", fmt.Errorf("timeout waiting for hosted zone creation")
+	// Route53 returns IDs like "/hostedzone/Z1234", extract just the ID
+	hostedZoneID := strings.TrimPrefix(*out.HostedZone.Id, "/hostedzone/")
+	return hostedZoneID, nil
 }
 
 func deleteTestHostedZone(t *testing.T, hostedZoneID string) {
-	cfg := &config.Config{}
+	t.Helper()
 
-	client, err := ccx.NewClient(cfg)
-	assert.NoError(t, err)
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		t.Logf("Warning: failed to load AWS config for cleanup: %v", err)
+		return
+	}
+	client := route53.NewFromConfig(cfg)
 
-	deleteReq := &resource.DeleteRequest{
-		NativeID:     hostedZoneID,
-		ResourceType: "AWS::Route53::HostedZone",
+	// List and delete all non-NS/SOA record sets first
+	fullID := "/hostedzone/" + hostedZoneID
+	listOut, err := client.ListResourceRecordSets(context.Background(), &route53.ListResourceRecordSetsInput{
+		HostedZoneId: &fullID,
+	})
+	if err != nil {
+		t.Logf("Warning: failed to list record sets for cleanup: %v", err)
+		return
 	}
 
-	deleteRes, err := client.DeleteResource(context.Background(), deleteReq)
-	assert.NoError(t, err)
-
-	if deleteRes == nil || deleteRes.ProgressResult == nil || deleteRes.ProgressResult.RequestID == "" {
-		t.Fatalf("Delete did not return a valid RequestID")
+	var changes []r53types.Change
+	for _, rs := range listOut.ResourceRecordSets {
+		if rs.Type == r53types.RRTypeNs || rs.Type == r53types.RRTypeSoa {
+			continue
+		}
+		changes = append(changes, r53types.Change{
+			Action:            r53types.ChangeActionDelete,
+			ResourceRecordSet: &rs,
+		})
 	}
-
-	// Wait for deletion to complete
-	assert.Eventually(t, func() bool {
-		statusRes, err := client.StatusResource(context.Background(), &resource.StatusRequest{
-			RequestID: deleteRes.ProgressResult.RequestID,
-		}, func(ctx context.Context, req *resource.ReadRequest) (*resource.ReadResult, error) {
-			return client.ReadResource(ctx, req)
+	if len(changes) > 0 {
+		_, err = client.ChangeResourceRecordSets(context.Background(), &route53.ChangeResourceRecordSetsInput{
+			HostedZoneId: &fullID,
+			ChangeBatch:  &r53types.ChangeBatch{Changes: changes},
 		})
 		if err != nil {
-			t.Fatalf("Status failed: %v", err)
+			t.Logf("Warning: failed to delete record sets: %v", err)
 		}
-		return statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess
-	}, 2*time.Minute, 5*time.Second, "Timed out waiting for hosted zone deletion")
+	}
+
+	_, err = client.DeleteHostedZone(context.Background(), &route53.DeleteHostedZoneInput{
+		Id: &fullID,
+	})
+	if err != nil {
+		t.Logf("Warning: failed to delete hosted zone: %v", err)
+	}
 }
 
 func create_record_set(rs RecordSet, propsBytes json.RawMessage, t *testing.T) resource.CreateResult {
@@ -112,7 +135,14 @@ func create_record_set(rs RecordSet, propsBytes json.RawMessage, t *testing.T) r
 }
 
 func wait_for_status(rs RecordSet, requestID string, nativeID string, t *testing.T) *resource.StatusResult {
+	t.Helper()
+	deadline := time.After(2 * time.Minute)
 	for {
+		select {
+		case <-deadline:
+			t.Fatalf("Timed out waiting for status on request %s", requestID)
+		default:
+		}
 		statusRes, err := rs.Status(context.Background(), &resource.StatusRequest{
 			RequestID:    requestID,
 			NativeID:     nativeID,
@@ -143,105 +173,17 @@ func delete_record_set(rs RecordSet, nativeID string, t *testing.T) *resource.De
 	return deleteRes
 }
 
-func TestCreate_Route53(t *testing.T) {
-	t.Skip("Skipping Route53 create test - WIP")
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	res, err := rs.Create(context.Background(), &resource.CreateRequest{
-		ResourceType: "AWS::Route53::RecordSet",
-		Label:        "pel-record-snarf",
-		Properties:   json.RawMessage(`{"HostedZoneId":"Z03405173PGMODHWMP57N","Name":"eng.snarf.test.pel","ResourceRecords":["192.168.55.2"],"TTL":"300","Type":"A"}`),
-	})
-
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-
-	// Wait for status to be success
-	if res == nil || res.ProgressResult == nil || res.ProgressResult.RequestID == "" {
-		t.Fatalf("Create did not return a valid RequestID")
-	}
-	nativeID := res.ProgressResult.NativeID
-	var statusRes *resource.StatusResult
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    res.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-	}
-
-	_, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: nativeID,
-	})
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-
-	deleteReq := &resource.DeleteRequest{
-		NativeID:     nativeID,
-		ResourceType: "AWS::Route53::RecordSet",
-	}
-	_, err = rs.Delete(context.Background(), deleteReq)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-}
-
-func TestDelete_Route53(t *testing.T) {
-	t.Skip("Skipping Route53 delete test - WIP")
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	nativeID := "Z034"
-	deleteReq := &resource.DeleteRequest{
-		NativeID: nativeID,
-	}
-	_, err := rs.Delete(context.Background(), deleteReq)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-}
-
-func TestStatus_Route53(t *testing.T) {
-	t.Skip("Skipping Route53 status test - WIP")
-	_, err := awsconfig.LoadDefaultConfig(context.Background())
-	assert.NoError(t, err)
-
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	_, err = rs.Status(context.Background(), &resource.StatusRequest{
-		RequestID:    "/change/C0143912BN0L1VGPGYWI",
-		ResourceType: "AWS::Route53::RecordSet",
-	})
-	if err != nil {
-		t.Fatalf("Status failed: %v", err)
-	}
-}
-
 func TestRecordSet_Lifecycle(t *testing.T) {
-	//t.Skip("Skipping Route53 record set lifecycle test - WIP")
-	hostedZoneID, err := createTestHostedZone("snarf.test.pel")
-	if err != nil {
-		t.Fatalf("Failed to create test hosted zone: %v", err)
-		return
-	}
-	t.Logf("Created hosted zone with ID: %s", hostedZoneID)
+	domain := uniqueDomain("lifecycle")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
+
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	// --- CREATE ---
 	createProps := map[string]any{
 		"HostedZoneId":    hostedZoneID,
-		"Name":            "eng.snarf.test.pel",
+		"Name":            "eng." + domain,
 		"ResourceRecords": []string{"192.168.55.2"},
 		"TTL":             300,
 		"Type":            "A",
@@ -263,21 +205,8 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	nativeID := createRes.ProgressResult.NativeID
 
 	// Wait for create to be INSYNC
-	var statusRes *resource.StatusResult
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    createRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (create) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	statusRes := wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
+	_ = statusRes
 
 	// --- READ after create ---
 	readRes, err := rs.Read(context.Background(), &resource.ReadRequest{
@@ -291,7 +220,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	// --- UPDATE ---
 	updateProps := map[string]any{
 		"HostedZoneId":    hostedZoneID,
-		"Name":            "eng.snarf.test.pel",
+		"Name":            "eng." + domain,
 		"ResourceRecords": []string{"192.168.55.3"}, // change IP
 		"TTL":             600,                      // change TTL
 		"Type":            "A",
@@ -310,20 +239,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	}
 
 	// Wait for update to be INSYNC
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    updateRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (update) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	wait_for_status(rs, updateRes.ProgressResult.RequestID, nativeID, t)
 
 	// --- READ after update ---
 	readRes, err = rs.Read(context.Background(), &resource.ReadRequest{
@@ -334,7 +250,7 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	}
 	t.Logf("Updated record: %s", readRes.Properties)
 
-	// --- DELETE ---
+	// --- DELETE record set ---
 	deleteReq := &resource.DeleteRequest{
 		NativeID: nativeID,
 	}
@@ -347,37 +263,21 @@ func TestRecordSet_Lifecycle(t *testing.T) {
 	}
 
 	// Wait for delete to be INSYNC
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    deleteRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (delete) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
 
-	deleteTestHostedZone(t, hostedZoneID)
+	// Hosted zone cleanup is handled by t.Cleanup via createTestHostedZoneWithCleanup
 }
 
 func TestCreate_A_Record(t *testing.T) {
-	hostedZoneID, err := createTestHostedZone("a-record.test.pel")
-	if err != nil {
-		t.Fatalf("Failed to create test hosted zone: %v", err)
-	}
-	defer deleteTestHostedZone(t, hostedZoneID)
+	domain := uniqueDomain("a-record")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
 
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	props := map[string]any{
 		"HostedZoneId":    hostedZoneID,
-		"Name":            "a.a-record.test.pel",
+		"Name":            "a." + domain,
 		"TTL":             "300",
 		"Type":            "A",
 		"ResourceRecords": []string{"192.168.1.1"},
@@ -405,12 +305,8 @@ func TestCreate_A_Record(t *testing.T) {
 
 // TestCreate_Records tests creation and deletion for all supported Route53 record types.
 func TestCreate_Records(t *testing.T) {
-	domain := "records.test.pel"
-	hostedZoneID, err := createTestHostedZone(domain)
-	if err != nil {
-		t.Fatalf("Failed to create test hosted zone: %v", err)
-	}
-	defer deleteTestHostedZone(t, hostedZoneID)
+	domain := uniqueDomain("records")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
 
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
@@ -472,132 +368,45 @@ func TestCreate_Records(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		propsBytes, _ := json.Marshal(tc.props)
+		t.Run(tc.name, func(t *testing.T) {
+			propsBytes, _ := json.Marshal(tc.props)
 
-		t.Log("Creating", tc.name, "with properties:", string(propsBytes))
-		createRes := create_record_set(rs, propsBytes, t)
-		nativeID := createRes.ProgressResult.NativeID
-		t.Log("Created", tc.name, "with RequestID:", createRes.ProgressResult.RequestID)
+			t.Log("Creating", tc.name, "with properties:", string(propsBytes))
+			createRes := create_record_set(rs, propsBytes, t)
+			nativeID := createRes.ProgressResult.NativeID
+			t.Log("Created", tc.name, "with RequestID:", createRes.ProgressResult.RequestID)
 
-		t.Log("Waiting for create to finish")
-		wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
-		t.Log("Create completed for", tc.name)
+			t.Log("Waiting for create to finish")
+			wait_for_status(rs, createRes.ProgressResult.RequestID, nativeID, t)
+			t.Log("Create completed for", tc.name)
 
-		t.Log("Deleting", tc.name)
-		deleteRes := delete_record_set(rs, nativeID, t)
-		t.Log("Delete RequestID:", deleteRes.ProgressResult.RequestID)
+			t.Log("Deleting", tc.name)
+			deleteRes := delete_record_set(rs, nativeID, t)
+			t.Log("Delete RequestID:", deleteRes.ProgressResult.RequestID)
 
-		t.Log("Waiting for delete to finish")
-		wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
-		t.Log("Deleted", tc.name)
-	}
-}
-
-func TestCreate_RecordSet_2(t *testing.T) {
-	t.Skip("Skipping Route53 record set test - WIP")
-	cfg := &config.Config{}
-	rs := RecordSet{cfg: cfg}
-
-	// This simulates a record set with a $ref and $value for HostedZoneId
-	props := map[string]any{
-		"AliasTarget": map[string]any{
-			"DNSName":              "d123456abcdef8.cloudfront.net",
-			"EvaluateTargetHealth": false,
-			"HostedZoneId":         "Z2FDTNDATAQYW2",
-		},
-		"HostedZoneId": "Z07395323V6QPG5XX24K3",
-		"Name":         "test.platform.engineering",
-		"Type":         "A",
-	}
-	propsBytes, _ := json.Marshal(props)
-
-	createRes, err := rs.Create(context.Background(), &resource.CreateRequest{
-		ResourceType: "AWS::Route53::RecordSet",
-		Label:        "pel-record-resolvable",
-		Properties:   propsBytes,
-	})
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-	if createRes == nil || createRes.ProgressResult == nil || createRes.ProgressResult.RequestID == "" {
-		t.Fatalf("Create did not return a valid RequestID")
-	}
-
-	nativeID := createRes.ProgressResult.NativeID
-
-	// Wait for create to be INSYNC
-	var statusRes *resource.StatusResult
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    createRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
+			t.Log("Waiting for delete to finish")
+			wait_for_status(rs, deleteRes.ProgressResult.RequestID, nativeID, t)
+			t.Log("Deleted", tc.name)
 		})
-		if err != nil {
-			t.Fatalf("Status (create) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	// --- READ after create ---
-	_, err = rs.Read(context.Background(), &resource.ReadRequest{
-		NativeID: nativeID,
-	})
-	if err != nil {
-		t.Fatalf("Read after create failed: %v", err)
-	}
-
-	// --- DELETE ---
-	deleteReq := &resource.DeleteRequest{
-		NativeID:     nativeID,
-		ResourceType: "AWS::Route53::RecordSet",
-	}
-	deleteRes, err := rs.Delete(context.Background(), deleteReq)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-	if deleteRes == nil || deleteRes.ProgressResult == nil || deleteRes.ProgressResult.RequestID == "" {
-		t.Fatalf("Delete did not return a valid RequestID")
-	}
-
-	// Wait for delete to be INSYNC
-	for {
-		statusRes, err = rs.Status(context.Background(), &resource.StatusRequest{
-			RequestID:    deleteRes.ProgressResult.RequestID,
-			NativeID:     nativeID,
-			ResourceType: "AWS::Route53::RecordSet",
-		})
-		if err != nil {
-			t.Fatalf("Status (delete) failed: %v", err)
-		}
-		if statusRes.ProgressResult.OperationStatus == resource.OperationStatusSuccess {
-			break
-		}
-		time.Sleep(2 * time.Second)
 	}
 }
 
 func TestRecordSet_ListRecordSets(t *testing.T) {
-	hostedZoneID, err := createTestHostedZone("snarf.test.pel")
-	assert.NoError(t, err)
+	domain := uniqueDomain("list")
+	hostedZoneID := createTestHostedZoneWithCleanup(t, domain)
+
 	cfg := &config.Config{}
 	rs := RecordSet{cfg: cfg}
 
 	// create two recordsets in AWS (a hosted zone comes with two default recordsets)
-	nativeID1 := createRecordSet(t, rs, hostedZoneID, "eng1.snarf.test.pel", []string{"192.168.55.2"}, "300", "A")
-	nativeID2 := createRecordSet(t, rs, hostedZoneID, "eng2.snarf.test.pel", []string{"192.168.55.3"}, "300", "A")
+	nativeID1 := createRecordSet(t, rs, hostedZoneID, "eng1."+domain, []string{"192.168.55.2"}, "300", "A")
+	nativeID2 := createRecordSet(t, rs, hostedZoneID, "eng2."+domain, []string{"192.168.55.3"}, "300", "A")
 
-	defer func() {
-		// delete the record sets
-		deleteRecordSet(t, rs, hostedZoneID, nativeID1, "eng1.snarf.test.pel", []string{"192.168.55.2"}, "300", "A")
-		deleteRecordSet(t, rs, hostedZoneID, nativeID2, "eng2.snarf.test.pel", []string{"192.168.55.3"}, "300", "A")
-
-		// delete hosted zone
-		deleteTestHostedZone(t, hostedZoneID)
-	}()
+	t.Cleanup(func() {
+		// delete the record sets before the hosted zone cleanup runs
+		deleteRecordSet(t, rs, hostedZoneID, nativeID1, "eng1."+domain, []string{"192.168.55.2"}, "300", "A")
+		deleteRecordSet(t, rs, hostedZoneID, nativeID2, "eng2."+domain, []string{"192.168.55.3"}, "300", "A")
+	})
 
 	var pageSize int32 = 2
 

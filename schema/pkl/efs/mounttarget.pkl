@@ -42,7 +42,10 @@ open class MountTarget extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     fileSystemId: String|formae.Resolvable
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     ipAddress: String?
 
     @aws.FieldHint

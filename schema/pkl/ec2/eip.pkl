@@ -47,10 +47,10 @@ open class EIP extends formae.Resource {
     }
     ipamPoolId: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     networkBorderGroup: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     publicIpv4Pool: String?
 
     @aws.FieldHint {

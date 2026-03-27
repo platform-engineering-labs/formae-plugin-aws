@@ -71,7 +71,7 @@ open class EndpointResolvable extends formae.Resolvable {
     hidden type = module.type
 
     hidden endpointName: EndpointResolvable = (this) {
-        Property = "EndpointName"
+        property = "EndpointName"
     }
 }
 

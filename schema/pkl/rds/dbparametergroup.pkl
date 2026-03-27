@@ -37,7 +37,7 @@ open class DBParameterGroup extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     family: String
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     parameters: Dynamic?
 
     @aws.FieldHint {

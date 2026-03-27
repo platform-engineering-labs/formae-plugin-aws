@@ -24,6 +24,18 @@ open class UserPolicy extends formae.SubResource {
     policyName: String
 }
 
+open class UserResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: UserResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden userName: UserResolvable = (this) {
+        property = "UserName"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "UserName"
@@ -32,16 +44,16 @@ open class UserPolicy extends formae.SubResource {
 }
 open class User extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     groups: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint
     loginProfile: UserLoginProfile?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     managedPolicyArns: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     path: String?
 
     @aws.FieldHint
@@ -51,6 +63,7 @@ open class User extends formae.Resource {
     policies: Listing<UserPolicy>?
 
     @aws.FieldHint {
+        hasProviderDefault = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }
@@ -58,4 +71,11 @@ open class User extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     userName: String?
+
+    hidden parent = this
+
+    hidden res: UserResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

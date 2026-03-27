@@ -24,6 +24,7 @@ typealias SchedulingStrategy = "DAEMON"|"REPLICA"
 @aws.SubResourceHint
 open class AwsVpcConfiguration extends formae.SubResource {
     assignPublicIp: AwsVpcConfigurationAssignPublicIp?
+    @aws.FieldHint{hasProviderDefault = true}
     securityGroups: Listing<String|formae.Resolvable>?
     subnets: Listing<String|formae.Resolvable>?
 }
@@ -51,9 +52,14 @@ open class DeploymentCircuitBreaker extends formae.SubResource {
 @aws.SubResourceHint
 open class DeploymentConfiguration extends formae.SubResource {
     alarms: Alarms?
+    @aws.FieldHint{hasProviderDefault = true}
+    bakeTimeInMinutes: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     deploymentCircuitBreaker: DeploymentCircuitBreaker?
     maximumPercent: Int?
     minimumHealthyPercent: Int?
+    @aws.FieldHint{hasProviderDefault = true}
+    strategy: String?
 }
 
 typealias DeploymentControllerType = "CODE_DEPLOY"|"ECS"|"EXTERNAL"
@@ -197,7 +203,7 @@ open class VpcLatticeConfiguration extends formae.SubResource {
 }
 open class Service extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     availabilityZoneRebalancing: AvailabilityZoneRebalancing?
 
     @aws.FieldHint
@@ -206,22 +212,25 @@ open class Service extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     cluster: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     deploymentConfiguration: DeploymentConfiguration?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     deploymentController: DeploymentController?
 
     @aws.FieldHint
     desiredCount: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enableECSManagedTags: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     enableExecuteCommand: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     healthCheckGracePeriodSeconds: Int?
 
     @aws.FieldHint{createOnly = true}
@@ -230,21 +239,24 @@ open class Service extends formae.Resource {
     @aws.FieldHint
     loadBalancers: Listing<LoadBalancer>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     networkConfiguration: NetworkConfiguration?
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     placementConstraints: Listing<PlacementConstraint>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     placementStrategies: Listing<PlacementStrategy>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     platformVersion: String?
 
     @aws.FieldHint
     propagateTags: PropagateTags?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     role: String?
 
     @aws.FieldHint{createOnly = true}

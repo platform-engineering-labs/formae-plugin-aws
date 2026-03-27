@@ -35,7 +35,7 @@ open class AliasVersionWeight extends formae.SubResource {
 }
 open class Alias extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     description: String?
 
     @aws.FieldHint{createOnly = true}
@@ -50,6 +50,6 @@ open class Alias extends formae.Resource {
     @aws.FieldHint
     provisionedConcurrencyConfig: ProvisionedConcurrencyConfiguration?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     routingConfig: RoutingConfiguration?
 }

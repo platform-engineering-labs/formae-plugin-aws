@@ -54,16 +54,16 @@ open class NetworkInterface extends formae.Resource {
     @aws.FieldHint
     enablePrimaryIpv6: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     groupSet: Listing<String>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     interfaceType: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     ipv4PrefixCount: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     ipv4Prefixes: Listing<Ipv4PrefixSpecification>?
 
     @aws.FieldHint
@@ -72,22 +72,22 @@ open class NetworkInterface extends formae.Resource {
     @aws.FieldHint
     ipv6Addresses: Listing<Ipv6Address>?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     ipv6PrefixCount: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     ipv6Prefixes: Listing<Ipv6PrefixSpecification>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     privateIpAddress: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     privateIpAddresses: Listing<PrivateIpAddressSpecification>?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     secondaryPrivateIpAddressCount: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     sourceDestCheck: Boolean?
 
     @aws.FieldHint{createOnly = true}
@@ -96,6 +96,7 @@ open class NetworkInterface extends formae.Resource {
     @aws.FieldHint {
         updateMethod = "EntitySet"
         indexField = "Key"
+        hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
 }

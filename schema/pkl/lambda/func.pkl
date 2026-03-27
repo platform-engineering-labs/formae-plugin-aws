@@ -120,7 +120,10 @@ open class FunctionResolvable extends formae.Resolvable {
 }
 open class Function extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     architectures: Listing<Architecture>?
 
     @aws.FieldHint
@@ -132,16 +135,19 @@ open class Function extends formae.Resource {
     @aws.FieldHint
     deadLetterConfig: DeadLetterConfig?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     description: String?
 
     @aws.FieldHint
     environment: Environment?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     ephemeralStorage: EphemeralStorage?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     fileSystemConfigs: Listing<FileSystemConfig>?
 
     @aws.FieldHint{createOnly = true}
@@ -159,16 +165,19 @@ open class Function extends formae.Resource {
     @aws.FieldHint
     layers: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     loggingConfig: LoggingConfig?
 
     @aws.FieldHint
     memorySize: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     packageType: PackageType?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     recursiveLoop: String?
 
     @aws.FieldHint
@@ -180,7 +189,7 @@ open class Function extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     runtime: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     runtimeManagementConfig: RuntimeManagementConfig?
 
     @aws.FieldHint{
@@ -198,10 +207,10 @@ open class Function extends formae.Resource {
     @aws.FieldHint
     timeout: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     tracingConfig: TracingConfig?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     vpcConfig: VPCConfig?
 
     hidden parent = this

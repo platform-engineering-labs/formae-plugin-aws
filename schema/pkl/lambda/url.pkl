@@ -20,9 +20,12 @@ typealias InvokeMode = "BUFFERED"|"RESPONSE_STREAM"
 @aws.SubResourceHint
 open class Cors extends formae.SubResource {
     allowCredentials: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     allowHeaders:  Listing<String?>?
+    @aws.FieldHint{hasProviderDefault = true}
     allowMethods: Listing<AllowMethodsArray?>?
     allowOrigins: Listing<String?>?
+    @aws.FieldHint{hasProviderDefault = true}
     exposeHeaders: Listing<String?>?
     maxAge: Int?
 }
@@ -41,7 +44,7 @@ open class Url extends formae.Resource {
     @aws.FieldHint
     cors: Cors?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     invokeMode: InvokeMode?
 
     @aws.FieldHint{createOnly = true}

@@ -21,7 +21,7 @@ open class Policy extends formae.Resource {
     @aws.FieldHint
     groups: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     policyDocument: Dynamic
 
     @aws.FieldHint

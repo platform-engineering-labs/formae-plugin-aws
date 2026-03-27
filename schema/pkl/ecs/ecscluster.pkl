@@ -71,7 +71,7 @@ open class ClusterResolvable extends formae.Resolvable {
 }
 open class Cluster extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     capacityProviders: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}
@@ -83,7 +83,7 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint
     configuration: ClusterClusterConfiguration?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     defaultCapacityProviderStrategy: Listing<CapacityProviderStrategy>?
 
     @aws.FieldHint{writeOnly = true}

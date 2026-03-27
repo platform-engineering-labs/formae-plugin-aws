@@ -1,0 +1,51 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/elasticloadbalancingv2/targetgroup.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-elbv2-tg-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-tg"
+  cidrBlock = "10.225.0.0/16"
+  enableDnsSupport = true
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ELBv2 TargetGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for TargetGroup
+  testVpc
+
+  // Target Group under test - updated: change healthCheckPath
+  new targetgroup.TargetGroup {
+    label = "plugin-sdk-test-tg"
+    name = "formae-sdk-tg-\(testRunID)"
+    port = 80
+    protocol = "HTTP"
+    targetType = "ip"
+    vpcId = testVpc.res.vpcId
+    healthCheckPath = "/health"
+  }
+}

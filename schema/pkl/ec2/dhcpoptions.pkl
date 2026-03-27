@@ -20,19 +20,19 @@ open class DHCPOptions extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     domainName: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     domainNameServers: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
     ipv6AddressPreferredLeaseTime: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     netbiosNameServers: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
     netbiosNodeType: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     ntpServers: Listing<String>?
 
     @aws.FieldHint {

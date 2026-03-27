@@ -1,0 +1,9 @@
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+forma {
+    new formae.Stack {
+        label = "test-stack"
+        description = "Initial description"
+    }
+}

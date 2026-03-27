@@ -26,13 +26,24 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/status"
 )
 
+// cloudControlAPI defines the CloudControl operations used by Client.
+type cloudControlAPI interface {
+	CreateResource(ctx context.Context, params *cloudcontrol.CreateResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.CreateResourceOutput, error)
+	UpdateResource(ctx context.Context, params *cloudcontrol.UpdateResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.UpdateResourceOutput, error)
+	DeleteResource(ctx context.Context, params *cloudcontrol.DeleteResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.DeleteResourceOutput, error)
+	GetResource(ctx context.Context, params *cloudcontrol.GetResourceInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.GetResourceOutput, error)
+	GetResourceRequestStatus(ctx context.Context, params *cloudcontrol.GetResourceRequestStatusInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.GetResourceRequestStatusOutput, error)
+	ListResources(ctx context.Context, params *cloudcontrol.ListResourcesInput, optFns ...func(*cloudcontrol.Options)) (*cloudcontrol.ListResourcesOutput, error)
+}
+
 type Client struct {
-	*cloudcontrol.Client
+	api cloudControlAPI
 }
 
 var IgnoredFields = map[string][]string{
-	"AWS::EC2::SecurityGroup": {"$.SecurityGroupEgress", "$.SecurityGroupIngress"},
-	"AWS::IAM::Role":          {"$.Policies"},
+	"AWS::EC2::SecurityGroup":                      {"$.SecurityGroupEgress", "$.SecurityGroupIngress"},
+	"AWS::IAM::Role":                               {"$.Policies"},
+	"AWS::ElasticBeanstalk::ConfigurationTemplate": {"$.OptionSettings"},
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
@@ -51,7 +62,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	})
 
 	return &Client{
-		Client: cloudcontrol.NewFromConfig(awsCfg, func(o *cloudcontrol.Options) {
+		api: cloudcontrol.NewFromConfig(awsCfg, func(o *cloudcontrol.Options) {
 			o.Retryer = retryer
 		}),
 	}, nil
@@ -79,7 +90,16 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		resourceProps = transformedProps
 	}
 
-	result, err := c.Client.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
+	// Strip empty arrays and maps from properties before sending to CloudControl.
+	// The PKL schema renders nullable Listing/Mapping fields as [] and {} when the
+	// user didn't set them. CloudControl may reject these (e.g. Lambda Architectures
+	// requires min 1 item) or interpret them differently from an absent field.
+	resourceProps, err := stripEmptyCollections(resourceProps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to strip empty collections: %w", err)
+	}
+
+	result, err := c.api.CreateResource(ctx, &cloudcontrol.CreateResourceInput{
 		DesiredState: ptr.Of(string(resourceProps)),
 		TypeName:     &request.ResourceType,
 	})
@@ -87,21 +107,35 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		return nil, err
 	}
 
-	return &resource.CreateResult{
+	identifier := ""
+	if result.ProgressEvent.Identifier != nil {
+		identifier = *result.ProgressEvent.Identifier
+	} else if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
+		return nil, fmt.Errorf("create succeeded but CloudControl returned no identifier for %s", request.ResourceType)
+	}
+
+	createResult := &resource.CreateResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       resource.OperationCreate,
 			OperationStatus: status.FromOperationStatus(result.ProgressEvent.OperationStatus),
 			RequestID:       *result.ProgressEvent.RequestToken,
+			NativeID:        identifier,
 			StatusMessage:   aws.ToString(result.ProgressEvent.StatusMessage),
 			ErrorCode:       resource.OperationErrorCode(result.ProgressEvent.ErrorCode),
 		},
-	}, nil
+	}
+
+	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
+		c.populateResourceProperties(ctx, createResult.ProgressResult, identifier, request.ResourceType)
+	}
+
+	return createResult, nil
 }
 
 // UpdateResource updates a resource using CloudControl with full request handling
 func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	// Check if resource exists first
-	_, err := c.GetResource(ctx, &cloudcontrol.GetResourceInput{
+	_, err := c.api.GetResource(ctx, &cloudcontrol.GetResourceInput{
 		Identifier: &request.NativeID,
 		TypeName:   &request.ResourceType,
 	})
@@ -123,6 +157,18 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 	}
 
 	patchDoc := request.PatchDocument
+
+	// Filter out "add" operations with empty array/map values from the patch
+	// document. These arise from the PKL schema rendering unset nullable
+	// Listing/Mapping fields as []/{}. CloudControl may reject them (e.g.
+	// "extraneous key" errors) or they may cause spurious updates.
+	if patchDoc != nil {
+		filtered, err := filterEmptyAddOps(*patchDoc)
+		if err == nil && filtered != *patchDoc {
+			patchDoc = &filtered
+		}
+	}
+
 	if request.ResourceType == "AWS::SecretsManager::Secret" && patchDoc != nil {
 		transformedPatch, err := transformSecretStringPatch([]byte(*patchDoc))
 		if err != nil {
@@ -131,7 +177,7 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		patchDoc = ptr.Of(string(transformedPatch))
 	}
 
-	result, err := c.Client.UpdateResource(ctx, &cloudcontrol.UpdateResourceInput{
+	result, err := c.api.UpdateResource(ctx, &cloudcontrol.UpdateResourceInput{
 		Identifier:    &request.NativeID,
 		PatchDocument: patchDoc,
 		TypeName:      ptr.Of(request.ResourceType),
@@ -140,20 +186,32 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		return nil, err
 	}
 
-	return &resource.UpdateResult{
+	identifier := request.NativeID
+	if result.ProgressEvent.Identifier != nil {
+		identifier = *result.ProgressEvent.Identifier
+	}
+
+	updateResult := &resource.UpdateResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       resource.OperationUpdate,
 			OperationStatus: status.FromOperationStatus(result.ProgressEvent.OperationStatus),
 			RequestID:       *result.ProgressEvent.RequestToken,
+			NativeID:        identifier,
 			StatusMessage:   aws.ToString(result.ProgressEvent.StatusMessage),
 			ErrorCode:       resource.OperationErrorCode(result.ProgressEvent.ErrorCode),
 		},
-	}, nil
+	}
+
+	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
+		c.populateResourceProperties(ctx, updateResult.ProgressResult, identifier, request.ResourceType)
+	}
+
+	return updateResult, nil
 }
 
 // DeleteResource deletes a resource using CloudControl with full request handling
 func (c *Client) DeleteResource(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	result, err := c.Client.DeleteResource(ctx, &cloudcontrol.DeleteResourceInput{
+	result, err := c.api.DeleteResource(ctx, &cloudcontrol.DeleteResourceInput{
 		Identifier: &request.NativeID,
 		TypeName:   ptr.Of(request.ResourceType),
 	})
@@ -187,7 +245,7 @@ func (c *Client) DeleteResource(ctx context.Context, request *resource.DeleteReq
 
 // ReadResource reads a resource using CloudControl with full request handling
 func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
-	result, err := c.GetResource(ctx, &cloudcontrol.GetResourceInput{
+	result, err := c.api.GetResource(ctx, &cloudcontrol.GetResourceInput{
 		Identifier: &request.NativeID,
 		TypeName:   ptr.Of(request.ResourceType),
 	})
@@ -233,7 +291,7 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 
 // StatusResource gets the status of a resource request using CloudControl with full request handling
 func (c *Client) StatusResource(ctx context.Context, request *resource.StatusRequest, readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error)) (*resource.StatusResult, error) {
-	result, err := c.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+	result, err := c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
 		RequestToken: &request.RequestID,
 	})
 	if err != nil {
@@ -244,6 +302,21 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	identifier := ""
 	if result.ProgressEvent.Identifier != nil {
 		identifier = *result.ProgressEvent.Identifier
+	}
+
+	// NOT_STABILIZED means the resource is still being provisioned — CloudControl's
+	// internal stabilization window expired but the operation is still in progress.
+	// Treat as InProgress so the PluginOperator keeps polling rather than consuming
+	// a retry attempt by re-invoking the entire CRUD operation.
+	if result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotStabilized {
+		operationStatus = resource.OperationStatusInProgress
+	}
+
+	// NOT_FOUND during a Create operation means the resource hasn't propagated yet
+	// in AWS's control plane. Treat as InProgress to keep polling rather than
+	// retrying the create (which could cause AlreadyExists errors).
+	if result.ProgressEvent.Operation == cctypes.OperationCreate && result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotFound {
+		operationStatus = resource.OperationStatusInProgress
 	}
 
 	// If the resource is not found, we return a success status when it is a delete operation
@@ -328,9 +401,36 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	return statusResult, nil
 }
 
+// populateResourceProperties performs a post-success Read to populate ResourceProperties
+// on a ProgressResult. This is needed when CloudControl returns synchronous Success
+// (without going through StatusResource polling, which already does its own Read).
+func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) {
+	readResult, err := c.ReadResource(ctx, &resource.ReadRequest{
+		NativeID:     identifier,
+		ResourceType: resourceType,
+	})
+	if err != nil {
+		slog.Error("post-success Read failed",
+			"error", err,
+			"identifier", identifier,
+			"resourceType", resourceType)
+		return
+	}
+	if readResult.ErrorCode != "" {
+		slog.Error("post-success Read returned error",
+			"errorCode", readResult.ErrorCode,
+			"identifier", identifier,
+			"resourceType", resourceType)
+		return
+	}
+	if readResult.Properties != "" {
+		pr.ResourceProperties = json.RawMessage(readResult.Properties)
+	}
+}
+
 // ListResources lists resources using CloudControl
 func (c *Client) ListResources(ctx context.Context, input *cloudcontrol.ListResourcesInput) (*cloudcontrol.ListResourcesOutput, error) {
-	return c.Client.ListResources(ctx, input)
+	return c.api.ListResources(ctx, input)
 }
 
 // transformSecretStringPatch transforms replace operations to add operations for SecretString
@@ -401,4 +501,87 @@ func findParentAndKey(data map[string]any, components []string) (any, string, er
 
 	keyToRemove := components[len(components)-1]
 	return current, keyToRemove, nil
+}
+
+// filterEmptyAddOps removes "add" operations from a JSON Patch document where
+// the value is an empty array or empty map, and strips empty collections from
+// nested values inside "replace" operations. These are phantom values from the
+// PKL schema rendering unset nullable fields as []/{}. CloudControl rejects
+// them as "extraneous key" errors or they trigger unnecessary replacements.
+func filterEmptyAddOps(patchDoc string) (string, error) {
+	var ops []map[string]any
+	if err := json.Unmarshal([]byte(patchDoc), &ops); err != nil {
+		return patchDoc, err
+	}
+
+	filtered := make([]map[string]any, 0, len(ops))
+	for _, op := range ops {
+		if op["op"] == "add" {
+			switch val := op["value"].(type) {
+			case []any:
+				if len(val) == 0 {
+					continue
+				}
+			case map[string]any:
+				if len(val) == 0 {
+					continue
+				}
+			}
+		}
+		// For replace/add operations with map or array values, recursively
+		// strip empty collections from the value
+		if val, ok := op["value"].(map[string]any); ok {
+			stripEmptyCollectionsFromMap(val)
+		}
+		filtered = append(filtered, op)
+	}
+
+	if len(filtered) == len(ops) {
+		// Still need to marshal since we may have modified values in place
+	}
+
+	result, err := json.Marshal(filtered)
+	if err != nil {
+		return patchDoc, err
+	}
+	return string(result), nil
+}
+
+// stripEmptyCollections recursively removes properties with empty array or map
+// values from a JSON object. These arise from the PKL schema rendering nullable
+// Listing/Mapping fields as [] and {} when the user didn't set them.
+func stripEmptyCollections(data json.RawMessage) (json.RawMessage, error) {
+	var props map[string]any
+	if err := json.Unmarshal(data, &props); err != nil {
+		return data, nil
+	}
+
+	stripEmptyCollectionsFromMap(props)
+
+	return json.Marshal(props)
+}
+
+// stripEmptyCollectionsFromMap recursively removes empty arrays and maps from
+// a map structure. Also recurses into non-empty maps and array elements.
+func stripEmptyCollectionsFromMap(m map[string]any) {
+	for k, v := range m {
+		switch val := v.(type) {
+		case []any:
+			if len(val) == 0 {
+				delete(m, k)
+			} else {
+				for _, elem := range val {
+					if elemMap, ok := elem.(map[string]any); ok {
+						stripEmptyCollectionsFromMap(elemMap)
+					}
+				}
+			}
+		case map[string]any:
+			if len(val) == 0 {
+				delete(m, k)
+			} else {
+				stripEmptyCollectionsFromMap(val)
+			}
+		}
+	}
 }

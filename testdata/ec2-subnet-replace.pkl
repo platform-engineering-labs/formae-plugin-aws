@@ -1,0 +1,49 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-subnet-\(testRunID)"
+
+// VPC dependency - Subnet needs a VPC
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-subnet"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 Subnet"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for Subnet
+  testVpc
+
+  // Subnet under test - replaced cidrBlock (createOnly field)
+  new subnet.Subnet {
+    label = "plugin-sdk-test-subnet"
+    vpcId = testVpc.res.vpcId
+    cidrBlock = "10.0.2.0/24"
+    availabilityZone = "us-east-1a"
+    mapPublicIpOnLaunch = true
+  }
+}

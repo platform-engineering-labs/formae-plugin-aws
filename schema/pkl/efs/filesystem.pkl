@@ -69,7 +69,7 @@ open class FileSystem extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     availabilityZoneName: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     backupPolicy: BackupPolicy?
 
     @aws.FieldHint
@@ -81,16 +81,19 @@ open class FileSystem extends formae.Resource {
     @aws.FieldHint
     fileSystemPolicy: Dynamic?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     fileSystemProtection: FileSystemProtection?
 
     @aws.FieldHint
     fileSystemTags: Listing<aws.Tag>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     kmsKeyId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     lifecyclePolicies: Listing<LifecyclePolicy>?
 
     @aws.FieldHint{createOnly = true}

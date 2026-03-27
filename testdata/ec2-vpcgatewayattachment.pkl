@@ -1,0 +1,56 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-vpcgatewayattachment-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-gwattachment"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+// InternetGateway dependency
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-gwattachment"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VPCGatewayAttachment"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for attachment
+  testVpc
+
+  // InternetGateway required for attachment
+  testIgw
+
+  // VPCGatewayAttachment under test
+  new vpcgatewayattachment.VPCGatewayAttachment {
+    label = "plugin-sdk-test-vpcgwattachment"
+    vpcId = testVpc.res.vpcId
+    internetGatewayId = testIgw.res.internetGatewayId
+  }
+}

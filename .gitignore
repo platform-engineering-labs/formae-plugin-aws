@@ -33,3 +33,4 @@ PklProject.deps.json
 CLAUDE.md
 .claude/
 .handoffs/
+.worktrees/

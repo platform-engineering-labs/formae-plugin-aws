@@ -1,0 +1,53 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/lambda/codesigningconfig.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-lambda-codesigningconfig-\(testRunID)"
+
+// TODO: Lambda CodeSigningConfig requires allowedPublishers with valid
+// SigningProfileVersionArns from AWS Signer. There is no Signer schema in this
+// plugin yet (AWS::Signer::SigningProfile). The ARN below is a placeholder that
+// will fail at apply time. To make this test work, either:
+//   1. Add an AWS::Signer::SigningProfile resource schema and create the
+//      signing profile inline, or
+//   2. Pre-provision a signing profile outside formae and hardcode its ARN.
+//
+// For now we use a dummy ARN to validate the PKL structure. CI will tell us
+// what happens.
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Lambda CodeSigningConfig"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new codesigningconfig.CodeSigningConfig {
+    label = "plugin-sdk-test-csc"
+    description = "Formae SDK test code signing config"
+    allowedPublishers = new codesigningconfig.AllowedPublishers {
+      signingProfileVersionArns {
+        "arn:aws:signer:us-east-1:000000000000:signing-profiles/formae-sdk-test-profile"
+      }
+    }
+    codeSigningPolicies = new codesigningconfig.CodeSigningPolicies {
+      untrustedArtifactOnDeployment = "Warn"
+    }
+  }
+}

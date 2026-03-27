@@ -53,7 +53,7 @@ open class ApiKey extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     name: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     stageKeys: Listing<StageKey>?
 
     @aws.FieldHint {
@@ -62,7 +62,7 @@ open class ApiKey extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     value: String?
 
     local parent = this
