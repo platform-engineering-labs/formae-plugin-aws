@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
@@ -37,6 +39,8 @@ func init() {
 }
 
 func (m *Method) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
+	log := plugin.LoggerFromContext(ctx)
+
 	transformedProperties, err := m.handleLambdaIntegration(request.Properties)
 	if err != nil {
 		slog.Error("ApiGateway::Method: Failed to transform Lambda integration", "error", err)
@@ -50,7 +54,33 @@ func (m *Method) Create(ctx context.Context, request *resource.CreateRequest) (*
 		return nil, err
 	}
 
-	return ccxClient.CreateResource(ctx, request)
+	result, err := ccxClient.CreateResource(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read-after-write: CloudControl's GetResource for ApiGateway::Method can
+	// return NotFound immediately after a successful Create due to eventual
+	// consistency. Verify the resource is readable before returning success,
+	// so that a subsequent sync Read doesn't incorrectly remove it.
+	if result.ProgressResult.OperationStatus == resource.OperationStatusSuccess && result.ProgressResult.NativeID != "" {
+		readReq := &resource.ReadRequest{
+			NativeID:     result.ProgressResult.NativeID,
+			ResourceType: request.ResourceType,
+			TargetConfig: request.TargetConfig,
+		}
+		for attempt := 1; attempt <= 5; attempt++ {
+			readResult, readErr := ccxClient.ReadResource(ctx, readReq)
+			if readErr == nil && readResult.ErrorCode == "" {
+				log.Debug("read-after-write confirmed resource is readable", "nativeID", result.ProgressResult.NativeID, "attempt", attempt)
+				break
+			}
+			log.Debug("read-after-write: resource not yet readable, retrying", "nativeID", result.ProgressResult.NativeID, "attempt", attempt, "error", readErr)
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	return result, nil
 }
 
 func (m *Method) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
