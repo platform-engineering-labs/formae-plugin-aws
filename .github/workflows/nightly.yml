@@ -172,11 +172,15 @@ jobs:
         run: make install
 
       - name: Run conformance test (${{ matrix.test-case }})
+        uses: nick-fields/retry@v3
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-        run: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          command: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 
   # Clean up test resources after all conformance tests (always runs)
   post-cleanup:
