@@ -147,7 +147,7 @@ else
     fi
 fi
 
-formae_track_event "ci_binary_download" "version=${VERSION}" "os=${DETECTED_OS}" "arch=${DETECTED_ARCH}"
+formae_track_event "ci_binary_download" "version=${VERSION}" "os=${DETECTED_OS:-$(uname | tr '[:upper:]' '[:lower:]')}" "arch=${DETECTED_ARCH:-$(uname -m | tr -d '_')}"
 
 echo ""
 echo "Using formae binary: ${FORMAE_BINARY}"
