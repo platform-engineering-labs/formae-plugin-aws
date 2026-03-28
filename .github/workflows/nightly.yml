@@ -178,7 +178,7 @@ jobs:
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         with:
-          timeout_minutes: 30
+          timeout_minutes: 120
           max_attempts: 3
           command: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 
