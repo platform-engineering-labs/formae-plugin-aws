@@ -536,10 +536,6 @@ func filterEmptyAddOps(patchDoc string) (string, error) {
 		filtered = append(filtered, op)
 	}
 
-	if len(filtered) == len(ops) {
-		// Still need to marshal since we may have modified values in place
-	}
-
 	result, err := json.Marshal(filtered)
 	if err != nil {
 		return patchDoc, err
