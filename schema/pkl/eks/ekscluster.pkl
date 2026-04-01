@@ -144,6 +144,12 @@ open class ClusterResolvable extends formae.Resolvable {
     hidden name: ClusterResolvable = (this) {
         property = "Name"
     }
+    hidden endpoint: ClusterResolvable = (this) {
+        property = "Endpoint"
+    }
+    hidden certificateAuthorityData: ClusterResolvable = (this) {
+        property = "CertificateAuthorityData"
+    }
 }
 @aws.ResourceHint {
     type = module.type
