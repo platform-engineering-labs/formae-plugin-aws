@@ -182,7 +182,7 @@ jobs:
           timeout_minutes: 120
           max_attempts: 3
           on_retry_command: ./scripts/ci/clean-environment.sh || true
-          command: make conformance-test-crud-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
+          command: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 
   # Clean up test resources after all conformance tests (always runs)
   post-cleanup:
