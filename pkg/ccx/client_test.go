@@ -278,3 +278,46 @@ func TestCreateResource_Success_NilIdentifier_ReturnsError(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "identifier")
 }
+
+func TestNormalizeCompositeIdentifier(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "simple identifier unchanged",
+			input:    "vpc-12345",
+			expected: "vpc-12345",
+		},
+		{
+			name:     "ARN identifier unchanged",
+			input:    "arn:aws:ecs:us-east-1:123456:service/cluster/svc",
+			expected: "arn:aws:ecs:us-east-1:123456:service/cluster/svc",
+		},
+		{
+			name:     "composite with ARN second part normalized",
+			input:    "arn:aws:ecs:us-east-1:123456:service/my-cluster/my-svc|arn:aws:ecs:us-east-1:123456:cluster/my-cluster",
+			expected: "arn:aws:ecs:us-east-1:123456:service/my-cluster/my-svc|my-cluster",
+		},
+		{
+			name:     "composite already normalized",
+			input:    "arn:aws:ecs:us-east-1:123456:service/my-cluster/my-svc|my-cluster",
+			expected: "arn:aws:ecs:us-east-1:123456:service/my-cluster/my-svc|my-cluster",
+		},
+		{
+			name:     "lambda event invoke config composite",
+			input:    "arn:aws:lambda:us-east-1:123456:function:my-func|arn:aws:lambda:us-east-1:123456:function:my-func/$LATEST",
+			expected: "arn:aws:lambda:us-east-1:123456:function:my-func|$LATEST",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeCompositeIdentifier(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeCompositeIdentifier(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

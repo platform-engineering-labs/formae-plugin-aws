@@ -46,6 +46,28 @@ var IgnoredFields = map[string][]string{
 	"AWS::ElasticBeanstalk::ConfigurationTemplate": {"$.OptionSettings"},
 }
 
+// normalizeCompositeIdentifier fixes inconsistencies in CloudControl composite
+// identifiers. CC Create/Status returns full ARNs in composite parts (e.g.
+// "service-arn|cluster-arn") but CC List returns short names (e.g.
+// "service-arn|cluster-name"). Normalize to short names to match List format,
+// since that's what discovery uses and the identifier must match for inventory
+// lookups.
+func normalizeCompositeIdentifier(identifier string) string {
+	parts := strings.Split(identifier, "|")
+	if len(parts) <= 1 {
+		return identifier
+	}
+	for i := 1; i < len(parts); i++ {
+		if strings.HasPrefix(parts[i], "arn:aws:") {
+			// Extract the resource name from the ARN (last segment after /)
+			if idx := strings.LastIndex(parts[i], "/"); idx >= 0 {
+				parts[i] = parts[i][idx+1:]
+			}
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
 func NewClient(cfg *config.Config) (*Client, error) {
 	awsCfg, err := cfg.ToAwsConfig(context.Background())
 	if err != nil {
@@ -109,7 +131,7 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 
 	identifier := ""
 	if result.ProgressEvent.Identifier != nil {
-		identifier = *result.ProgressEvent.Identifier
+		identifier = normalizeCompositeIdentifier(*result.ProgressEvent.Identifier)
 	} else if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
 		return nil, fmt.Errorf("create succeeded but CloudControl returned no identifier for %s", request.ResourceType)
 	}
@@ -188,7 +210,7 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 
 	identifier := request.NativeID
 	if result.ProgressEvent.Identifier != nil {
-		identifier = *result.ProgressEvent.Identifier
+		identifier = normalizeCompositeIdentifier(*result.ProgressEvent.Identifier)
 	}
 
 	updateResult := &resource.UpdateResult{
@@ -301,7 +323,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	operation, operationStatus := status.FromProgress(result.ProgressEvent)
 	identifier := ""
 	if result.ProgressEvent.Identifier != nil {
-		identifier = *result.ProgressEvent.Identifier
+		identifier = normalizeCompositeIdentifier(*result.ProgressEvent.Identifier)
 	}
 
 	// NOT_STABILIZED means the resource is still being provisioned — CloudControl's
