@@ -92,8 +92,8 @@ func (p *Plugin) LabelConfig() plugin.LabelConfig {
 			"AWS::IAM::Role":          "$.RoleName",
 			"AWS::IAM::User":          "$.UserName",
 			"AWS::IAM::Group":         "$.GroupName",
-			// Route53 records use Name property
-			"AWS::Route53::RecordSet": "$.Name",
+			// Route53 records need both Name and Type to be unique (e.g., SOA vs NS for same domain)
+			"AWS::Route53::RecordSet": "$['Name','Type']",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",
