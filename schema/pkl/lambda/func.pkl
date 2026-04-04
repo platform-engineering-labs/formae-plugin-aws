@@ -112,6 +112,10 @@ open class FunctionResolvable extends formae.Resolvable {
     hidden arn: FunctionResolvable = (this) {
         property = "Arn"
     }
+
+    hidden functionName: FunctionResolvable = (this) {
+        property = "FunctionName"
+    }
 }
 
 @aws.ResourceHint {

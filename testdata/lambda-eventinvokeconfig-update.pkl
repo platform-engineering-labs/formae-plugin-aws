@@ -72,7 +72,7 @@ forma {
 
   new eventinvokeconfig.EventInvokeConfig {
     label = "plugin-sdk-test-lambda-eventinvokeconfig"
-    functionName = testFunction.res.arn
+    functionName = testFunction.res.functionName
     qualifier = "$LATEST"
     maximumRetryAttempts = 0
     maximumEventAgeInSeconds = 60
