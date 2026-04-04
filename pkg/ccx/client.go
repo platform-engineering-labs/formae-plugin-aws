@@ -599,6 +599,10 @@ func stripEmptyCollectionsFromMap(m map[string]any) {
 				delete(m, k)
 			} else {
 				stripEmptyCollectionsFromMap(val)
+				// Re-check after recursive stripping — the map may now be empty
+				if len(val) == 0 {
+					delete(m, k)
+				}
 			}
 		}
 	}

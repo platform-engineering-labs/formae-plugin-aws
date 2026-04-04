@@ -321,3 +321,46 @@ func TestNormalizeCompositeIdentifier(t *testing.T) {
 		})
 	}
 }
+
+func TestStripEmptyCollectionsFromMap_NestedEmptyAfterRecursion(t *testing.T) {
+	// Simulates DestinationConfig: {OnSuccess: {}, OnFailure: {}}
+	// After recursive stripping, DestinationConfig should also be removed
+	m := map[string]any{
+		"MaximumRetryAttempts": float64(0),
+		"DestinationConfig": map[string]any{
+			"OnSuccess": map[string]any{},
+			"OnFailure": map[string]any{},
+		},
+	}
+	stripEmptyCollectionsFromMap(m)
+
+	if _, exists := m["DestinationConfig"]; exists {
+		t.Errorf("DestinationConfig should be stripped after recursive emptying, got %v", m)
+	}
+	if _, exists := m["MaximumRetryAttempts"]; !exists {
+		t.Error("MaximumRetryAttempts should be preserved")
+	}
+}
+
+func TestStripEmptyCollectionsFromMap_NestedNonEmpty(t *testing.T) {
+	m := map[string]any{
+		"DestinationConfig": map[string]any{
+			"OnSuccess": map[string]any{
+				"Destination": "arn:aws:sqs:us-east-1:123:my-queue",
+			},
+			"OnFailure": map[string]any{},
+		},
+	}
+	stripEmptyCollectionsFromMap(m)
+
+	dc, exists := m["DestinationConfig"].(map[string]any)
+	if !exists {
+		t.Fatal("DestinationConfig should be preserved when it has non-empty children")
+	}
+	if _, exists := dc["OnSuccess"]; !exists {
+		t.Error("OnSuccess should be preserved")
+	}
+	if _, exists := dc["OnFailure"]; exists {
+		t.Error("OnFailure should be stripped (empty)")
+	}
+}
