@@ -36,7 +36,7 @@ open class OnSuccess extends formae.SubResource {
 }
 open class EventInvokeConfig extends formae.Resource {
 
-    @aws.FieldHint{hasProviderDefault = true}
+    @aws.FieldHint
     destinationConfig: DestinationConfig?
 
     @aws.FieldHint{createOnly = true}
