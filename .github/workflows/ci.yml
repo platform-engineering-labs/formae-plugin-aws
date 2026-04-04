@@ -171,7 +171,7 @@ jobs:
         run: make install
 
       - name: Run conformance test (${{ matrix.test-case }})
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
