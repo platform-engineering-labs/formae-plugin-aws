@@ -1,7 +1,7 @@
 ergo.services/actor/statemachine v0.0.0-20251202053101-c0aa08b403e5 h1:8b8Y8gLBvQrDIuKFSCwT089l1iltqsTEWXzhm/pSguE=
 ergo.services/actor/statemachine v0.0.0-20251202053101-c0aa08b403e5/go.mod h1:epgQDQTm93L3/plOnIejSYbl/SNhulI78aa1LC0tLn0=
-ergo.services/ergo v1.999.310 h1:qHx35J5UxCheNJaFrOK/1K6/p7jir680+NTPZo6bhbI=
-ergo.services/ergo v1.999.310/go.mod h1:bLQ6PoO6Mz/8gVuzvPv3xfMfo1P9w6rZV1WnMXMeMdg=
+ergo.services/ergo v1.999.320 h1:IYyjCBJvXPLW8Mpy6pq5FoBa2RjNAS4QSL2lK7bBueQ=
+ergo.services/ergo v1.999.320/go.mod h1:bLQ6PoO6Mz/8gVuzvPv3xfMfo1P9w6rZV1WnMXMeMdg=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
 github.com/Masterminds/semver v1.5.0/go.mod h1:MB6lktGJrhw8PrUyiEoblNEGEQ+RzHPF078ddwwvV3Y=
 github.com/apple/pkl-go v0.12.0 h1:0gnhEIXo6coSHPpxdOESfGn2GrSkBSaeitkZLwZAcWE=
@@ -87,6 +87,8 @@ github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9Y
 github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGwWFoC7ycTf1rcQZHOlsJ6N8=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
+github.com/klauspost/compress v1.18.5 h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBFW2IE=
+github.com/klauspost/compress v1.18.5/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
@@ -97,12 +99,12 @@ github.com/masterminds/semver v1.5.0 h1:hTxJTTY7tjvnWMrl08O6u3G6BLlKVwxSz01lVac9
 github.com/masterminds/semver v1.5.0/go.mod h1:s7KNT9fnd7edGzwwP7RBX4H0v/CYd5qdOLfkL1V75yg=
 github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 h1:ZMTgKwSomy2cVcl/+NivSqopbWeHbmYeQ+BxoYq8bVY=
 github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1/go.mod h1:0ncHFCsGA6b0w1kBm6m+QwJ823qAY2vL47GvoR0BTyU=
-github.com/platform-engineering-labs/formae/pkg/model v0.1.6 h1:5Ao8Kog2tpTD4Om7hs07QB0tKwwUejuLku9Gv5C8pF8=
-github.com/platform-engineering-labs/formae/pkg/model v0.1.6/go.mod h1:XmGJA7jNPX9cEGc8TxTiEDitBuEVJOddNakdTZ/bH4U=
-github.com/platform-engineering-labs/formae/pkg/plugin v0.1.21 h1:o2vQZZBUg1/1Lj5OWE4to8WGrx9iiS5MBZe0fI6FLGM=
-github.com/platform-engineering-labs/formae/pkg/plugin v0.1.21/go.mod h1:+XUcaYuB32RrS0Fm2ZfX8rXRTbzYKRjqK/92fP72m6E=
-github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.40 h1:umvPLCEhY6PheLqRKc1g6puGpqzaXZ1ediM1PW7uB7U=
-github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.40/go.mod h1:5Y08dm8oj8gpgKkCDEzI3ZVtjp4eFvKQlkRjBsN9qBo=
+github.com/platform-engineering-labs/formae/pkg/model v0.1.7-0.20260405054412-81e79d62b90a h1:AHSsDbxa2FPJEpbFB8TIAlWK6FdDCscrbBPz5E+4voA=
+github.com/platform-engineering-labs/formae/pkg/model v0.1.7-0.20260405054412-81e79d62b90a/go.mod h1:XmGJA7jNPX9cEGc8TxTiEDitBuEVJOddNakdTZ/bH4U=
+github.com/platform-engineering-labs/formae/pkg/plugin v0.1.21-0.20260405054412-81e79d62b90a h1:RNwLlkgEYnLOfQVfvQ32/TySkY9D3myA+nt+Dia+Em8=
+github.com/platform-engineering-labs/formae/pkg/plugin v0.1.21-0.20260405054412-81e79d62b90a/go.mod h1:+YT30B8sox+i7oyZveJc8EhGV7W7mxobfbirb2rirgg=
+github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.42-0.20260405054412-81e79d62b90a h1:G3vlt5WlpotU7C1QA3mUp9kswQL2HlnpVj9rNPhrpJE=
+github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.42-0.20260405054412-81e79d62b90a/go.mod h1:PljEOiOoJXYM2qKGFhEGTmo5SxundvO6Jz/8c5xMxJQ=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
