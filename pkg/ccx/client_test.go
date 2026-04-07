@@ -322,6 +322,54 @@ func TestNormalizeCompositeIdentifier(t *testing.T) {
 	}
 }
 
+func TestFilterEmptyAddOps_ReplaceWithEmptyAfterStripping(t *testing.T) {
+	// Simulates an EventInvokeConfig update where DestinationConfig has
+	// provider-default empty OnSuccess/OnFailure. The replace operation's
+	// value becomes empty after stripping and should be removed entirely,
+	// otherwise CloudControl rejects it with:
+	//   "required key [Destination] not found"
+	patch := `[
+		{"op":"replace","path":"/MaximumRetryAttempts","value":0},
+		{"op":"replace","path":"/DestinationConfig","value":{"OnSuccess":{},"OnFailure":{}}}
+	]`
+	result, err := filterEmptyAddOps(patch)
+	if err != nil {
+		t.Fatalf("filterEmptyAddOps failed: %v", err)
+	}
+
+	var ops []map[string]any
+	if err := json.Unmarshal([]byte(result), &ops); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %d: %s", len(ops), result)
+	}
+	if ops[0]["path"] != "/MaximumRetryAttempts" {
+		t.Errorf("expected remaining op to be MaximumRetryAttempts, got %v", ops[0]["path"])
+	}
+}
+
+func TestFilterEmptyAddOps_ReplaceWithNonEmptyPreserved(t *testing.T) {
+	// A replace with a non-empty value should be preserved
+	patch := `[
+		{"op":"replace","path":"/DestinationConfig","value":{"OnSuccess":{"Destination":"arn:aws:sqs:us-east-1:123:q"}}}
+	]`
+	result, err := filterEmptyAddOps(patch)
+	if err != nil {
+		t.Fatalf("filterEmptyAddOps failed: %v", err)
+	}
+
+	var ops []map[string]any
+	if err := json.Unmarshal([]byte(result), &ops); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %d: %s", len(ops), result)
+	}
+}
+
 func TestStripEmptyCollectionsFromMap_NestedEmptyAfterRecursion(t *testing.T) {
 	// Simulates DestinationConfig: {OnSuccess: {}, OnFailure: {}}
 	// After recursive stripping, DestinationConfig should also be removed

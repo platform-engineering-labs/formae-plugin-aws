@@ -538,7 +538,16 @@ func filterEmptyAddOps(patchDoc string) (string, error) {
 
 	filtered := make([]map[string]any, 0, len(ops))
 	for _, op := range ops {
-		if op["op"] == "add" {
+		// For replace/add operations with map or array values, recursively
+		// strip empty collections from the value
+		if val, ok := op["value"].(map[string]any); ok {
+			stripEmptyCollectionsFromMap(val)
+		}
+		// Skip add/replace operations whose value is an empty collection.
+		// These arise from provider-default nested objects (e.g.
+		// DestinationConfig with empty OnSuccess/OnFailure) that become
+		// empty after stripping, or were empty from the start.
+		if op["op"] == "add" || op["op"] == "replace" {
 			switch val := op["value"].(type) {
 			case []any:
 				if len(val) == 0 {
@@ -549,11 +558,6 @@ func filterEmptyAddOps(patchDoc string) (string, error) {
 					continue
 				}
 			}
-		}
-		// For replace/add operations with map or array values, recursively
-		// strip empty collections from the value
-		if val, ok := op["value"].(map[string]any); ok {
-			stripEmptyCollectionsFromMap(val)
 		}
 		filtered = append(filtered, op)
 	}
