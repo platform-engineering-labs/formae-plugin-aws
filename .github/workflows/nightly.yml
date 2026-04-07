@@ -161,6 +161,25 @@ jobs:
                 }
               }')" || echo "[telemetry] event send failed (non-critical)" >&2
 
+      # Temporary: until Orbital package manager handles plugin version
+      # coordination, the formae Makefile is the source of truth for which
+      # plugin branch to build against. Parse the @ref suffix and check
+      # out that ref so the plugin is compatible with the formae binary.
+      - name: Align plugin branch with formae Makefile
+        run: |
+          PLUGIN_NAME=$(basename "${{ github.repository }}")
+          REF=$(grep "${PLUGIN_NAME}" /tmp/formae/Makefile \
+            | grep -o '@[^[:space:]\\]*' \
+            | head -1 \
+            | sed 's/^@//')
+          if [ -n "$REF" ]; then
+            echo "Formae Makefile pins ${PLUGIN_NAME} to ref: ${REF}"
+            git fetch origin "${REF}"
+            git checkout "${REF}"
+          else
+            echo "No ref override for ${PLUGIN_NAME}, staying on default branch"
+          fi
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
