@@ -1,0 +1,69 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.eks.fargateprofile
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::EKS::FargateProfile"
+
+@aws.SubResourceHint
+open class Label extends formae.SubResource {
+    key: String
+    value: String
+}
+
+@aws.SubResourceHint
+open class Selector extends formae.SubResource {
+    labels: Listing<Label>?
+    namespace: String
+}
+
+open class FargateProfileResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: FargateProfileResolvable = (this) {
+        property = "Arn"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Ref"
+    parent = "AWS::EKS::Cluster"
+    listParam = new formae.ListProperty { parentProperty = "Name" listParameter = "ClusterName" }
+}
+open class FargateProfile extends formae.Resource {
+
+    hidden parent = this
+
+    hidden res: FargateProfileResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+
+    @aws.FieldHint{createOnly = true}
+    clusterName: String|formae.Resolvable
+
+    @aws.FieldHint{createOnly = true}
+    fargateProfileName: String?
+
+    @aws.FieldHint{createOnly = true}
+    podExecutionRoleArn: String|formae.Resolvable
+
+    @aws.FieldHint{createOnly = true}
+    selectors: Listing<Selector>
+
+    @aws.FieldHint{createOnly = true}
+    subnets: Listing<String|formae.Resolvable>?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+}

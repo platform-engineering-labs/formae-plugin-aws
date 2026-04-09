@@ -1,0 +1,129 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ecs.expressgatewayservice
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::ECS::ExpressGatewayService"
+
+typealias AccessType = "PUBLIC"|"PRIVATE"
+
+typealias ScalingMetric = "CPU"|"MEMORY"|"AVERAGE_CPU"|"AVERAGE_MEMORY"|"REQUEST_COUNT_PER_TARGET"
+
+@aws.SubResourceHint
+open class AwsLogsConfiguration extends formae.SubResource {
+    logGroup: String|formae.Resolvable
+    logStreamPrefix: String
+}
+
+@aws.SubResourceHint
+open class RepositoryCredentials extends formae.SubResource {
+    credentialsParameter: String|formae.Resolvable
+}
+
+@aws.SubResourceHint
+open class KeyValuePair extends formae.SubResource {
+    name: String
+    value: String
+}
+
+@aws.SubResourceHint
+open class Secret extends formae.SubResource {
+    name: String
+    valueFrom: String|formae.Resolvable
+}
+
+@aws.SubResourceHint
+open class PrimaryContainer extends formae.SubResource {
+    awsLogsConfiguration: AwsLogsConfiguration?
+    command: Listing<String>?
+    containerPort: Int?
+    environment: Listing<KeyValuePair>?
+    image: String
+    repositoryCredentials: RepositoryCredentials?
+    secrets: Listing<Secret>?
+}
+
+@aws.SubResourceHint
+open class ScalingTarget extends formae.SubResource {
+    autoScalingMetric: ScalingMetric?
+    autoScalingTargetValue: Int?
+    maxTaskCount: Int?
+    minTaskCount: Int?
+}
+
+@aws.SubResourceHint
+open class NetworkConfiguration extends formae.SubResource {
+    securityGroups: Listing<String|formae.Resolvable>?
+    subnets: Listing<String|formae.Resolvable>?
+}
+
+open class ExpressGatewayServiceResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden serviceArn: ExpressGatewayServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "ServiceArn"
+    discoverable = false
+}
+open class ExpressGatewayService extends formae.Resource {
+
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
+    cluster: (String|formae.Resolvable)?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    cpu: String?
+
+    @aws.FieldHint
+    executionRoleArn: String|formae.Resolvable
+
+    @aws.FieldHint
+    healthCheckPath: String?
+
+    @aws.FieldHint
+    infrastructureRoleArn: String|formae.Resolvable
+
+    @aws.FieldHint{hasProviderDefault = true}
+    memory: String?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    networkConfiguration: NetworkConfiguration?
+
+    @aws.FieldHint
+    primaryContainer: PrimaryContainer
+
+    @aws.FieldHint{hasProviderDefault = true}
+    scalingTarget: ScalingTarget?
+
+    @aws.FieldHint{createOnly = true}
+    serviceName: String?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    @aws.FieldHint
+    taskRoleArn: (String|formae.Resolvable)?
+
+    hidden parent = this
+
+    hidden res: ExpressGatewayServiceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

@@ -1,0 +1,74 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.eks.addon
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::EKS::Addon"
+
+typealias ResolveConflicts = "NONE"|"OVERWRITE"|"PRESERVE"
+
+@aws.SubResourceHint
+open class PodIdentityAssociation extends formae.SubResource {
+    roleArn: String|formae.Resolvable
+    serviceAccount: String
+}
+
+open class AddonResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: AddonResolvable = (this) {
+        property = "Arn"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Ref"
+    parent = "AWS::EKS::Cluster"
+    listParam = new formae.ListProperty { parentProperty = "Name" listParameter = "ClusterName" }
+}
+open class Addon extends formae.Resource {
+
+    hidden parent = this
+
+    hidden res: AddonResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+
+    @aws.FieldHint{createOnly = true}
+    addonName: String
+
+    @aws.FieldHint
+    addonVersion: String?
+
+    @aws.FieldHint{createOnly = true}
+    clusterName: String|formae.Resolvable
+
+    @aws.FieldHint
+    configurationValues: String?
+
+    @aws.FieldHint
+    podIdentityAssociations: Listing<PodIdentityAssociation>?
+
+    @aws.FieldHint{writeOnly = true}
+    preserveOnDelete: Boolean?
+
+    @aws.FieldHint{writeOnly = true}
+    resolveConflicts: ResolveConflicts?
+
+    @aws.FieldHint
+    serviceAccountRoleArn: (String|formae.Resolvable)?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+}
