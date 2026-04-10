@@ -1,0 +1,87 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/ecs/expressgatewayservice.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-exgw-\(testRunID)"
+
+// IAM: Task Execution Role
+local execRole = new role.Role {
+  label = "test-exec-role"
+  roleName = "formae-sdk-test-exgw-exec-\(testRunID)"
+  assumeRolePolicyDocument = new Dynamic {
+    Version = "2012-10-17"
+    Statement = new Listing {
+      new Dynamic {
+        Effect = "Allow"
+        Principal = new Dynamic { Service = "ecs-tasks.amazonaws.com" }
+        Action = "sts:AssumeRole"
+      }
+    }
+  }
+  managedPolicyArns {
+    "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+  }
+}
+
+// IAM: Infrastructure Role (Express Gateway managed policy)
+local infraRole = new role.Role {
+  label = "test-infra-role"
+  roleName = "formae-sdk-test-exgw-infra-\(testRunID)"
+  assumeRolePolicyDocument = new Dynamic {
+    Version = "2012-10-17"
+    Statement = new Listing {
+      new Dynamic {
+        Effect = "Allow"
+        Principal = new Dynamic { Service = "ecs.amazonaws.com" }
+        Action = "sts:AssumeRole"
+      }
+    }
+  }
+  managedPolicyArns {
+    "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ECS Express Gateway Service"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-2"
+    }
+  }
+
+  // IAM dependencies
+  execRole
+  infraRole
+
+  // Express Gateway Service under test
+  new expressgatewayservice.ExpressGatewayService {
+    label = "plugin-sdk-test-exgw"
+    serviceName = "formae-sdk-test-exgw-\(testRunID)"
+    executionRoleArn = execRole.res.arn
+    infrastructureRoleArn = infraRole.res.arn
+    cpu = "256"
+    memory = "512"
+    healthCheckPath = "/"
+    primaryContainer = new expressgatewayservice.PrimaryContainer {
+      image = "nginx:latest"
+      containerPort = 80
+    }
+  }
+}

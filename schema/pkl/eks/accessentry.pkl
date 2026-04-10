@@ -1,0 +1,75 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.eks.accessentry
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::EKS::AccessEntry"
+
+typealias AccessScopeType = "namespace"|"cluster"
+
+@aws.SubResourceHint
+open class AccessScope extends formae.SubResource {
+    namespaces: Listing<String>?
+    type: AccessScopeType
+}
+
+@aws.SubResourceHint
+open class AccessPolicy extends formae.SubResource {
+    accessScope: AccessScope
+    policyArn: String
+}
+
+open class AccessEntryResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden accessEntryArn: AccessEntryResolvable = (this) {
+        property = "AccessEntryArn"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "AccessEntryArn"
+    parent = "AWS::EKS::Cluster"
+    listParam = new formae.ListProperty { parentProperty = "Name" listParameter = "ClusterName" }
+    discoverable = true
+}
+open class AccessEntry extends formae.Resource {
+
+    hidden parent = this
+
+    hidden res: AccessEntryResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+
+    @aws.FieldHint
+    accessPolicies: Listing<AccessPolicy>?
+
+    @aws.FieldHint{createOnly = true}
+    clusterName: String|formae.Resolvable
+
+    @aws.FieldHint
+    kubernetesGroups: Listing<String>?
+
+    @aws.FieldHint{createOnly = true}
+    principalArn: String|formae.Resolvable
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    @aws.FieldHint{createOnly = true}
+    type: String?
+
+    @aws.FieldHint
+    username: String?
+}
