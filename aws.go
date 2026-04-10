@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/model"
 	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
@@ -53,23 +54,22 @@ var EKSAutomodeResourceTypes = []string{
 }
 
 // RateLimit returns the rate limit configuration for this plugin
-func (p *Plugin) RateLimit() plugin.RateLimitConfig {
-	return plugin.RateLimitConfig{
-		Scope:                            plugin.RateLimitScopeNamespace,
-		MaxRequestsPerSecondForNamespace: 2,
+func (p *Plugin) RateLimit() model.RateLimitConfig {
+	return model.RateLimitConfig{
+		MaxRequestsPerSecond: 2,
 	}
 }
 
 // DiscoveryFilters returns declarative filters for excluding resources from discovery.
 // Uses RFC 9535 JSONPath with match() regex function to filter EKS Automode-managed resources.
-func (p *Plugin) DiscoveryFilters() []plugin.MatchFilter {
-	return []plugin.MatchFilter{
+func (p *Plugin) DiscoveryFilters() []model.MatchFilter {
+	return []model.MatchFilter{
 		{
 			// Filter out EKS Automode-managed resources.
 			// These resources are tagged with "kubernetes.io/cluster/<cluster-name>" = "owned".
 			// Using RFC 9535 match() function for regex pattern matching on tag keys.
 			ResourceTypes: EKSAutomodeResourceTypes,
-			Conditions: []plugin.FilterCondition{
+			Conditions: []model.FilterCondition{
 				{
 					PropertyPath:  `$.Tags[?match(@.Key, "kubernetes\\.io/cluster/.*")].Value`,
 					PropertyValue: "owned",
@@ -82,8 +82,8 @@ func (p *Plugin) DiscoveryFilters() []plugin.MatchFilter {
 // LabelConfig returns the label extraction configuration for discovered AWS resources.
 // Most AWS resources use the Name tag for labels, but some resources don't support tags
 // or have a more natural identifier property.
-func (p *Plugin) LabelConfig() plugin.LabelConfig {
-	return plugin.LabelConfig{
+func (p *Plugin) LabelConfig() model.LabelConfig {
+	return model.LabelConfig{
 		DefaultQuery: `$.Tags[?(@.Key=='Name')].Value`,
 		ResourceOverrides: map[string]string{
 			// IAM resources typically don't have Name tags
