@@ -56,7 +56,8 @@ var EKSAutomodeResourceTypes = []string{
 // RateLimit returns the rate limit configuration for this plugin
 func (p *Plugin) RateLimit() model.RateLimitConfig {
 	return model.RateLimitConfig{
-		MaxRequestsPerSecond: 2,
+		Scope:                            model.RateLimitScopeNamespace,
+		MaxRequestsPerSecondForNamespace: 2,
 	}
 }
 
