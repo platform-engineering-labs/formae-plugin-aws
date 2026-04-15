@@ -108,6 +108,18 @@ open class TargetGroupTuple extends formae.SubResource {
     weight: Int?
 }
 
+open class ListenerResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden listenerArn: ListenerResolvable = (this) {
+        property = "ListenerArn"
+    }
+
+    hidden url: ListenerResolvable = (this) {
+        property = "Url"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "ListenerArn"
@@ -146,4 +158,11 @@ open class Listener extends formae.Resource {
 
     @aws.FieldHint
     sslPolicy: String?
+
+    hidden parent = this
+
+    hidden res: ListenerResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
