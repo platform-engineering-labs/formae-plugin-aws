@@ -342,6 +342,12 @@ open class TaskDefinitionResolvable extends formae.Resolvable {
 }
 open class TaskDefinition extends formae.Resource {
 
+    local parent = this
+    hidden res: TaskDefinitionResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+
     @aws.FieldHint{createOnly = true}
     containerDefinitions: Listing<ContainerDefinition>?
 
