@@ -130,7 +130,7 @@ typealias EFSVolumeConfigurationTransitEncryption = "ENABLED"|"DISABLED"
 @aws.SubResourceHint
 open class EFSVolumeConfiguration extends formae.SubResource {
     authorizationConfig: AuthorizationConfig?
-    filesystemId: String
+    filesystemId: String|formae.Resolvable
     rootDirectory: String?
     transitEncryption: EFSVolumeConfigurationTransitEncryption?
     transitEncryptionPort: Int?
