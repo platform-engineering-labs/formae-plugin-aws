@@ -103,47 +103,43 @@ else
     echo "Using temp directory: ${INSTALL_DIR}"
     trap "rm -rf ${INSTALL_DIR}" EXIT
 
-    # Determine OS and architecture
+    # Determine OS and architecture for pelmgr download
     DETECTED_OS=$(uname | tr '[:upper:]' '[:lower:]')
-    DETECTED_ARCH=$(uname -m | tr -d '_')
+    DETECTED_ARCH=$(uname -m | tr -d '_' | sed s/aarch64/arm64/)
 
-    # Resolve version if "latest"
+    # Download pelmgr (the PEL package manager)
+    PELMGR="${INSTALL_DIR}/pelmgr"
+    echo "Downloading pelmgr..."
+    if ! curl -fsSL "https://hub.platform.engineering/get/binaries/${DETECTED_OS}-${DETECTED_ARCH}/pelmgr" -o "${PELMGR}"; then
+        echo "Error: Failed to download pelmgr"
+        exit 1
+    fi
+    chmod +x "${PELMGR}"
+
+    # Install formae via pelmgr
     if [[ "${VERSION}" == "latest" ]]; then
-        echo "Resolving latest version..."
-        VERSION=$(curl -s https://hub.platform.engineering/binaries/repo.json | \
-            jq -r "[.Packages[] | select(.Version | index(\"-\") | not) | select(.OsArch.OS == \"${DETECTED_OS}\" and .OsArch.Arch == \"${DETECTED_ARCH}\")][0].Version")
-        if [[ -z "${VERSION}" || "${VERSION}" == "null" ]]; then
-            echo "Error: Could not determine latest version for ${DETECTED_OS}-${DETECTED_ARCH}"
-            exit 1
-        fi
+        echo "Installing latest formae..."
+        "${PELMGR}" --install-path "${INSTALL_DIR}" --yes install formae
+    else
+        echo "Installing formae version ${VERSION}..."
+        "${PELMGR}" --install-path "${INSTALL_DIR}" --yes install "formae@${VERSION}"
     fi
 
-    echo "Downloading formae version ${VERSION}..."
-    PKGNAME="formae@${VERSION}_${DETECTED_OS}-${DETECTED_ARCH}.tgz"
-    DOWNLOAD_URL="https://hub.platform.engineering/binaries/pkgs/${PKGNAME}"
-
-    if ! curl -fsSL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/${PKGNAME}"; then
-        echo "Error: Failed to download ${DOWNLOAD_URL}"
+    FORMAE_BINARY="${INSTALL_DIR}/bin/formae"
+    if [[ ! -x "${FORMAE_BINARY}" ]]; then
+        echo "Error: formae binary not found at ${FORMAE_BINARY}"
+        find "${INSTALL_DIR}" -name "formae" -type f 2>/dev/null || ls -laR "${INSTALL_DIR}"
         exit 1
     fi
 
-    # Extract to install directory
-    echo "Extracting..."
-    tar -xzf "${INSTALL_DIR}/${PKGNAME}" -C "${INSTALL_DIR}"
-
-    # Find the formae binary
-    FORMAE_BINARY="${INSTALL_DIR}/formae/bin/formae"
-    if [[ ! -x "${FORMAE_BINARY}" ]]; then
-        # Try alternative locations
-        if [[ -x "${INSTALL_DIR}/bin/formae" ]]; then
-            FORMAE_BINARY="${INSTALL_DIR}/bin/formae"
-        elif [[ -x "${INSTALL_DIR}/formae" ]]; then
-            FORMAE_BINARY="${INSTALL_DIR}/formae"
-        else
-            echo "Error: formae binary not found in ${INSTALL_DIR}"
-            find "${INSTALL_DIR}" -name "formae" -type f 2>/dev/null || ls -laR "${INSTALL_DIR}"
+    # Resolve VERSION from the installed binary (needed for PKL dependency updates)
+    if [[ "${VERSION}" == "latest" ]]; then
+        VERSION=$("${FORMAE_BINARY}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [[ -z "${VERSION}" ]]; then
+            echo "Error: Could not extract version from installed formae binary"
             exit 1
         fi
+        echo "Resolved latest to version: ${VERSION}"
     fi
 fi
 

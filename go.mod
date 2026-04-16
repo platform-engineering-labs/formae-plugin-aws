@@ -1,6 +1,6 @@
 module github.com/platform-engineering-labs/formae-plugin-aws
 
-go 1.25
+go 1.26
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
@@ -19,8 +19,8 @@ require (
 	github.com/aws/smithy-go v1.24.2
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.23
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.1.23
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.1.42
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.2.0
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.0
 	github.com/stretchr/testify v1.11.1
 )
 
