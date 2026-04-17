@@ -28,7 +28,7 @@ open class CustomDBEngineVersionResolvable extends formae.Resolvable {
 open class CustomDBEngineVersion extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    databaseInstallationFilesS3BucketName: String?
+    databaseInstallationFilesS3BucketName: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     databaseInstallationFilesS3Prefix: String?
@@ -43,13 +43,13 @@ open class CustomDBEngineVersion extends formae.Resource {
     engineVersion: String
 
     @aws.FieldHint{createOnly = true}
-    imageId: String?
+    imageId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
         outputField = "KMSKeyId"
     }
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
@@ -61,7 +61,7 @@ open class CustomDBEngineVersion extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    sourceCustomDbEngineVersionIdentifier: String?
+    sourceCustomDbEngineVersionIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint
     status: VersionStatus?

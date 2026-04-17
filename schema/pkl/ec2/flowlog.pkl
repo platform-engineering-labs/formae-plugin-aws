@@ -42,7 +42,7 @@ open class FlowLog extends formae.Resource {
     logFormat: String?
 
     @aws.FieldHint{createOnly = true}
-    logGroupName: String?
+    logGroupName: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     maxAggregationInterval: Int?

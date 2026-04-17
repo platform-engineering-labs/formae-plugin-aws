@@ -47,7 +47,7 @@ open class Role extends formae.Resource {
     description: String?
 
     @aws.FieldHint
-    managedPolicyArns: Listing<String>?
+    managedPolicyArns: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{hasProviderDefault = true}
     maxSessionDuration: Int?

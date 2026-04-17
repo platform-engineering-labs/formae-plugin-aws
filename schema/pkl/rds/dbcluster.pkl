@@ -19,7 +19,7 @@ open class Role extends formae.SubResource {
 
 @aws.SubResourceHint
 open class MasterUserSecret extends formae.SubResource {
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
     secretArn: (String|formae.Resolvable)?
 }
 
@@ -118,13 +118,13 @@ open class DBCluster extends formae.Resource {
 
     // Update this value can cause some downtime because the DB needs to reboot
     @aws.FieldHint {outputField = "DBClusterParameterGroupName"}
-    dbClusterParameterGroupName: String?
+    dbClusterParameterGroupName: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         writeOnly = true
         outputField = "DBInstanceParameterGroupName"
     }
-    dbInstanceParameterGroupName: String?
+    dbInstanceParameterGroupName: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
@@ -151,7 +151,7 @@ open class DBCluster extends formae.Resource {
     domain: String?
 
     @aws.FieldHint
-    domainIAMRoleName: String?
+    domainIAMRoleName: (String|formae.Resolvable)?
 
     @aws.FieldHint
     enableCloudwatchLogsExports: Listing<String>?
@@ -188,7 +188,7 @@ open class DBCluster extends formae.Resource {
     iops: Int?
 
     @aws.FieldHint{createOnly = true}
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     manageMasterUserPassword: Boolean?
@@ -206,7 +206,7 @@ open class DBCluster extends formae.Resource {
     monitoringInterval: Int?
 
     @aws.FieldHint
-    monitoringRoleArn: String?
+    monitoringRoleArn: (String|formae.Resolvable)?
 
     @aws.FieldHint
     networkType: String?
@@ -215,7 +215,7 @@ open class DBCluster extends formae.Resource {
     performanceInsightsEnabled: Boolean?
 
     @aws.FieldHint
-    performanceInsightsKmsKeyId: String?
+    performanceInsightsKmsKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     performanceInsightsRetentionPeriod: Int?
@@ -236,7 +236,7 @@ open class DBCluster extends formae.Resource {
     readEndpoint: ReadEndpoint?
 
     @aws.FieldHint
-    replicationSourceIdentifier: String?
+    replicationSourceIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     restoreToTime: String?
@@ -257,13 +257,13 @@ open class DBCluster extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    snapshotIdentifier: String?
+    snapshotIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
         writeOnly = true
     }
-    sourceDBClusterIdentifier: String?
+    sourceDBClusterIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true

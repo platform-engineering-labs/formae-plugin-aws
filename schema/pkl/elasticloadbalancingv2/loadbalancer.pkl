@@ -19,7 +19,7 @@ open class LoadBalancerAttribute extends formae.SubResource {
 
 @aws.SubResourceHint
 open class SubnetMapping extends formae.SubResource {
-    allocationId: String?
+    allocationId: (String|formae.Resolvable)?
     iPv6Address: String?
     privateIPv4Address: String?
     sourceNatIpv6Prefix: String?

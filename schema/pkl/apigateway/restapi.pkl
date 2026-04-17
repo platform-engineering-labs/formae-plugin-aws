@@ -17,7 +17,7 @@ open class EndpointConfiguration extends formae.SubResource {
     @aws.FieldHint { hasProviderDefault = true }
     ipAddressType: String?
     types: Listing<String>?
-    vpcEndpointIds: Listing<String>?
+    vpcEndpointIds: Listing<String|formae.Resolvable>?
 }
 
 @aws.SubResourceHint

@@ -22,7 +22,7 @@ open class AccessGrantsLocationConfiguration extends formae.SubResource{
 
 @aws.SubResourceHint
 open class AccessGrantGrantee extends formae.SubResource {
-    granteeIdentifier: String
+    granteeIdentifier: String|formae.Resolvable
     granteeType: GranteeGranteeType
 }
 
@@ -37,7 +37,7 @@ open class AccessGrant extends formae.Resource {
     accessGrantsLocationConfiguration: AccessGrantsLocationConfiguration?
 
     @aws.FieldHint
-    accessGrantsLocationId: String
+    accessGrantsLocationId: String|formae.Resolvable
 
     @aws.FieldHint
     applicationArn: (String|formae.Resolvable)?

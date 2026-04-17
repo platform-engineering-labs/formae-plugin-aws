@@ -22,7 +22,7 @@ open class AccessScope extends formae.SubResource {
 @aws.SubResourceHint
 open class AccessPolicy extends formae.SubResource {
     accessScope: AccessScope
-    policyArn: String
+    policyArn: String|formae.Resolvable
 }
 
 open class AccessEntryResolvable extends formae.Resolvable {

@@ -17,7 +17,7 @@ typealias VariantPropertyType = "DesiredInstanceCount"|"DesiredWeight"
 
 @aws.SubResourceHint
 open class Alarm extends formae.SubResource {
-    alarmName: String
+    alarmName: String|formae.Resolvable
 }
 
 @aws.SubResourceHint

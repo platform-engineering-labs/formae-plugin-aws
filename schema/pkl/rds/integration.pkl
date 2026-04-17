@@ -45,7 +45,7 @@ open class Integration extends formae.Resource {
         createOnly = true
         outputField = "KMSKeyId"
     }
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     sourceArn: String|formae.Resolvable

@@ -19,7 +19,7 @@ const type = "AWS::EC2::Host"
 open class Host extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    assetId: String?
+    assetId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     autoPlacement: String?
@@ -40,5 +40,5 @@ open class Host extends formae.Resource {
     instanceType: String?
 
     @aws.FieldHint{createOnly = true}
-    outpostArn: String?
+    outpostArn: (String|formae.Resolvable)?
 }

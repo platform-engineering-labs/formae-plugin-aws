@@ -27,7 +27,7 @@ open class LayerVersionPermission extends formae.Resource {
     layerVersionArn: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
-    organizationId: String?
+    organizationId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     principal: String

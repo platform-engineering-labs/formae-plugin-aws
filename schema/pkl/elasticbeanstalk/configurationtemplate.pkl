@@ -21,7 +21,7 @@ open class ConfigurationOptionSetting extends formae.SubResource {
 
 @aws.SubResourceHint
 open class SourceConfiguration extends formae.SubResource {
-    applicationName: String
+    applicationName: String|formae.Resolvable
     templateName: String
 }
 

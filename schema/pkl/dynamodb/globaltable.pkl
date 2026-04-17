@@ -52,7 +52,7 @@ typealias KinesisStreamSpecificationApproximateCreationDateTimePrecision = "MICR
 @aws.SubResourceHint
 open class KinesisStreamSpecification extends formae.SubResource {
     approximateCreationDateTimePrecision: KinesisStreamSpecificationApproximateCreationDateTimePrecision?
-    streamArn: String
+    streamArn: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
@@ -95,7 +95,7 @@ open class ReplicaGlobalSecondaryIndexSpecification extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ReplicaSSESpecification extends formae.SubResource {
-    kMSMasterKeyId: String
+    kMSMasterKeyId: String|formae.Resolvable
 }
 
 @aws.SubResourceHint

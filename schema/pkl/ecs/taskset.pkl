@@ -31,7 +31,7 @@ open class CapacityProviderStrategy extends formae.SubResource {
 open class LoadBalancer extends formae.SubResource {
     containerName: String?
     containerPort: Int?
-    targetGroupArn: String?
+    targetGroupArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -52,7 +52,7 @@ open class ServiceRegistry extends formae.SubResource {
     containerName: String?
     containerPort: Int?
     port: Int?
-    registryArn: String?
+    registryArn: (String|formae.Resolvable)?
 }
 @aws.ResourceHint {
     type = module.type
@@ -70,7 +70,7 @@ open class TaskSet extends formae.Resource {
     cluster: String
 
     @aws.FieldHint{createOnly = true}
-    externalId: String?
+    externalId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     launchType: LaunchType?

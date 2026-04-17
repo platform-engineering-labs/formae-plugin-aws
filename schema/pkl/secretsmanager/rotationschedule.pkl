@@ -15,9 +15,9 @@ const type = "AWS::SecretsManager::RotationSchedule"
 open class HostedRotationLambda extends formae.SubResource {
     excludeCharacters: String?
     kmsKeyArn: (String|formae.Resolvable)?
-    masterSecretArn: String?
+    masterSecretArn: (String|formae.Resolvable)?
     masterSecretKmsKeyArn: (String|formae.Resolvable)?
-    rotationLambdaName: String?
+    rotationLambdaName: (String|formae.Resolvable)?
     rotationType: String
     runtime: String?
     superuserSecretArn: (String|formae.Resolvable)?
@@ -52,5 +52,5 @@ open class RotationSchedule extends formae.Resource {
     rotationRules: RotationRules?
 
     @aws.FieldHint{createOnly = true}
-    secretId: String
+    secretId: String|formae.Resolvable
 }

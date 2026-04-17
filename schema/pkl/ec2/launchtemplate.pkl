@@ -53,7 +53,7 @@ open class CapacityReservationSpecification extends formae.SubResource {
 @aws.SubResourceHint
 open class CapacityReservationTarget extends formae.SubResource {
     capacityReservationId: (String|formae.Resolvable)?
-    capacityReservationResourceGroupArn: String?
+    capacityReservationResourceGroupArn: (String|formae.Resolvable)?
 }
 
 
@@ -89,8 +89,8 @@ open class EBS extends formae.SubResource {
     deleteOnTermination: Boolean?
     encrypted: Boolean?
     iops: Int?
-    kmsKeyId: String?
-    snapshotId: String?
+    kmsKeyId: (String|formae.Resolvable)?
+    snapshotId: (String|formae.Resolvable)?
     throughput: Int?
     volumeSize: Int?
     volumeType: String?
@@ -206,13 +206,13 @@ open class LaunchTemplateData extends formae.SubResource {
     enclaveOptions: EnclaveOptions?
     hibernationOptions: HibernationOptions?
     iamInstanceProfile: IamInstanceProfile?
-    imageId: String?
+    imageId: (String|formae.Resolvable)?
     instanceInitiatedShutdownBehavior: String?
     instanceMarketOptions: InstanceMarketOptions?
     instanceRequirements: InstanceRequirements?
     instanceType: String?
-    kernelId: String?
-    keyName: String?
+    kernelId: (String|formae.Resolvable)?
+    keyName: (String|formae.Resolvable)?
     licenseSpecifications: Listing<LicenseSpecification>?
     maintenanceOptions: MaintenanceOptions?
     metadataOptions: MetadataOptions?
@@ -220,8 +220,8 @@ open class LaunchTemplateData extends formae.SubResource {
     networkInterfaces: Listing<NetworkInterface>?
     placement: Placement?
     privateDnsNameOptions: PrivateDnsNameOptions?
-    ramDiskId: String?
-    securityGroupIds: Listing<String>?
+    ramDiskId: (String|formae.Resolvable)?
+    securityGroupIds: Listing<String|formae.Resolvable>?
     securityGroups: Listing<String|formae.Resolvable>?
     tagSpecifications: Listing<TagSpecification>?
     userData: String?
@@ -236,7 +236,7 @@ open class ElasticInferenceAccelerator extends formae.SubResource {
 
 @aws.SubResourceHint
 open class LicenseSpecification extends formae.SubResource {
-    licenseConfigurationArn: String?
+    licenseConfigurationArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -294,7 +294,7 @@ open class NetworkInterface extends formae.SubResource {
     ipv6PrefixCount: Int?
     ipv6Prefixes: Listing<Ipv6PrefixSpecification>?
     networkCardIndex: Int?
-    networkInterfaceId: String?
+    networkInterfaceId: (String|formae.Resolvable)?
     primaryIpv6: Boolean?
     privateIpAddress: String?
     privateIpAddresses: Listing<PrivateIpAddress>?
@@ -311,10 +311,10 @@ open class NetworkInterfaceCount extends formae.SubResource {
 open class Placement extends formae.SubResource {
     affinity: String?
     availabilityZone: aws.AvailabilityZone?
-    groupId: String?
-    groupName: String?
-    hostId: String?
-    hostResourceGroupArn: String?
+    groupId: (String|formae.Resolvable)?
+    groupName: (String|formae.Resolvable)?
+    hostId: (String|formae.Resolvable)?
+    hostResourceGroupArn: (String|formae.Resolvable)?
     partitionNumber: Int?
     spreadDomain: String?
     tenancy: String?

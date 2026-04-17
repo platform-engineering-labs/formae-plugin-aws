@@ -34,5 +34,5 @@ open class TrustStoreRevocation extends formae.Resource {
     revocationContents: Listing<RevocationContent>?
 
     @aws.FieldHint{createOnly = true}
-    trustStoreArn: String?
+    trustStoreArn: (String|formae.Resolvable)?
 }

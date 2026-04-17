@@ -57,7 +57,7 @@ open class Subnet extends formae.Resource {
     availabilityZone: aws.AvailabilityZone?
 
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
-    availabilityZoneId: String?
+    availabilityZoneId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     cidrBlock: String?
@@ -72,7 +72,7 @@ open class Subnet extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    ipv4IpamPoolId: String?
+    ipv4IpamPoolId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
@@ -87,7 +87,7 @@ open class Subnet extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    ipv6IpamPoolId: String?
+    ipv6IpamPoolId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     ipv6Native: Boolean?
@@ -102,7 +102,7 @@ open class Subnet extends formae.Resource {
     mapPublicIpOnLaunch: Boolean? = false
 
     @aws.FieldHint{createOnly = true}
-    outpostArn: String?
+    outpostArn: (String|formae.Resolvable)?
 
     @aws.FieldHint { hasProviderDefault = true }
     privateDnsNameOptionsOnLaunch: PrivateDnsNameOptionsOnLaunch?

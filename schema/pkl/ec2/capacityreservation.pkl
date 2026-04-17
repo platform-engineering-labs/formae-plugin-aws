@@ -28,7 +28,7 @@ open class CapacityReservation extends formae.Resource {
     availabilityZone: aws.AvailabilityZone
 
     @aws.FieldHint{createOnly = true}
-    availabilityZoneId: String
+    availabilityZoneId: String|formae.Resolvable
 
     @aws.FieldHint
     ebsOptimized: Boolean?
@@ -55,10 +55,10 @@ open class CapacityReservation extends formae.Resource {
     instanceType: String
 
     @aws.FieldHint
-    outPostArn: String?
+    outPostArn: (String|formae.Resolvable)?
 
     @aws.FieldHint
-    placementGroupArn: String?
+    placementGroupArn: (String|formae.Resolvable)?
 
     //TODO need to find solution for this because it's not a regular tag format
     @aws.FieldHint
@@ -68,5 +68,5 @@ open class CapacityReservation extends formae.Resource {
     tenancy: String?
 
     @aws.FieldHint{writeOnly = true}
-    unusedReservationBillingOwnerId: String?
+    unusedReservationBillingOwnerId: (String|formae.Resolvable)?
 }

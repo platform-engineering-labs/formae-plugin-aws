@@ -73,8 +73,8 @@ open class EBS extends formae.SubResource {
     deleteOnTermination: Boolean?
     encrypted: Boolean?
     iops: Int?
-    kmsKeyId: String?
-    snapshotId: String?
+    kmsKeyId: (String|formae.Resolvable)?
+    snapshotId: (String|formae.Resolvable)?
     volumeSize: Int?
     volumeType: EbsBlockDeviceVolumeType?
 }
@@ -99,7 +99,7 @@ open class Overrides extends formae.SubResource {
 
 @aws.SubResourceHint
 open class LaunchTemplateSpecification extends formae.SubResource {
-    launchTemplateId: String?
+    launchTemplateId: (String|formae.Resolvable)?
     launchTemplateName: (String(matches(Regex(#"[a-zA-Z0-9\(\)\.\-/_]+"#))))?
     version: String
 }
@@ -199,9 +199,9 @@ open class PerformanceFactorReference extends formae.SubResource {
 open class Placement extends formae.SubResource {
     affinity: String?
     availabilityZone: aws.AvailabilityZone?
-    groupName: String?
-    hostId: String?
-    hostResourceGroupArn: String?
+    groupName: (String|formae.Resolvable)?
+    hostId: (String|formae.Resolvable)?
+    hostResourceGroupArn: (String|formae.Resolvable)?
     partitionNumber: Int?
     spreadDomain: String?
     tenancy: String?

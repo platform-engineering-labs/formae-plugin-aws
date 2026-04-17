@@ -13,7 +13,7 @@ const type = "AWS::EC2::ClientVpnEndpoint"
 
 @aws.SubResourceHint
 open class ClientVpnEndpointCertificateAuthenticationRequest extends formae.SubResource {
-    clientRootCertificateChainArn: String
+    clientRootCertificateChainArn: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
@@ -27,7 +27,7 @@ open class AuthenticationOption extends formae.SubResource {
 @aws.SubResourceHint
 open class ClientConnectOptions extends formae.SubResource {
     enabled: Boolean
-    lambdaFunctionArn: String?
+    lambdaFunctionArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -45,13 +45,13 @@ open class ConnectionLogOptions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ClientVpnEndpointDirectoryServiceAuthenticationRequest extends formae.SubResource {
-    directoryId: String
+    directoryId: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
 open class ClientVpnEndpointFederatedAuthenticationRequest extends formae.SubResource {
-    sAMLProviderArn: String
-    selfServiceSAMLProviderArn: String?
+    sAMLProviderArn: String|formae.Resolvable
+    selfServiceSAMLProviderArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -96,7 +96,7 @@ open class ClientVpnEndpoint extends formae.Resource {
     selfServicePortal: String?
 
     @aws.FieldHint
-    serverCertificateArn: String
+    serverCertificateArn: String|formae.Resolvable
 
     @aws.FieldHint
     sessionTimeoutHours: Int?

@@ -24,10 +24,10 @@ open class VPCEndpointService extends formae.Resource {
     contributorInsightsEnabled: Boolean?
 
     @aws.FieldHint
-    gatewayLoadBalancerArns: Listing<String>?
+    gatewayLoadBalancerArns: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint
-    networkLoadBalancerArns: Listing<String>?
+    networkLoadBalancerArns: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint
     payerResponsibility: String?

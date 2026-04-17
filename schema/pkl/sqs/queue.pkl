@@ -63,7 +63,7 @@ open class Queue extends formae.Resource {
     kmsDataKeyReusePeriodSeconds: Duration(isBetween(60.s, 86400.s))?
 
     @aws.FieldHint
-    kmsMasterKeyId: String?
+    kmsMasterKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint {
         outputTransformation = (it) -> it.toUnit("b").value

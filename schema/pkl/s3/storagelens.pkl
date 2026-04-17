@@ -89,7 +89,7 @@ typealias S3BucketDestinationOutputSchemaVersion = "V_1"
 
 @aws.SubResourceHint
 open class S3BucketDestination extends formae.SubResource {
-    accountId: String
+    accountId: String|formae.Resolvable
     arn: String
     encryption: Dynamic?
     format: S3BucketDestinationFormat
@@ -99,7 +99,7 @@ open class S3BucketDestination extends formae.SubResource {
 
 @aws.SubResourceHint
 open class StorageLensSSEKMS extends formae.SubResource {
-    keyId: String
+    keyId: String|formae.Resolvable
 }
 
 @aws.SubResourceHint

@@ -18,13 +18,13 @@ const type = "AWS::EC2::TransitGatewayPeeringAttachment"
 open class TransitGatewayPeeringAttachment extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    peerAccountId: String
+    peerAccountId: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
     peerRegion: aws.Region
 
     @aws.FieldHint{createOnly = true}
-    peerTransitGatewayId: String
+    peerTransitGatewayId: String|formae.Resolvable
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
@@ -33,5 +33,5 @@ open class TransitGatewayPeeringAttachment extends formae.Resource {
     tags: Listing<aws.Tag>?
 
     @aws.FieldHint{createOnly = true}
-    transitGatewayId: String
+    transitGatewayId: String|formae.Resolvable
 }

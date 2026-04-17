@@ -14,7 +14,7 @@ const type = "AWS::ApiGateway::UsagePlan"
 
 @aws.SubResourceHint
 open class ApiStage extends formae.SubResource {
-    apiId: String?
+    apiId: (String|formae.Resolvable)?
     stage: String?
     throttle: Mapping<String, Any>?
 }

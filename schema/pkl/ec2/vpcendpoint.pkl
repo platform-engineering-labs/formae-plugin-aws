@@ -44,7 +44,7 @@ open class VPCEndpoint extends formae.Resource {
     privateDnsEnabled: Boolean?
 
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
-    resourceConfigurationArn: String?
+    resourceConfigurationArn: (String|formae.Resolvable)?
 
     @aws.FieldHint { hasProviderDefault = true }
     routeTableIds: Listing<String|formae.Resolvable>?
@@ -53,10 +53,10 @@ open class VPCEndpoint extends formae.Resource {
     securityGroupIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}
-    serviceName: String?
+    serviceName: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
-    serviceNetworkArn: String?
+    serviceNetworkArn: (String|formae.Resolvable)?
 
     @aws.FieldHint { hasProviderDefault = true }
     subnetIds: Listing<String|formae.Resolvable>?

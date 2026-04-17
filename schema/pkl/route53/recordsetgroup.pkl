@@ -16,14 +16,14 @@ open class AliasTarget extends formae.SubResource {
     @aws.FieldHint {
         outputField = "DNSName"
     }
-    dnsName: String
+    dnsName: String|formae.Resolvable
     evaluateTargetHealth: Boolean?
-    hostedZoneId: String
+    hostedZoneId: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
 open class CidrRoutingConfig extends formae.SubResource {
-    collectionId: String
+    collectionId: String|formae.Resolvable
     locationName: String
 }
 
@@ -59,9 +59,9 @@ open class RecordSet extends formae.SubResource {
     failover: String?
     geoLocation: GeoLocation?
     geoProximityLocation: GeoProximityLocation?
-    healthCheckId: String?
-    hostedZoneId: String?
-    hostedZoneName: String?
+    healthCheckId: (String|formae.Resolvable)?
+    hostedZoneId: (String|formae.Resolvable)?
+    hostedZoneName: (String|formae.Resolvable)?
     multiValueAnswer: Boolean?
     name: String
     region: aws.Region?
@@ -86,7 +86,7 @@ open class RecordSetGroup extends formae.Resource {
     hostedZoneId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
-    hostedZoneName: String?
+    hostedZoneName: (String|formae.Resolvable)?
 
     @aws.FieldHint
     recordSets: (Listing<RecordSet>)?

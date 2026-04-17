@@ -15,7 +15,7 @@ const type = "AWS::RDS::DBSecurityGroup"
 open class DBSecurityGroupIngress extends formae.SubResource {
     cIDRIP: String?
     eC2SecurityGroupId: (String|formae.Resolvable)?
-    eC2SecurityGroupName: String?
+    eC2SecurityGroupName: (String|formae.Resolvable)?
     eC2SecurityGroupOwnerId: (String|formae.Resolvable)?
 }
 

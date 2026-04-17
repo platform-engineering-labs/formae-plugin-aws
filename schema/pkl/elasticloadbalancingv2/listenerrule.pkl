@@ -30,8 +30,8 @@ open class AuthenticateCognitoConfig extends formae.SubResource {
     scope: String?
     sessionCookieName: String?
     sessionTimeout: Int?
-    userPoolArn: String
-    userPoolClientId: String
+    userPoolArn: String|formae.Resolvable
+    userPoolClientId: String|formae.Resolvable
     userPoolDomain: String
 }
 

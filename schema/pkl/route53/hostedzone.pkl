@@ -18,7 +18,7 @@ open class HostedZoneConfig  extends formae.SubResource{
 
 @aws.SubResourceHint
 open class QueryLoggingConfig  extends formae.SubResource {
-    cloudWatchLogsLogGroupArn: String
+    cloudWatchLogsLogGroupArn: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
@@ -26,7 +26,7 @@ open class VPC extends formae.SubResource {
     @aws.FieldHint {
         outputField = "VPCId"
     }
-    vpcId: String
+    vpcId: String|formae.Resolvable
 
     @aws.FieldHint {
         outputField = "VPCRegion"

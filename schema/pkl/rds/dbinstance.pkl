@@ -23,20 +23,20 @@ open class CertificateDetails extends formae.SubResource {
 @aws.SubResourceHint
 open class Role extends formae.SubResource {
     featureName: String
-    roleArn: String
+    roleArn: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
 open class Endpoint extends formae.SubResource {
     address: String?
-    hostedZoneId: String?
+    hostedZoneId: (String|formae.Resolvable)?
     port: String?
 }
 
 @aws.SubResourceHint
 open class MasterUserSecret extends formae.SubResource {
-    kmsKeyId: String?
-    secretArn: String?
+    kmsKeyId: (String|formae.Resolvable)?
+    secretArn: (String|formae.Resolvable)?
 }
 
 typealias ProcessorFeatureName = "coreCount"|"threadsPerCore"
@@ -104,7 +104,7 @@ open class DBInstance extends formae.Resource {
     autoMinorVersionUpgrade: Boolean?
 
     @aws.FieldHint{writeOnly = true}
-    automaticBackupReplicationKmsKeyId: String?
+    automaticBackupReplicationKmsKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     automaticBackupReplicationRegion: aws.Region?
@@ -145,7 +145,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint{
         outputField = "DBClusterSnapshotIdentifier"
     }
-    dbClusterSnapshotIdentifier: String?
+    dbClusterSnapshotIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         outputField = "DBInstanceClass"
@@ -168,7 +168,7 @@ open class DBInstance extends formae.Resource {
         outputField = "DBParameterGroupName"
         hasProviderDefault = true
     }
-    dbParameterGroupName: String?
+    dbParameterGroupName: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         outputField = "dbSecurityGroups"
@@ -178,7 +178,7 @@ open class DBInstance extends formae.Resource {
     @aws.FieldHint{
         outputField = "DBSnapshotIdentifier"
     }
-    dbSnapshotIdentifier: String?
+    dbSnapshotIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
@@ -205,7 +205,7 @@ open class DBInstance extends formae.Resource {
     domain: String?
 
     @aws.FieldHint
-    domainAuthSecretArn: String?
+    domainAuthSecretArn: (String|formae.Resolvable)?
 
     @aws.FieldHint
     domainDnsIps: Listing<String>?
@@ -268,7 +268,7 @@ open class DBInstance extends formae.Resource {
     monitoringInterval: Int?
 
     @aws.FieldHint
-    monitoringRoleArn: String?
+    monitoringRoleArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{hasProviderDefault = true}
     multiAZ: Boolean?
@@ -280,10 +280,10 @@ open class DBInstance extends formae.Resource {
     networkType: String?
 
     @aws.FieldHint{hasProviderDefault = true}
-    optionGroupName: String?
+    optionGroupName: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
-    performanceInsightsKMSKeyId: String?
+    performanceInsightsKMSKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     performanceInsightsRetentionPeriod: Int?
@@ -313,10 +313,10 @@ open class DBInstance extends formae.Resource {
     restoreTime: String?
 
     @aws.FieldHint
-    sourceDBClusterIdentifier: String?
+    sourceDBClusterIdentifier: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
-    sourceDBInstanceAutomatedBackupsArn: String?
+    sourceDBInstanceAutomatedBackupsArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
     sourceDBInstanceIdentifier: (String|formae.Resolvable)?
@@ -350,7 +350,7 @@ open class DBInstance extends formae.Resource {
     tags: Listing<aws.Tag>?
 
     @aws.FieldHint
-    tdeCredentialArn: String?
+    tdeCredentialArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
     tdeCredentialPassword: String?

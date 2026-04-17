@@ -18,7 +18,7 @@ const type = "AWS::EC2::VPCPeeringConnection"
 open class VPCPeeringConnection extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    peerOwnerId: String?
+    peerOwnerId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     peerRegion: aws.Region?
@@ -27,10 +27,10 @@ open class VPCPeeringConnection extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    peerRoleArn: String?
+    peerRoleArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
-    peerVpcId: String
+    peerVpcId: String|formae.Resolvable
 
     @aws.FieldHint {
         updateMethod = "EntitySet"
@@ -39,5 +39,5 @@ open class VPCPeeringConnection extends formae.Resource {
     tags: Listing<aws.Tag>?
 
     @aws.FieldHint{createOnly = true}
-    vpcId: String
+    vpcId: String|formae.Resolvable
 }

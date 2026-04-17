@@ -32,5 +32,5 @@ open class TransitGatewayConnect extends formae.Resource {
     tags: Listing<aws.Tag>?
 
     @aws.FieldHint{createOnly = true}
-    transportTransitGatewayAttachmentId: String
+    transportTransitGatewayAttachmentId: String|formae.Resolvable
 }

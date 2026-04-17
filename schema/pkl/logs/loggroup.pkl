@@ -63,4 +63,11 @@ open class LogGroup extends formae.Resource {
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: LogGroupResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
