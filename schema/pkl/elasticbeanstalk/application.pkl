@@ -40,6 +40,14 @@ open class MaxCountRule extends formae.SubResource {
 open class ApplicationResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: ApplicationResolvable = (this) {
+        property = "ApplicationName"
+    }
+
+    hidden name: ApplicationResolvable = (this) {
+        property = "ApplicationName"
+    }
     hidden applicationName: ApplicationResolvable = (this) {
         property = "ApplicationName"
     }

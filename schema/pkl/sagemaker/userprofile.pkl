@@ -158,6 +158,18 @@ open class UserSettings extends formae.SubResource {
 open class UserProfileResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: UserProfileResolvable = (this) {
+        property = "UserProfileArn"
+    }
+
+    hidden arn: UserProfileResolvable = (this) {
+        property = "UserProfileArn"
+    }
+
+    hidden name: UserProfileResolvable = (this) {
+        property = "UserProfileName"
+    }
     hidden userProfileArn: UserProfileResolvable = (this) {
         property = "UserProfileArn"
     }

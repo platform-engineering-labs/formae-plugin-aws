@@ -70,6 +70,18 @@ open class VariantProperty extends formae.SubResource {
 open class EndpointResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: EndpointResolvable = (this) {
+        property = "EndpointArn"
+    }
+
+    hidden arn: EndpointResolvable = (this) {
+        property = "EndpointArn"
+    }
+
+    hidden name: EndpointResolvable = (this) {
+        property = "EndpointName"
+    }
     hidden endpointName: EndpointResolvable = (this) {
         property = "EndpointName"
     }

@@ -66,6 +66,14 @@ open class NetworkConfiguration extends formae.SubResource {
 open class ExpressGatewayServiceResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: ExpressGatewayServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
+
+    hidden arn: ExpressGatewayServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
     hidden serviceArn: ExpressGatewayServiceResolvable = (this) {
         property = "ServiceArn"
     }

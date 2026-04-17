@@ -125,6 +125,10 @@ open class Volume extends formae.SubResource {
 open class InstanceResolvable extends formae.Resolvable {
     type = module.type
 
+
+    hidden id: InstanceResolvable = (this) {
+        property = "InstanceId"
+    }
     hidden instanceId: InstanceResolvable = (this) {
         property = "InstanceId"
     }

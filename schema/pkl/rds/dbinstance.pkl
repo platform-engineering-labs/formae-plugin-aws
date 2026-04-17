@@ -50,6 +50,14 @@ open class ProcessorFeature extends formae.SubResource {
 open class DBInstanceResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBInstanceResolvable = (this) {
+        property = "DBInstanceArn"
+    }
+
+    hidden arn: DBInstanceResolvable = (this) {
+        property = "DBInstanceArn"
+    }
     hidden certificateDetailsCAIdentifier: DBInstanceResolvable = (this) {
         property = "CertificateDetails.CAIdentifier"
     }

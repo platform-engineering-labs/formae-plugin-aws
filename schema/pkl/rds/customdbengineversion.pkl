@@ -16,6 +16,14 @@ typealias VersionStatus = "available"|"inactive"|"inactive-except-restore"
 open class CustomDBEngineVersionResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: CustomDBEngineVersionResolvable = (this) {
+        property = "DBEngineVersionArn"
+    }
+
+    hidden arn: CustomDBEngineVersionResolvable = (this) {
+        property = "DBEngineVersionArn"
+    }
     hidden dbEngineVersionArn: CustomDBEngineVersionResolvable = (this) {
         property = "DBEngineVersionArn"
     }

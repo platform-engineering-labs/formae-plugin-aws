@@ -22,6 +22,10 @@ open class DBSecurityGroupIngress extends formae.SubResource {
 open class DBSecurityGroupResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBSecurityGroupResolvable = (this) {
+        property = "Ref"
+    }
     hidden ref: DBSecurityGroupResolvable = (this) {
         property = "Ref"
     }

@@ -48,6 +48,14 @@ open class ServerlessV2ScalingConfiguration extends formae.SubResource {
 open class DBClusterResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBClusterResolvable = (this) {
+        property = "DBClusterArn"
+    }
+
+    hidden arn: DBClusterResolvable = (this) {
+        property = "DBClusterArn"
+    }
     hidden dbClusterIdentifier: DBClusterResolvable = (this) {
         property = "DBClusterIdentifier"
     }

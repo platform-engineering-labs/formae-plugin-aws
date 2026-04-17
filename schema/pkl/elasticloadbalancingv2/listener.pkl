@@ -111,6 +111,14 @@ open class TargetGroupTuple extends formae.SubResource {
 open class ListenerResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: ListenerResolvable = (this) {
+        property = "ListenerArn"
+    }
+
+    hidden arn: ListenerResolvable = (this) {
+        property = "ListenerArn"
+    }
     hidden listenerArn: ListenerResolvable = (this) {
         property = "ListenerArn"
     }

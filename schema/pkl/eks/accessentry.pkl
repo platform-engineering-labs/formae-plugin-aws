@@ -28,6 +28,14 @@ open class AccessPolicy extends formae.SubResource {
 open class AccessEntryResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: AccessEntryResolvable = (this) {
+        property = "AccessEntryArn"
+    }
+
+    hidden arn: AccessEntryResolvable = (this) {
+        property = "AccessEntryArn"
+    }
     hidden accessEntryArn: AccessEntryResolvable = (this) {
         property = "AccessEntryArn"
     }

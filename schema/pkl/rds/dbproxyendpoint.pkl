@@ -16,6 +16,14 @@ typealias DBProxyEndpointTargetRole = "READ_WRITE"|"READ_ONLY"
 open class DBProxyEndpointResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBProxyEndpointResolvable = (this) {
+        property = "DBProxyEndpointArn"
+    }
+
+    hidden arn: DBProxyEndpointResolvable = (this) {
+        property = "DBProxyEndpointArn"
+    }
     hidden dbProxyEndpointArn: DBProxyEndpointResolvable = (this) {
         property = "DBProxyEndpointArn"
     }
