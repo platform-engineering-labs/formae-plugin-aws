@@ -1,0 +1,48 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@aws/aws.pkl"
+
+import "./infrastructure/vpc.pkl"
+import "./vars.pkl"
+
+description {
+    text = """
+    Production-Grade VPC Infrastructure.
+
+    This forma provisions a complete AWS VPC with public and private subnets
+    across multiple availability zones.
+
+    This includes:
+    - VPC with DNS support and hostnames enabled
+    - Internet Gateway for public internet access
+    - NAT Gateway with Elastic IP for private subnet outbound traffic
+    - Public subnets (3 AZs) with auto-assigned public IPs
+    - Private subnets (3 AZs) for internal workloads
+    - Public and private route tables with appropriate routes
+    - Security groups for public and private subnets (private allows intra-VPC traffic)
+    - Subnet-to-route-table associations
+    """
+    confirm = true
+}
+
+local vpcInfra = new vpc.VPC {
+    name = properties.name.value
+    region = properties.region.value as aws.Region
+    cidr = properties.vpcCidr.value
+    publicZoneCidrs = vars.publicZoneCidrs
+    privateZoneCidrs = vars.privateZoneCidrs
+}
+
+properties = vars.props
+
+forma {
+    vars.stack
+    vars.target
+
+    ...vpcInfra.resources
+}
