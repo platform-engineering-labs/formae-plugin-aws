@@ -103,7 +103,7 @@ open class Deployment extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    stageName: (String|formae.Resolvable)?
+    stageName: String?
 
     local parent = this
 

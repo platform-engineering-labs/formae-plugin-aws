@@ -14,7 +14,7 @@ const type = "AWS::ApiGateway::ApiKey"
 @aws.SubResourceHint
 open class StageKey extends formae.SubResource {
     restApiId: (String|formae.Resolvable)?
-    stageName: (String|formae.Resolvable)?
+    stageName: String?
 }
 
 open class ApiKeyResolvable extends formae.Resolvable {
