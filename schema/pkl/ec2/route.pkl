@@ -19,10 +19,10 @@ const type = "AWS::EC2::Route"
 open class Route extends formae.Resource {
 
     @aws.FieldHint
-    carrierGatewayId: String?
+    carrierGatewayId: (String|formae.Resolvable)?
 
     @aws.FieldHint
-    coreNetworkArn: String?
+    coreNetworkArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
@@ -37,10 +37,10 @@ open class Route extends formae.Resource {
     @aws.FieldHint{
         createOnly = true
     }
-    destinationPrefixListId: String?
+    destinationPrefixListId: (String|formae.Resolvable)?
 
     @aws.FieldHint{}
-    egressOnlyInternetGatewayId: String?
+    egressOnlyInternetGatewayId: (String|formae.Resolvable)?
 
     @aws.FieldHint{}
     gatewayId: (String|formae.Resolvable)?
@@ -63,12 +63,12 @@ open class Route extends formae.Resource {
     routeTableId: (String|formae.Resolvable)
 
     @aws.FieldHint{}
-    transitGatewayId: String?
+    transitGatewayId: (String|formae.Resolvable)?
 
     @aws.FieldHint{}
-    vpcEndpointId: String?
+    vpcEndpointId: (String|formae.Resolvable)?
 
     @aws.FieldHint{}
-    vpcPeeringConnectionId: String?
+    vpcPeeringConnectionId: (String|formae.Resolvable)?
 
 }

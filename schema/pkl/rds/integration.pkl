@@ -14,6 +14,14 @@ const type = "AWS::RDS::Integration"
 open class IntegrationResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: IntegrationResolvable = (this) {
+        property = "IntegrationArn"
+    }
+
+    hidden arn: IntegrationResolvable = (this) {
+        property = "IntegrationArn"
+    }
     hidden createTime: IntegrationResolvable = (this) {
         property = "CreateTime"
     }
@@ -45,7 +53,7 @@ open class Integration extends formae.Resource {
         createOnly = true
         outputField = "KMSKeyId"
     }
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     sourceArn: String|formae.Resolvable

@@ -18,7 +18,7 @@ typealias Tenancy = "default"
 @aws.SubResourceHint
 open class InstanceTypeSpecification extends formae.SubResource {
     availabilityZone: aws.AvailabilityZone?
-    availabilityZoneId: String?
+    availabilityZoneId: (String|formae.Resolvable)?
     ebsOptimized: Boolean?
     instancePlatform: String?
     instanceType: String?

@@ -39,7 +39,7 @@ open class Group extends formae.Resource {
     groupName: String?
 
     @aws.FieldHint{hasProviderDefault = true}
-    managedPolicyArns: Listing<String>?
+    managedPolicyArns: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint
     path: String?

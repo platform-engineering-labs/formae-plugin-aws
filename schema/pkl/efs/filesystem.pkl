@@ -41,9 +41,9 @@ open class ReplicationConfiguration extends formae.SubResource {
 open class Destination extends formae.SubResource {
     availabilityZoneName: String?
     fileSystemId: (String(matches(Regex(#"^(arn:aws[-a-z]*:elasticfilesystem:[0-9a-z-:]+:file-system/fs-[0-9a-f]{8,40}|fs-[0-9a-f]{8,40})$"#))))?
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
     region: String?
-    roleArn: String?
+    roleArn: (String|formae.Resolvable)?
     status: String?
     statusMessage: String?
 }

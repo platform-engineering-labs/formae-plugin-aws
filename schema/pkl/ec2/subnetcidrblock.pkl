@@ -24,7 +24,7 @@ open class SubnetCidrBlock extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    ipv6IpamPoolId: String?
+    ipv6IpamPoolId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true

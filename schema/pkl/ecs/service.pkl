@@ -82,7 +82,7 @@ open class TagSpecification extends formae.SubResource {
 open class LoadBalancer extends formae.SubResource {
     containerName: String?
     containerPort: Int?
-    loadBalancerName: String?
+    loadBalancerName: (String|formae.Resolvable)?
     targetGroupArn: (String|formae.Resolvable)?
 }
 
@@ -146,7 +146,7 @@ open class ServiceConnectService extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ServiceConnectTlsCertificateAuthority extends formae.SubResource {
-    awsPcaAuthorityArn: String?
+    awsPcaAuthorityArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -161,7 +161,7 @@ open class ManagedEBSVolumeConfiguration extends formae.SubResource {
     filesystemType: String?
     iops: Int?
     kmsKeyId: (String|formae.Resolvable)?
-    roleArn: String
+    roleArn: String|formae.Resolvable
     sizeInGiB: Int?
     snapshotId: (String|formae.Resolvable)?
     tagSpecifications: Listing<TagSpecification>?
@@ -175,7 +175,7 @@ open class ServiceRegistry extends formae.SubResource {
     containerName: String?
     containerPort: Int?
     port: Int?
-    registryArn: String?
+    registryArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -193,7 +193,7 @@ open class TimeoutConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class VpcLatticeConfiguration extends formae.SubResource {
     portName: String
-    roleArn: String
+    roleArn: String|formae.Resolvable
     targetGroupArn: String|formae.Resolvable
 }
 

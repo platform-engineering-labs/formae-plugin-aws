@@ -81,7 +81,7 @@ typealias RuntimeManagementConfigUpdateRuntimeOn = "Auto"|"FunctionUpdate"|"Manu
 
 @aws.SubResourceHint
 open class RuntimeManagementConfig extends formae.SubResource {
-    runtimeVersionArn: String?
+    runtimeVersionArn: (String|formae.Resolvable)?
     updateRuntimeOn: RuntimeManagementConfigUpdateRuntimeOn
 }
 

@@ -33,6 +33,14 @@ open class TargetGroupAttribute extends formae.SubResource {
 open class TargetGroupResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: TargetGroupResolvable = (this) {
+        property = "TargetGroupArn"
+    }
+
+    hidden arn: TargetGroupResolvable = (this) {
+        property = "TargetGroupArn"
+    }
     hidden loadBalancerArns: TargetGroupResolvable = (this) {
         property = "LoadBalancerArns"
     }

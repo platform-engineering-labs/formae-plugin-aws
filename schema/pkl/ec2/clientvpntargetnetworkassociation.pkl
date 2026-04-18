@@ -19,8 +19,8 @@ const type = "AWS::EC2::ClientVpnTargetNetworkAssociation"
 open class ClientVpnTargetNetworkAssociation extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    clientVpnEndpointId: String
+    clientVpnEndpointId: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
-    subnetId: String
+    subnetId: String|formae.Resolvable
 }

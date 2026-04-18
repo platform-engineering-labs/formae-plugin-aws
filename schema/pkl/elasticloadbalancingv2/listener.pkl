@@ -31,8 +31,8 @@ open class AuthenticateCognitoConfig extends formae.SubResource {
     scope: String?
     sessionCookieName: String?
     sessionTimeout: String?
-    userPoolArn: String
-    userPoolClientId: String
+    userPoolArn: String|formae.Resolvable
+    userPoolClientId: String|formae.Resolvable
     userPoolDomain: String
 }
 
@@ -55,7 +55,7 @@ open class AuthenticateOidcConfig extends formae.SubResource {
 
 @aws.SubResourceHint
 open class Certificate extends formae.SubResource {
-    certificateArn: String?
+    certificateArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -83,7 +83,7 @@ open class MutualAuthentication extends formae.SubResource {
     advertiseTrustStoreCaNames: String?
     ignoreClientCertificateExpiry: Boolean?
     mode: String?
-    trustStoreArn: String?
+    trustStoreArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -111,6 +111,14 @@ open class TargetGroupTuple extends formae.SubResource {
 open class ListenerResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: ListenerResolvable = (this) {
+        property = "ListenerArn"
+    }
+
+    hidden arn: ListenerResolvable = (this) {
+        property = "ListenerArn"
+    }
     hidden listenerArn: ListenerResolvable = (this) {
         property = "ListenerArn"
     }

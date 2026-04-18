@@ -37,7 +37,7 @@ typealias SourceCodeVersionType = "BRANCH"
 @aws.SubResourceHint
 open class AuthenticationConfiguration extends formae.SubResource {
     accessRoleArn: (String|formae.Resolvable)?
-    connectionArn: String?
+    connectionArn: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -102,7 +102,7 @@ open class ImageConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class ImageRepository extends formae.SubResource {
     imageConfiguration: ImageConfiguration?
-    imageIdentifier: String
+    imageIdentifier: String|formae.Resolvable
     imageRepositoryType: ImageRepositoryType
 }
 

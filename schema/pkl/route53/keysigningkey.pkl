@@ -23,7 +23,7 @@ open class KeySigningKey extends formae.Resource {
     hostedZoneId: String(matches(Regex(#"^[A-Z0-9]{1,32}$"#)))|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
-    keyManagementServiceArn: String
+    keyManagementServiceArn: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
     name: String(matches(Regex(#"^[a-zA-Z0-9_]{3,128}$"#)))

@@ -24,7 +24,7 @@ open class EventSubscription extends formae.Resource {
     eventCategories: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
-    snsTopicArn: String
+    snsTopicArn: String|formae.Resolvable
 
     @aws.FieldHint
     sourceIds: (Listing<String|formae.Resolvable>)?

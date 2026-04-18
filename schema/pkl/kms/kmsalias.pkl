@@ -13,6 +13,18 @@ const type = "AWS::KMS::Alias"
 
 open class AliasResolvable extends formae.Resolvable {
     type = module.type
+
+    hidden aliasName: AliasResolvable = (this) {
+        property = "AliasName"
+    }
+
+    hidden id: AliasResolvable = (this) {
+        property = "AliasName"
+    }
+
+    hidden name: AliasResolvable = (this) {
+        property = "AliasName"
+    }
 }
 
 @aws.ResourceHint {

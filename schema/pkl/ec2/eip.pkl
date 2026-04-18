@@ -39,13 +39,13 @@ open class EIP extends formae.Resource {
     domain: String?
 
     @aws.FieldHint
-    instanceId: String?
+    instanceId: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
         writeOnly = true
     }
-    ipamPoolId: String?
+    ipamPoolId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     networkBorderGroup: String?

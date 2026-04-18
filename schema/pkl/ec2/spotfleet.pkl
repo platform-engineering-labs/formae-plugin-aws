@@ -64,21 +64,21 @@ open class EBS extends formae.SubResource {
     deleteOnTermination: Boolean?
     encrypted: Boolean?
     iops: Int?
-    snapshotId: String?
+    snapshotId: (String|formae.Resolvable)?
     volumeSize: Int?
     volumeType: VolumeType?
 }
 
 @aws.SubResourceHint
 open class LaunchTemplateSpecification extends formae.SubResource {
-    launchTemplateId: String?
+    launchTemplateId: (String|formae.Resolvable)?
     launchTemplateName: (String(matches(Regex(#"[a-zA-Z0-9\(\)\.\-/_]+"#))))?
     version: String
 }
 
 @aws.SubResourceHint
 open class SecurityGroupIdentifier extends formae.SubResource {
-    groupId: String
+    groupId: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
@@ -101,10 +101,10 @@ open class NetworkInterface extends formae.SubResource {
     groups: Listing<String>?
     ipv6AddressCount: Int?
     ipv6Addresses: Listing<Ipv6Address>?
-    networkInterfaceId: String?
+    networkInterfaceId: (String|formae.Resolvable)?
     privateIpAddresses: Listing<PrivateIpAddress>?
     secondaryPrivateIpAddressCount: Int?
-    subnetId: String?
+    subnetId: (String|formae.Resolvable)?
 }
 
 typealias AcceleratorManufacturers = "amazon-web-services"|"amd"|"habana"|"nvidia"|"xilinx"
@@ -167,7 +167,7 @@ open class Overrides extends formae.SubResource {
     instanceType: String?
     priority: Number?
     spotPrice: String?
-    subnetId: String?
+    subnetId: (String|formae.Resolvable)?
     weightedCapacity: Number?
 }
 
@@ -225,18 +225,18 @@ open class LaunchSpecification extends formae.SubResource {
     blockDeviceMappings: Listing<BlockDeviceMapping>?
     ebsOptimized: Boolean?
     iamInstanceProfile: IamInstanceProfile?
-    imageId: String
+    imageId: String|formae.Resolvable
     instanceRequirements: InstanceRequirements?
     instanceType: String?
-    kernelId: String?
-    keyName: String?
+    kernelId: (String|formae.Resolvable)?
+    keyName: (String|formae.Resolvable)?
     monitoring: Monitoring?
     networkInterfaces: Listing<NetworkInterface>?
     placement: Placement?
-    ramdiskId: String?
+    ramdiskId: (String|formae.Resolvable)?
     securityGroups: Listing<SecurityGroupIdentifier>?
     spotPrice: String?
-    subnetId: String?
+    subnetId: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
     tagSpecifications: Listing<TagSpecification>?
@@ -305,7 +305,7 @@ typealias SpotPlacementTenancy = "dedicated"|"default"|"host"
 @aws.SubResourceHint
 open class Placement extends formae.SubResource {
     availabilityZone: aws.AvailabilityZone?
-    groupName: String?
+    groupName: (String|formae.Resolvable)?
     tenancy: SpotPlacementTenancy?
 }
 

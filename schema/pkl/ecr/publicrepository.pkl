@@ -14,6 +14,14 @@ const type = "AWS::ECR::PublicRepository"
 open class PublicRepositoryResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: PublicRepositoryResolvable = (this) {
+        property = "RepositoryName"
+    }
+
+    hidden name: PublicRepositoryResolvable = (this) {
+        property = "RepositoryName"
+    }
     hidden repositoryName: PublicRepositoryResolvable = (this) {
         property = "RepositoryName"
     }

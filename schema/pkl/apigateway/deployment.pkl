@@ -13,7 +13,7 @@ const type = "AWS::ApiGateway::Deployment"
 
 @aws.SubResourceHint
 open class AccessLogSetting extends formae.SubResource {
-    destinationArn: String?
+    destinationArn: (String|formae.Resolvable)?
     format: String?
 }
 
@@ -47,7 +47,7 @@ open class StageDescription extends formae.SubResource {
     cacheTtlInSeconds: Int?
     cachingEnabled: Boolean?
     canarySetting: CanarySetting?
-    clientCertificateId: String?
+    clientCertificateId: (String|formae.Resolvable)?
     dataTraceEnabled: Boolean?
     description: String?
     documentationVersion: String?

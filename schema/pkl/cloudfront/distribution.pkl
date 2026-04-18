@@ -31,12 +31,12 @@ typealias EventType = "viewer-request"|"viewer-response"|"origin-request"|"origi
 @aws.SubResourceHint
 open class DistributionConfig extends formae.SubResource {
     aliases: Listing<String>?
-    anycastIpListId: String?
+    anycastIpListId: (String|formae.Resolvable)?
     @aws.FieldHint{outputField = "CNAMEs"}
     cnames: Listing<String>?
     cacheBehaviors: Listing<CacheBehavior>?
     comment: String?
-    continuousDeploymentPolicyId: String?
+    continuousDeploymentPolicyId: (String|formae.Resolvable)?
     customErrorResponses: Listing<CustomErrorResponse>?
     customOrigin: CustomOrigin?
     defaultCacheBehavior: DefaultCacheBehavior
@@ -53,27 +53,27 @@ open class DistributionConfig extends formae.SubResource {
     s3Origin: S3Origin?
     staging: Boolean?
     viewerCertificate: ViewerCertificate?
-    webACLId: String?
+    webACLId: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
 open class CacheBehavior extends formae.SubResource {
     allowedMethods: Listing<String>?
-    cachePolicyId: String?
+    cachePolicyId: (String|formae.Resolvable)?
     cachedMethods: Listing<String>?
     compress: Boolean?
     defaultTTL: Number?
-    fieldLevelEncryptionId: String?
+    fieldLevelEncryptionId: (String|formae.Resolvable)?
     forwardedValues: ForwardedValues?
     functionAssociations: Listing<FunctionAssociation>?
     grpcConfig: GrpcConfig?
     lambdaFunctionAssociations: Listing<LambdaFunctionAssociation>?
     maxTTL: Number?
     minTTL: Number?
-    originRequestPolicyId: String?
+    originRequestPolicyId: (String|formae.Resolvable)?
     pathPattern: String
-    realtimeLogConfigArn: String?
-    responseHeadersPolicyId: String?
+    realtimeLogConfigArn: (String|formae.Resolvable)?
+    responseHeadersPolicyId: (String|formae.Resolvable)?
     smoothStreaming: Boolean?
     targetOriginId: String
     trustedKeyGroups: Listing<String>?
@@ -110,20 +110,20 @@ open class CustomOriginConfig extends formae.SubResource {
 @aws.SubResourceHint
 open class DefaultCacheBehavior extends formae.SubResource {
     allowedMethods: Listing<String>?
-    cachePolicyId: String?
+    cachePolicyId: (String|formae.Resolvable)?
     cachedMethods: Listing<String>?
     compress: Boolean?
     defaultTTL: Number?
-    fieldLevelEncryptionId: String?
+    fieldLevelEncryptionId: (String|formae.Resolvable)?
     forwardedValues: ForwardedValues?
     functionAssociations: Listing<FunctionAssociation>?
     grpcConfig: GrpcConfig?
     lambdaFunctionAssociations: Listing<LambdaFunctionAssociation>?
     maxTTL: Number?
     minTTL: Number?
-    originRequestPolicyId: String?
-    realtimeLogConfigArn: String?
-    responseHeadersPolicyId: String?
+    originRequestPolicyId: (String|formae.Resolvable)?
+    realtimeLogConfigArn: (String|formae.Resolvable)?
+    responseHeadersPolicyId: (String|formae.Resolvable)?
     smoothStreaming: Boolean?
     targetOriginId: String
     trustedKeyGroups: Listing<String>?
@@ -166,7 +166,7 @@ open class LambdaFunctionAssociation extends formae.SubResource {
 @aws.SubResourceHint
 open class CustomOrigin extends formae.SubResource {
     @aws.FieldHint{outputField = "DNSName"}
-    dnsName: String
+    dnsName: String|formae.Resolvable
     @aws.FieldHint{outputField = "HTTPPort"}
     httpPort: Int?
     @aws.FieldHint{outputField = "HTTPSPort"}
@@ -178,7 +178,7 @@ open class CustomOrigin extends formae.SubResource {
 @aws.SubResourceHint
 open class S3Origin extends formae.SubResource {
     @aws.FieldHint{outputField = "DNSName"}
-    dnsName: String
+    dnsName: String|formae.Resolvable
     originAccessIdentity: String?
 }
 
@@ -196,7 +196,7 @@ open class Origin extends formae.SubResource {
     customOriginConfig: CustomOriginConfig?
     domainName: String|formae.Resolvable
     id: String|formae.Resolvable
-    originAccessControlId: String?
+    originAccessControlId: (String|formae.Resolvable)?
     originCustomHeaders: Listing<OriginCustomHeader>?
     originPath: String?
     originShield: OriginShield?
@@ -265,9 +265,9 @@ open class StatusCodes extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ViewerCertificate extends formae.SubResource {
-    acmCertificateArn: String?
+    acmCertificateArn: (String|formae.Resolvable)?
     cloudFrontDefaultCertificate: Boolean?
-    iamCertificateId: String?
+    iamCertificateId: (String|formae.Resolvable)?
     minimumProtocolVersion: String?
     sslSupportMethod: SSLSupportMethodType?
 }
@@ -276,7 +276,7 @@ open class ViewerCertificate extends formae.SubResource {
 open class VpcOriginConfig extends formae.SubResource {
     originKeepaliveTimeout: Int?
     originReadTimeout: Int?
-    vpcOriginId: String
+    vpcOriginId: String|formae.Resolvable
 }
 
 open class DistributionResolvable extends formae.Resolvable {

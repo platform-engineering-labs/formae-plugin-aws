@@ -37,7 +37,7 @@ open class EBS extends formae.SubResource {
     encrypted: Boolean?
     iops: Int?
     kmsKeyId: (String|formae.Resolvable)?
-    snapshotId: String?
+    snapshotId: (String|formae.Resolvable)?
     volumeSize: Int?
     volumeType: String?
 }
@@ -60,14 +60,14 @@ open class Ipv6Address extends formae.SubResource {
 
 @aws.SubResourceHint
 open class InstanceLaunchTemplateSpecification extends formae.SubResource {
-    launchTemplateId: String?
-    launchTemplateName: String?
+    launchTemplateId: (String|formae.Resolvable)?
+    launchTemplateName: (String|formae.Resolvable)?
     version: String?
 }
 
 @aws.SubResourceHint
 open class LicenseSpecification extends formae.SubResource {
-    licenseConfigurationArn: String
+    licenseConfigurationArn: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
@@ -80,7 +80,7 @@ open class NetworkInterface extends formae.SubResource {
     groupSet: Listing<String>?
     ipv6AddressCount: Int?
     ipv6Addresses: Listing<Ipv6Address>?
-    networkInterfaceId: String?
+    networkInterfaceId: (String|formae.Resolvable)?
     privateIpAddress: String?
     privateIpAddresses: Listing<PrivateIpAddress>?
     secondaryPrivateIpAddressCount: Int?
@@ -105,7 +105,7 @@ open class PrivateIpAddress extends formae.SubResource {
 @aws.SubResourceHint
 open class SSMAssociation extends formae.SubResource {
     associationParameters: Listing<AssociationParameter>?
-    documentName: String
+    documentName: String|formae.Resolvable
 }
 
 
@@ -125,6 +125,10 @@ open class Volume extends formae.SubResource {
 open class InstanceResolvable extends formae.Resolvable {
     type = module.type
 
+
+    hidden id: InstanceResolvable = (this) {
+        property = "InstanceId"
+    }
     hidden instanceId: InstanceResolvable = (this) {
         property = "InstanceId"
     }
@@ -194,7 +198,7 @@ open class Instance extends formae.Resource {
     hibernationOptions: Dynamic?
 
     @aws.FieldHint
-    hostId: String?
+    hostId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     hostResourceGroupArn: (String|formae.Resolvable)?
@@ -203,7 +207,7 @@ open class Instance extends formae.Resource {
     iamInstanceProfile: String?
 
     @aws.FieldHint{createOnly = true}
-    imageId: String?
+    imageId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     instanceInitiatedShutdownBehavior: String?
@@ -224,7 +228,7 @@ open class Instance extends formae.Resource {
     ipv6Addresses: Listing<Ipv6Address>?
 
     @aws.FieldHint
-    kernelId: String?
+    kernelId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     keyName: (String|formae.Resolvable)?
@@ -245,7 +249,7 @@ open class Instance extends formae.Resource {
     networkInterfaces: Listing<NetworkInterface>?
 
     @aws.FieldHint{createOnly = true}
-    placementGroupName: String?
+    placementGroupName: (String|formae.Resolvable)?
 
     @aws.FieldHint
     privateDnsNameOptions: Dynamic?
@@ -257,7 +261,7 @@ open class Instance extends formae.Resource {
     propagateTagsToVolumeOnCreation: Boolean?
 
     @aws.FieldHint
-    ramdiskId: String?
+    ramdiskId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     securityGroupIds: Listing<String|formae.Resolvable>?

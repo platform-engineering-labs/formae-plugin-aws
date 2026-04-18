@@ -98,7 +98,7 @@ typealias DestinationFormat = "CSV"|"ORC"|"Parquet"
 
 @aws.SubResourceHint
 open class Destination extends formae.SubResource {
-    bucketAccountId: String?
+    bucketAccountId: (String|formae.Resolvable)?
 
     bucketArn: String|formae.Resolvable
 
@@ -185,7 +185,7 @@ open class LifecycleConfiguration extends formae.SubResource {
 
 @aws.SubResourceHint
 open class LoggingConfiguration extends formae.SubResource {
-    destinationBucketName: String?
+    destinationBucketName: (String|formae.Resolvable)?
 
     logFilePrefix: String?
 
@@ -203,7 +203,7 @@ open class Metrics extends formae.SubResource {
 
 @aws.SubResourceHint
 open class MetricsConfiguration extends formae.SubResource {
-    accessPointArn: String?
+    accessPointArn: (String|formae.Resolvable)?
 
     id: String
 

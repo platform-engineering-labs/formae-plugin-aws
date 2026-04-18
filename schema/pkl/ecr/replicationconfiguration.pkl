@@ -19,7 +19,7 @@ open class Configuration extends formae.SubResource {
 @aws.SubResourceHint
 open class Destination extends formae.SubResource {
     region: aws.Region
-    registryId: String
+    registryId: String|formae.Resolvable
 }
 
 @aws.SubResourceHint

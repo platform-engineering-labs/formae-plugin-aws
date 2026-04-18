@@ -14,6 +14,14 @@ const type = "AWS::RDS::DBParameterGroup"
 open class DBParameterGroupResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBParameterGroupResolvable = (this) {
+        property = "DBParameterGroupName"
+    }
+
+    hidden name: DBParameterGroupResolvable = (this) {
+        property = "DBParameterGroupName"
+    }
     hidden dbParameterGroupName: DBParameterGroupResolvable = (this) {
         property = "DBParameterGroupName"
     }

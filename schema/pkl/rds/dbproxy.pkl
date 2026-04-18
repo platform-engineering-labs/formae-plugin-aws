@@ -36,6 +36,14 @@ open class DBProxyAuthFormat extends formae.SubResource {
 open class DBProxyResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBProxyResolvable = (this) {
+        property = "DBProxyArn"
+    }
+
+    hidden arn: DBProxyResolvable = (this) {
+        property = "DBProxyArn"
+    }
     hidden dbProxyArn: DBProxyResolvable = (this) {
         property = "DBProxyArn"
     }

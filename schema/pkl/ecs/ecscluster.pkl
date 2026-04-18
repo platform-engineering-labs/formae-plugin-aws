@@ -32,7 +32,7 @@ open class ClusterClusterSettings extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ExecuteCommandConfiguration extends formae.SubResource {
-    kmsKeyId: String?
+    kmsKeyId: (String|formae.Resolvable)?
     logConfiguration: ClusterExecuteCommandLogConfiguration?
     logging: String?
 }
@@ -40,8 +40,8 @@ open class ExecuteCommandConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class ClusterExecuteCommandLogConfiguration extends formae.SubResource {
     cloudWatchEncryptionEnabled: Boolean?
-    cloudWatchLogGroupName: String?
-    s3BucketName: String?
+    cloudWatchLogGroupName: (String|formae.Resolvable)?
+    s3BucketName: (String|formae.Resolvable)?
     s3EncryptionEnabled: Boolean?
     s3KeyPrefix: String?
 }

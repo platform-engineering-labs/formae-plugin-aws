@@ -13,7 +13,7 @@ const type = "AWS::ApiGateway::ApiKey"
 
 @aws.SubResourceHint
 open class StageKey extends formae.SubResource {
-    restApiId: String?
+    restApiId: (String|formae.Resolvable)?
     stageName: String?
 }
 
@@ -36,7 +36,7 @@ open class ApiKeyResolvable extends formae.Resolvable {
 open class ApiKey extends formae.Resource {
 
     @aws.FieldHint
-    customerId: String?
+    customerId: (String|formae.Resolvable)?
 
     @aws.FieldHint
     description: String?

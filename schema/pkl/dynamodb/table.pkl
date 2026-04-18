@@ -63,7 +63,7 @@ typealias KinesisStreamSpecificationApproximateCreationDateTimePrecision = "MICR
 @aws.SubResourceHint
 open class KinesisStreamSpecification extends formae.SubResource {
     approximateCreationDateTimePrecision: KinesisStreamSpecificationApproximateCreationDateTimePrecision?
-    streamArn: String
+    streamArn: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
@@ -112,7 +112,7 @@ open class TableS3BucketSource extends formae.SubResource {
 @aws.SubResourceHint
 open class SSESpecification extends formae.SubResource {
     @aws.FieldHint{outputField = "KMSMasterKeyId"}
-    kmsMasterKeyId: String?
+    kmsMasterKeyId: (String|formae.Resolvable)?
     @aws.FieldHint{outputField = "SSEEnabled"}
     sseEnabled: Boolean
     @aws.FieldHint{outputField = "SSEType"}

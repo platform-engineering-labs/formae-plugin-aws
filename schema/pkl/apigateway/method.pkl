@@ -26,7 +26,7 @@ open class Integration extends formae.SubResource {
     cacheKeyParameters: Listing<String>?
     @aws.FieldHint { hasProviderDefault = true }
     cacheNamespace: String?
-    connectionId: String?
+    connectionId: (String|formae.Resolvable)?
     connectionType: IntegrationConnectionType?
     contentHandling: IntegrationContentHandling?
     credentials: String?

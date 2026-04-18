@@ -13,13 +13,13 @@ const type = "AWS::ApiGateway::Stage"
 
 @aws.SubResourceHint
 open class AccessLogSetting extends formae.SubResource {
-    destinationArn: String?
+    destinationArn: (String|formae.Resolvable)?
     format: String?
 }
 
 @aws.SubResourceHint
 open class CanarySetting extends formae.SubResource {
-    deploymentId: String?
+    deploymentId: (String|formae.Resolvable)?
     percentTraffic: Number?
     stageVariableOverrides: Mapping<String, Any>?
     useStageCache: Boolean?

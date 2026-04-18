@@ -13,7 +13,7 @@ const type = "AWS::ElasticBeanstalk::Application"
 
 @aws.SubResourceHint
 open class ResourceLifecycleConfig extends formae.SubResource {
-    serviceRole: String|formae.Resolvable
+    serviceRole: (String|formae.Resolvable)?
     versionLifecycleConfig: VersionLifecycleConfig?
 }
 
@@ -40,6 +40,14 @@ open class MaxCountRule extends formae.SubResource {
 open class ApplicationResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: ApplicationResolvable = (this) {
+        property = "ApplicationName"
+    }
+
+    hidden name: ApplicationResolvable = (this) {
+        property = "ApplicationName"
+    }
     hidden applicationName: ApplicationResolvable = (this) {
         property = "ApplicationName"
     }

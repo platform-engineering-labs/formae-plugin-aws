@@ -24,9 +24,17 @@ open class ConnectionPoolConfigurationInfoFormat extends formae.SubResource {
 }
 
 open class DBProxyTargetGroupResolvable extends formae.Resolvable {
-    type = module.type
+    hidden type = module.type
 
-    targetGroupArn: DBProxyTargetGroupResolvable = (this) {
+    hidden id: DBProxyTargetGroupResolvable = (this) {
+        property = "TargetGroupArn"
+    }
+
+    hidden arn: DBProxyTargetGroupResolvable = (this) {
+        property = "TargetGroupArn"
+    }
+
+    hidden targetGroupArn: DBProxyTargetGroupResolvable = (this) {
         property = "TargetGroupArn"
     }
 }

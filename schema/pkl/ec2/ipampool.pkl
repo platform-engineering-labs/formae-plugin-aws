@@ -22,7 +22,7 @@ open class ProvisionedCidr extends formae.SubResource {
 
 @aws.SubResourceHint
 open class SourceResource extends formae.SubResource {
-    resourceId: String
+    resourceId: String|formae.Resolvable
     resourceOwner: String
     resourceRegion: aws.Region
     resourceType: String

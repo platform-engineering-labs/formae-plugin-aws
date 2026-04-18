@@ -11,6 +11,27 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::VPCGatewayAttachment"
 
+/// Resolvable reference to a VPCGatewayAttachment.
+/// Use this to create dependency edges from resources that need the gateway
+/// to be attached before they can operate. For example, Routes should reference
+/// `igwAttachment.res.internetGatewayId` instead of `igw.res.id` to ensure
+/// correct create AND destroy ordering.
+open class VPCGatewayAttachmentResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden internetGatewayId: VPCGatewayAttachmentResolvable = (this) {
+        property = "InternetGatewayId"
+    }
+
+    hidden vpnGatewayId: VPCGatewayAttachmentResolvable = (this) {
+        property = "VpnGatewayId"
+    }
+
+    hidden vpcId: VPCGatewayAttachmentResolvable = (this) {
+        property = "VpcId"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
@@ -25,4 +46,10 @@ open class VPCGatewayAttachment extends formae.Resource {
 
     @aws.FieldHint
     vpnGatewayId: (String|formae.Resolvable)?
+
+    local parent = this
+    hidden res: VPCGatewayAttachmentResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

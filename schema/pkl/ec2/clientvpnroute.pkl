@@ -19,7 +19,7 @@ const type = "AWS::EC2::ClientVpnRoute"
 open class ClientVpnRoute extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    clientVpnEndpointId: String
+    clientVpnEndpointId: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
     description: String?
@@ -28,5 +28,5 @@ open class ClientVpnRoute extends formae.Resource {
     destinationCidrBlock: String
 
     @aws.FieldHint{createOnly = true}
-    targetVpcSubnetId: String
+    targetVpcSubnetId: String|formae.Resolvable
 }

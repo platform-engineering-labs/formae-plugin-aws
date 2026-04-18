@@ -18,7 +18,7 @@ const type = "AWS::EC2::NetworkInsightsAccessScopeAnalysis"
 open class NetworkInsightsAccessScopeAnalysis extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    networkInsightsAccessScopeId: String
+    networkInsightsAccessScopeId: String|formae.Resolvable
 
     @aws.FieldHint {
         updateMethod = "EntitySet"

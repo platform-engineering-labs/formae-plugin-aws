@@ -81,7 +81,7 @@ open class RecordSet extends formae.Resource {
     geoProximityLocation: (GeoProximityLocation)?
 
     @aws.FieldHint
-    healthCheckId: String?
+    healthCheckId: (String|formae.Resolvable)?
 
     @aws.FieldHint {
         createOnly = true
@@ -91,7 +91,7 @@ open class RecordSet extends formae.Resource {
     @aws.FieldHint {
         createOnly = true
     }
-    hostedZoneName: String?
+    hostedZoneName: (String|formae.Resolvable)?
 
     @aws.FieldHint
     multiValueAnswer: Boolean?

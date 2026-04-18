@@ -39,7 +39,7 @@ open class SecurityGroupIngress extends formae.Resource {
     ipProtocol: String
 
     @aws.FieldHint{createOnly = true}
-    sourcePrefixListId: String?
+    sourcePrefixListId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     sourceSecurityGroupId: (String|formae.Resolvable)?

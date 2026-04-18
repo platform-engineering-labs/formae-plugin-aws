@@ -19,7 +19,7 @@ const type = "AWS::EC2::ClientVpnAuthorizationRule"
 open class ClientVpnAuthorizationRule extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    accessGroupId: String?
+    accessGroupId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     authorizeAllGroups: Boolean?

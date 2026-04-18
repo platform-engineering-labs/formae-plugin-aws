@@ -18,6 +18,10 @@ typealias KeyType = "rsa"|"ed25519"
 open class KeypairResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: KeypairResolvable = (this) {
+        property = "KeyPairId"
+    }
     hidden keyName: KeypairResolvable = (this) {
         property = "KeyName"
     }

@@ -39,7 +39,7 @@ open class HealthCheckConfig extends formae.SubResource {
     failureThreshold: Int?
 
     @aws.FieldHint
-    fullyQualifiedDomainName: String?
+    fullyQualifiedDomainName: (String|formae.Resolvable)?
 
     @aws.FieldHint
     healthThreshold: Int?
@@ -69,7 +69,7 @@ open class HealthCheckConfig extends formae.SubResource {
     resourcePath: String?
 
     @aws.FieldHint
-    routingControlArn: String?
+    routingControlArn: (String|formae.Resolvable)?
 
     @aws.FieldHint
     searchString: String?

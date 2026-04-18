@@ -19,7 +19,7 @@ open class LoadBalancerAttribute extends formae.SubResource {
 
 @aws.SubResourceHint
 open class SubnetMapping extends formae.SubResource {
-    allocationId: String?
+    allocationId: (String|formae.Resolvable)?
     iPv6Address: String?
     privateIPv4Address: String?
     sourceNatIpv6Prefix: String?
@@ -29,6 +29,14 @@ open class SubnetMapping extends formae.SubResource {
 open class LoadBalancerResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: LoadBalancerResolvable = (this) {
+        property = "LoadBalancerArn"
+    }
+
+    hidden arn: LoadBalancerResolvable = (this) {
+        property = "LoadBalancerArn"
+    }
     hidden canonicalHostedZoneID: LoadBalancerResolvable = (this) {
         property = "CanonicalHostedZoneID"
     }

@@ -26,7 +26,7 @@ open class SecurityGroupEgress extends formae.Resource {
     description: String?
 
     @aws.FieldHint{createOnly = true}
-    destinationPrefixListId: String?
+    destinationPrefixListId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     destinationSecurityGroupId: (String|formae.Resolvable)?

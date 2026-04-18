@@ -26,7 +26,7 @@ open class DBSecurityGroupIngress extends formae.Resource {
     @aws.FieldHint{
         outputField = "DBSecurityGroupName"
     }
-    dbSecurityGroupName: String
+    dbSecurityGroupName: String|formae.Resolvable
 
     @aws.FieldHint{
         outputField = "EC2SecurityGroupId"

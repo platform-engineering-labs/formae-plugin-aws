@@ -15,6 +15,10 @@ const type = "AWS::RDS::DBShardGroup"
 open class DBShardGroupResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DBShardGroupResolvable = (this) {
+        property = "DBShardGroupIdentifier"
+    }
     hidden dbShardGroupResourceId: DBShardGroupResolvable = (this) {
         property = "DBShardGroupResourceId"
     }

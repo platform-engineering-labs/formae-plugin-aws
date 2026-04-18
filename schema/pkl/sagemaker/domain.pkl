@@ -207,6 +207,14 @@ open class DefaultUserSettings extends formae.SubResource {
 open class DomainResolvable extends formae.Resolvable {
     hidden type = module.type
 
+
+    hidden id: DomainResolvable = (this) {
+        property = "DomainArn"
+    }
+
+    hidden arn: DomainResolvable = (this) {
+        property = "DomainArn"
+    }
     hidden domainArn: DomainResolvable = (this) {
         property = "DomainArn"
     }
