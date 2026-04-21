@@ -240,6 +240,7 @@ open class PortMapping extends formae.SubResource {
     appProtocol: PortMappingAppProtocol?
     containerPort: Int?
     containerPortRange: String?
+    @aws.FieldHint{hasProviderDefault = true}
     hostPort: Int?
     name: String?
     protocol: String?
