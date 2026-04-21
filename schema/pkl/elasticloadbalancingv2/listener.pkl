@@ -126,6 +126,18 @@ open class ListenerResolvable extends formae.Resolvable {
     hidden url: ListenerResolvable = (this) {
         property = "Url"
     }
+
+    /// ARN of the target group attached to the ALB via this listener's
+    /// first default action. Prefer this over `tg.res.targetGroupArn` when a
+    /// downstream resource (e.g. ECS::Service) needs the target group to
+    /// already be wired to the load balancer — AWS rejects ECS service
+    /// creation with "target group does not have an associated load balancer"
+    /// if the service is created before the listener attaches the TG.
+    /// Referencing through the listener creates the correct create/destroy
+    /// ordering (same pattern as VPCGatewayAttachment.internetGatewayId).
+    hidden targetGroupArn: ListenerResolvable = (this) {
+        property = "DefaultActions.0.TargetGroupArn"
+    }
 }
 
 @aws.ResourceHint {
