@@ -294,3 +294,127 @@ func TestTaskSet_List_PropagatesOtherErrors(t *testing.T) {
 
 	assert.Error(t, err)
 }
+
+func TestTaskSet_Read_ReinflatesBareClusterAndServiceToArns(t *testing.T) {
+	// CC Read on TaskSet normalizes Cluster and Service to their bare
+	// names even when the caller created with ARNs. Both are createOnly,
+	// so the drift surfaces as phantom Replace on every reapply unless we
+	// normalize Read to match the caller's ARN shape. Composite NativeID
+	// supplies the cluster ARN (parts[0]) which we use to derive region
+	// and account.
+	ctx := context.Background()
+	client := &mockCCXReadClient{}
+
+	clusterArn := "arn:aws:ecs:us-east-1:226695765433:cluster/my-cluster"
+	serviceArn := "arn:aws:ecs:us-east-1:226695765433:service/my-cluster/my-svc"
+	nativeID := clusterArn + "|my-svc|ecs-svc/111"
+
+	innerResult := &resource.ReadResult{
+		ResourceType: "AWS::ECS::TaskSet",
+		Properties: `{
+			"Cluster": "my-cluster",
+			"Service": "my-svc",
+			"Id": "ecs-svc/111"
+		}`,
+	}
+	client.On("ReadResource", ctx, mock.Anything).Return(innerResult, nil)
+
+	ts := &TaskSet{cfg: &config.Config{}}
+	out, err := ts.readWithClient(ctx, client, &resource.ReadRequest{
+		ResourceType: "AWS::ECS::TaskSet",
+		NativeID:     nativeID,
+	})
+
+	assert.NoError(t, err)
+	var props map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(out.Properties), &props))
+	assert.Equal(t, clusterArn, props["Cluster"], "Cluster must be re-inflated to full ARN")
+	assert.Equal(t, serviceArn, props["Service"], "Service must be re-inflated to full ARN")
+	assert.Equal(t, "ecs-svc/111", props["Id"])
+}
+
+func TestTaskSet_Read_LeavesValuesAloneWhenAlreadyArns(t *testing.T) {
+	ctx := context.Background()
+	client := &mockCCXReadClient{}
+
+	clusterArn := "arn:aws:ecs:us-east-1:226695765433:cluster/my-cluster"
+	serviceArn := "arn:aws:ecs:us-east-1:226695765433:service/my-cluster/my-svc"
+	innerResult := &resource.ReadResult{
+		ResourceType: "AWS::ECS::TaskSet",
+		Properties: `{
+			"Cluster": "` + clusterArn + `",
+			"Service": "` + serviceArn + `"
+		}`,
+	}
+	client.On("ReadResource", ctx, mock.Anything).Return(innerResult, nil)
+
+	ts := &TaskSet{cfg: &config.Config{}}
+	out, err := ts.readWithClient(ctx, client, &resource.ReadRequest{
+		ResourceType: "AWS::ECS::TaskSet",
+		NativeID:     clusterArn + "|my-svc|ecs-svc/111",
+	})
+
+	assert.NoError(t, err)
+	var props map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(out.Properties), &props))
+	assert.Equal(t, clusterArn, props["Cluster"])
+	assert.Equal(t, serviceArn, props["Service"])
+}
+
+func TestTaskSet_Read_PassesThroughWhenNativeIDPart0NotArn(t *testing.T) {
+	// If we can't infer region/account from NativeID we have nothing safe
+	// to work with — leave the short names in place.
+	ctx := context.Background()
+	client := &mockCCXReadClient{}
+
+	innerResult := &resource.ReadResult{
+		ResourceType: "AWS::ECS::TaskSet",
+		Properties:   `{"Cluster": "my-cluster", "Service": "my-svc"}`,
+	}
+	client.On("ReadResource", ctx, mock.Anything).Return(innerResult, nil)
+
+	ts := &TaskSet{cfg: &config.Config{}}
+	out, err := ts.readWithClient(ctx, client, &resource.ReadRequest{
+		ResourceType: "AWS::ECS::TaskSet",
+		NativeID:     "my-cluster|my-svc|ecs-svc/111",
+	})
+
+	assert.NoError(t, err)
+	var props map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(out.Properties), &props))
+	assert.Equal(t, "my-cluster", props["Cluster"])
+	assert.Equal(t, "my-svc", props["Service"])
+}
+
+func TestTaskSet_Read_PropagatesErrorResult(t *testing.T) {
+	ctx := context.Background()
+	client := &mockCCXReadClient{}
+	innerResult := &resource.ReadResult{
+		ResourceType: "AWS::ECS::TaskSet",
+		ErrorCode:    resource.OperationErrorCodeNotFound,
+	}
+	client.On("ReadResource", ctx, mock.Anything).Return(innerResult, nil)
+
+	ts := &TaskSet{cfg: &config.Config{}}
+	out, err := ts.readWithClient(ctx, client, &resource.ReadRequest{
+		ResourceType: "AWS::ECS::TaskSet",
+		NativeID:     "missing|missing|missing",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeNotFound, out.ErrorCode)
+}
+
+func TestTaskSet_Read_PropagatesInnerError(t *testing.T) {
+	ctx := context.Background()
+	client := &mockCCXReadClient{}
+	client.On("ReadResource", ctx, mock.Anything).Return((*resource.ReadResult)(nil), errors.New("throttled"))
+
+	ts := &TaskSet{cfg: &config.Config{}}
+	_, err := ts.readWithClient(ctx, client, &resource.ReadRequest{
+		ResourceType: "AWS::ECS::TaskSet",
+		NativeID:     "arn:aws:ecs:us-east-1:123:cluster/c|s|ecs-svc/1",
+	})
+
+	assert.Error(t, err)
+}

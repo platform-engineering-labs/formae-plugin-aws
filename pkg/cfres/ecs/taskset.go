@@ -16,6 +16,7 @@ import (
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -46,7 +47,7 @@ var _ prov.Provisioner = &TaskSet{}
 
 func init() {
 	registry.Register("AWS::ECS::TaskSet",
-		[]resource.Operation{resource.OperationList, resource.OperationUpdate},
+		[]resource.Operation{resource.OperationList, resource.OperationRead, resource.OperationUpdate},
 		func(cfg *config.Config) prov.Provisioner {
 			return &TaskSet{cfg: cfg}
 		})
@@ -116,16 +117,93 @@ func (t *TaskSet) listWithClient(ctx context.Context, client ecsTaskSetClientInt
 	return &resource.ListResult{NativeIDs: nativeIDs}, nil
 }
 
-// The remaining Provisioner methods are not implemented because this provisioner
-// is only registered for OperationList. The registry routes other operations to
-// the default CloudControl path.
+// Create/Delete/Status are not implemented here; the registry routes those
+// operations to the default CloudControl path. List, Read, and Update are
+// registered above and handled below.
 
 func (t *TaskSet) Create(_ context.Context, _ *resource.CreateRequest) (*resource.CreateResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::TaskSet custom provisioner only implements List")
+	return nil, fmt.Errorf("AWS::ECS::TaskSet custom provisioner only implements List, Read, and Update")
 }
 
-func (t *TaskSet) Read(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::TaskSet custom provisioner only implements List")
+func (t *TaskSet) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	client, err := ccx.NewClient(t.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("loading CloudControl client: %w", err)
+	}
+	return t.readWithClient(ctx, client, request)
+}
+
+// readWithClient delegates to CloudControl and re-inflates the bare Cluster
+// and Service names in the response back to full ARNs. See Service.Read for
+// the full rationale; the TaskSet variant pulls region/account from the
+// composite NativeID's cluster-ARN segment (parts[0]) rather than from a
+// response field, since CC's TaskSet Read doesn't reliably return the
+// cluster ARN.
+func (t *TaskSet) readWithClient(ctx context.Context, client ccxReadClient, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	result, err := client.ReadResource(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.ErrorCode != "" || result.Properties == "" {
+		return result, nil
+	}
+
+	parts := strings.Split(request.NativeID, "|")
+	if len(parts) != 3 {
+		return result, nil
+	}
+	partition, region, account, ok := parseClusterArn(parts[0])
+	if !ok {
+		return result, nil
+	}
+
+	var props map[string]any
+	if err := json.Unmarshal([]byte(result.Properties), &props); err != nil {
+		return nil, fmt.Errorf("parsing TaskSet properties: %w", err)
+	}
+
+	changed := false
+	if cluster, _ := props["Cluster"].(string); cluster != "" && !strings.HasPrefix(cluster, "arn:") {
+		props["Cluster"] = fmt.Sprintf("arn:%s:ecs:%s:%s:cluster/%s", partition, region, account, cluster)
+		changed = true
+	}
+	if service, _ := props["Service"].(string); service != "" && !strings.HasPrefix(service, "arn:") {
+		// Service ARN embeds the cluster short name, which we can take from
+		// the now-normalized Cluster or from the NativeID's parts[0] cluster
+		// segment.
+		clusterName := lastArnSegment(parts[0])
+		props["Service"] = fmt.Sprintf("arn:%s:ecs:%s:%s:service/%s/%s", partition, region, account, clusterName, service)
+		changed = true
+	}
+	if !changed {
+		return result, nil
+	}
+
+	out, err := json.Marshal(props)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling re-inflated TaskSet properties: %w", err)
+	}
+	return &resource.ReadResult{
+		ResourceType: result.ResourceType,
+		Properties:   string(out),
+	}, nil
+}
+
+// parseClusterArn splits an ECS ClusterArn into its partition, region, and
+// account. Returns ok=false for anything that doesn't look like an ECS
+// cluster ARN.
+func parseClusterArn(arn string) (partition, region, account string, ok bool) {
+	if !strings.HasPrefix(arn, "arn:") {
+		return "", "", "", false
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 {
+		return "", "", "", false
+	}
+	if parts[2] != "ecs" {
+		return "", "", "", false
+	}
+	return parts[1], parts[3], parts[4], true
 }
 
 func (t *TaskSet) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
