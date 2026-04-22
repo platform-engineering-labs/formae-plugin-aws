@@ -16,8 +16,8 @@ typealias AssignPublicIp = "DISABLED"|"ENABLED"
 @aws.SubResourceHint
 open class AWSVpcConfiguration extends formae.SubResource {
     assignPublicIp: AssignPublicIp?
-    securityGroups: Listing<String>?
-    subnets: Listing<String>
+    securityGroups: Listing<String|formae.Resolvable>?
+    subnets: Listing<String|formae.Resolvable>
 }
 
 @aws.SubResourceHint
@@ -57,9 +57,17 @@ open class ServiceRegistry extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Cluster"
-    discoverable = true
+    // Extract is not yet supported for TaskSet: the PKL serializer fails
+    // on the CC-returned shape. Discovery uses a custom List provisioner
+    // (pkg/cfres/ecs/taskset.go) because CloudControl's generic list
+    // handler rejects Cluster+Service filters with "Required property:
+    // [Cluster, Service, Id]".
+    extractable = false
     parent = "AWS::ECS::Service"
-    listParam = List ( new formae.ListProperty { parentProperty = "ServiceName" listParameter = "Service" }, new formae.ListProperty { parentProperty = "Cluster" listParameter = "Cluster" } )
+    listParam = List(
+        new formae.ListProperty { parentProperty = "ServiceName" listParameter = "Service" },
+        new formae.ListProperty { parentProperty = "Cluster" listParameter = "Cluster" }
+    )
 }
 open class TaskSet extends formae.Resource {
 
@@ -67,7 +75,7 @@ open class TaskSet extends formae.Resource {
     capacityProviderStrategy: Listing<CapacityProviderStrategy>?
 
     @aws.FieldHint{createOnly = true}
-    cluster: String
+    cluster: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
     externalId: (String|formae.Resolvable)?
@@ -81,14 +89,17 @@ open class TaskSet extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     networkConfiguration: NetworkConfiguration?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     platformVersion: String?
 
     @aws.FieldHint
     scale: Scale?
 
     @aws.FieldHint{createOnly = true}
-    service: String
+    service: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
     serviceRegistries: Listing<ServiceRegistry>?
@@ -97,7 +108,7 @@ open class TaskSet extends formae.Resource {
     tags: Listing<formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}
-    taskDefinition: String
+    taskDefinition: String|formae.Resolvable
 }
 
 typealias LaunchType = "EC2"|"FARGATE"

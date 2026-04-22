@@ -1,0 +1,132 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+import "@aws/ecs/service.pkl"
+import "@aws/ecs/taskset.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-taskset-\(testRunID)"
+
+// VPC + Subnet for FARGATE awsvpc networking
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-ecs-taskset"
+  cidrBlock = "10.231.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-ecs-taskset"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.231.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// ECS Cluster dependency
+local testCluster = new ecscluster.Cluster {
+  label = "test-cluster-for-taskset"
+  clusterName = "formae-sdk-test-ts-cluster-\(testRunID)"
+  clusterSettings {
+    new {
+      name = "containerInsights"
+      value = "disabled"
+    }
+  }
+}
+
+// ECS TaskDefinition dependency (FARGATE-compatible)
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "test-taskdef-for-taskset"
+  family = "formae-sdk-test-ts-taskdef-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "256"
+  memory = "512"
+  containerDefinitions {
+    new {
+      name = "test-container"
+      image = "nginx:latest"
+      essential = true
+    }
+  }
+}
+
+// ECS Service with EXTERNAL deployment controller, which is required for TaskSets
+local testService = new service.Service {
+  label = "test-service-for-taskset"
+  serviceName = "formae-sdk-test-ts-svc-\(testRunID)"
+  cluster = testCluster.res.arn
+  schedulingStrategy = "REPLICA"
+  deploymentController = new service.DeploymentController {
+    type = "EXTERNAL"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ECS TaskSet"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC + Subnet for awsvpc networking
+  testVpc
+  testSubnet
+
+  // Cluster dependency
+  testCluster
+
+  // TaskDefinition dependency
+  testTaskDef
+
+  // Service with EXTERNAL deployment controller
+  testService
+
+  // ECS TaskSet under test
+  new taskset.TaskSet {
+    label = "plugin-sdk-test-ecs-taskset"
+    cluster = testCluster.res.arn
+    service = new formae.Resolvable {
+      label = testService.label
+      type = "AWS::ECS::Service"
+      property = "ServiceArn"
+    }
+    taskDefinition = new formae.Resolvable {
+      label = testTaskDef.label
+      type = "AWS::ECS::TaskDefinition"
+      property = "TaskDefinitionArn"
+    }
+    launchType = "FARGATE"
+    networkConfiguration = new taskset.NetworkConfiguration {
+      awsVpcConfiguration = new taskset.AWSVpcConfiguration {
+        assignPublicIp = "DISABLED"
+        subnets {
+          testSubnet.res.subnetId
+        }
+      }
+    }
+    scale = new taskset.Scale {
+      unit = "PERCENT"
+      value = 0
+    }
+  }
+}

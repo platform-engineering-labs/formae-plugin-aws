@@ -200,6 +200,8 @@ open class VpcLatticeConfiguration extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
+    parent = "AWS::ECS::Cluster"
+    listParam = new formae.ListProperty { parentProperty = "ClusterName" listParameter = "Cluster" }
 }
 open class Service extends formae.Resource {
 
