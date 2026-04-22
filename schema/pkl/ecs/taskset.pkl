@@ -16,6 +16,11 @@ typealias AssignPublicIp = "DISABLED"|"ENABLED"
 @aws.SubResourceHint
 open class AWSVpcConfiguration extends formae.SubResource {
     assignPublicIp: AssignPublicIp?
+    // AWS populates SecurityGroups with the VPC's default SG when the
+    // caller doesn't specify one, so without this hint an unchanged
+    // TaskSet reapply produces a phantom diff on the CreateOnly
+    // NetworkConfiguration and forces a full replacement.
+    @aws.FieldHint{hasProviderDefault = true}
     securityGroups: Listing<String|formae.Resolvable>?
     subnets: Listing<String|formae.Resolvable>
 }
@@ -71,7 +76,16 @@ open class ServiceRegistry extends formae.SubResource {
 }
 open class TaskSet extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    // CloudControl returns TaskSet list-valued createOnly fields as empty
+    // arrays when the caller didn't set them. Without hasProviderDefault on
+    // these the recursive stripper can't walk them out of stored-state
+    // comparisons, and a reapply triggers a phantom diff that the planner
+    // promotes to a full replacement. Same pattern as
+    // AwsVpcConfiguration.SecurityGroups and PortMapping.HostPort.
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     capacityProviderStrategy: Listing<CapacityProviderStrategy>?
 
     @aws.FieldHint{createOnly = true}
@@ -83,7 +97,10 @@ open class TaskSet extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     launchType: LaunchType?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     loadBalancers: Listing<LoadBalancer>?
 
     @aws.FieldHint{createOnly = true}
@@ -101,7 +118,10 @@ open class TaskSet extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     service: String|formae.Resolvable
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     serviceRegistries: Listing<ServiceRegistry>?
 
     @aws.FieldHint

@@ -6,6 +6,7 @@ package ecs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,28 +21,32 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
-// TaskSet is a custom List-only provisioner for AWS::ECS::TaskSet. CloudControl's
-// generic list handler for this type rejects requests that only pass
-// Cluster+Service with "Required property: [Cluster, Service, Id]", effectively
-// requiring a specific TaskSet id and making it unusable for true discovery.
-// This provisioner uses the ECS SDK's DescribeTaskSets (Cluster + Service only)
-// to enumerate TaskSets per parent service.
+// TaskSet is a custom provisioner for AWS::ECS::TaskSet. CloudControl is broken
+// for two operations on this resource type and we route both through the ECS
+// SDK directly:
 //
-// Create/Read/Update/Delete/Status fall back to the default CloudControl path
-// because this provisioner is only registered for OperationList.
+//   - List: CloudControl's generic list handler rejects Cluster+Service-only
+//     requests with "Required property: [Cluster, Service, Id]", making it
+//     unusable for discovery. We enumerate TaskSets via DescribeServices.
+//   - Update: CloudControl's update handler hangs indefinitely when patching
+//     Scale (the only mutable field per AWS's UpdateTaskSet API), timing out
+//     the test harness. We call UpdateTaskSet directly.
+//
+// Create/Read/Delete/Status fall back to the default CloudControl path.
 type TaskSet struct {
 	cfg *config.Config
 }
 
 type ecsTaskSetClientInterface interface {
 	DescribeServices(ctx context.Context, params *ecs.DescribeServicesInput, optFns ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error)
+	UpdateTaskSet(ctx context.Context, params *ecs.UpdateTaskSetInput, optFns ...func(*ecs.Options)) (*ecs.UpdateTaskSetOutput, error)
 }
 
 var _ prov.Provisioner = &TaskSet{}
 
 func init() {
 	registry.Register("AWS::ECS::TaskSet",
-		[]resource.Operation{resource.OperationList},
+		[]resource.Operation{resource.OperationList, resource.OperationUpdate},
 		func(cfg *config.Config) prov.Provisioner {
 			return &TaskSet{cfg: cfg}
 		})
@@ -123,8 +128,69 @@ func (t *TaskSet) Read(_ context.Context, _ *resource.ReadRequest) (*resource.Re
 	return nil, fmt.Errorf("AWS::ECS::TaskSet custom provisioner only implements List")
 }
 
-func (t *TaskSet) Update(_ context.Context, _ *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::TaskSet custom provisioner only implements List")
+func (t *TaskSet) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	awsCfg, err := t.cfg.ToAwsConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading AWS config: %w", err)
+	}
+	return t.updateWithClient(ctx, ecs.NewFromConfig(awsCfg), request)
+}
+
+func (t *TaskSet) updateWithClient(ctx context.Context, client ecsTaskSetClientInterface, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	// NativeID is the composite <ClusterArn>|<ServiceName>|<Id> produced by
+	// CloudControl on create and normalized by ccx.normalizeCompositeIdentifier.
+	parts := strings.Split(request.NativeID, "|")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("AWS::ECS::TaskSet NativeID must be composite Cluster|Service|Id, got %q", request.NativeID)
+	}
+	cluster, service, taskSetID := parts[0], parts[1], parts[2]
+
+	scale, err := extractScale(request.DesiredProperties)
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := client.UpdateTaskSet(ctx, &ecs.UpdateTaskSetInput{
+		Cluster: aws.String(cluster),
+		Service: aws.String(service),
+		TaskSet: aws.String(taskSetID),
+		Scale:   scale,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("updating task set: %w", err)
+	}
+
+	// Merge the updated Scale into the caller's desired properties so
+	// downstream idempotency checks see the new state. Other fields on the
+	// TaskSet are createOnly and can't change through Update.
+	var props map[string]any
+	if len(request.DesiredProperties) > 0 {
+		if err := json.Unmarshal(request.DesiredProperties, &props); err != nil {
+			return nil, fmt.Errorf("parsing desired properties: %w", err)
+		}
+	}
+	if props == nil {
+		props = map[string]any{}
+	}
+	if output.TaskSet != nil && output.TaskSet.Scale != nil {
+		props["Scale"] = map[string]any{
+			"Unit":  string(output.TaskSet.Scale.Unit),
+			"Value": output.TaskSet.Scale.Value,
+		}
+	}
+	resultJSON, err := json.Marshal(props)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling result properties: %w", err)
+	}
+
+	return &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:          resource.OperationUpdate,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           request.NativeID,
+			ResourceProperties: resultJSON,
+		},
+	}, nil
 }
 
 func (t *TaskSet) Delete(_ context.Context, _ *resource.DeleteRequest) (*resource.DeleteResult, error) {
@@ -133,6 +199,32 @@ func (t *TaskSet) Delete(_ context.Context, _ *resource.DeleteRequest) (*resourc
 
 func (t *TaskSet) Status(_ context.Context, _ *resource.StatusRequest) (*resource.StatusResult, error) {
 	return nil, fmt.Errorf("AWS::ECS::TaskSet custom provisioner only implements List")
+}
+
+// extractScale pulls the Scale sub-resource out of a TaskSet's desired
+// properties and converts it to the ECS SDK's Scale type. Returns an error
+// if Scale is absent — the ECS UpdateTaskSet API requires it and calling
+// without it is a usage error, not a valid empty update.
+func extractScale(desired json.RawMessage) (*ecstypes.Scale, error) {
+	if len(desired) == 0 {
+		return nil, fmt.Errorf("AWS::ECS::TaskSet update requires DesiredProperties with Scale")
+	}
+	var props struct {
+		Scale *struct {
+			Unit  string  `json:"Unit"`
+			Value float64 `json:"Value"`
+		} `json:"Scale"`
+	}
+	if err := json.Unmarshal(desired, &props); err != nil {
+		return nil, fmt.Errorf("parsing desired properties: %w", err)
+	}
+	if props.Scale == nil {
+		return nil, fmt.Errorf("AWS::ECS::TaskSet update requires Scale in desired properties")
+	}
+	return &ecstypes.Scale{
+		Unit:  ecstypes.ScaleUnit(props.Scale.Unit),
+		Value: props.Scale.Value,
+	}, nil
 }
 
 // lastArnSegment returns the segment after the final "/" in an ARN, matching
