@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
@@ -78,10 +79,12 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 	// Derive region + account from ServiceArn (format:
 	// arn:<partition>:ecs:<region>:<account>:service/<cluster>/<service>).
 	// If ServiceArn is missing or malformed we can't safely reconstruct the
-	// ARN — leave the short name in place.
+	// ARN — leave the short name in place and log enough to find it later.
 	serviceArn, _ := props["ServiceArn"].(string)
-	partition, region, account, ok := parseServiceArn(serviceArn)
+	partition, region, account, ok := parseEcsArn(serviceArn)
 	if !ok {
+		slog.Debug("AWS::ECS::Service Read: skipping Cluster ARN re-inflation, ServiceArn unparseable",
+			"cluster", cluster, "serviceArn", serviceArn, "nativeID", request.NativeID)
 		return result, nil
 	}
 	props["Cluster"] = fmt.Sprintf("arn:%s:ecs:%s:%s:cluster/%s", partition, region, account, cluster)
@@ -96,18 +99,16 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 	}, nil
 }
 
-// parseServiceArn splits an ECS ServiceArn into its partition, region, and
-// account. Returns ok=false for anything that doesn't look like an ECS
-// service ARN.
-func parseServiceArn(arn string) (partition, region, account string, ok bool) {
+// parseEcsArn splits any ECS ARN (cluster, service, task-set, ...) into its
+// partition, region, and account. Returns ok=false for anything that doesn't
+// look like an ECS ARN — the caller is expected to treat that as "leave the
+// response unchanged" rather than as an error.
+func parseEcsArn(arn string) (partition, region, account string, ok bool) {
 	if !strings.HasPrefix(arn, "arn:") {
 		return "", "", "", false
 	}
 	parts := strings.Split(arn, ":")
-	if len(parts) < 6 {
-		return "", "", "", false
-	}
-	if parts[2] != "ecs" {
+	if len(parts) < 6 || parts[2] != "ecs" {
 		return "", "", "", false
 	}
 	return parts[1], parts[3], parts[4], true

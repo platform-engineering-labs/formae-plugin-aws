@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -150,10 +151,14 @@ func (t *TaskSet) readWithClient(ctx context.Context, client ccxReadClient, requ
 
 	parts := strings.Split(request.NativeID, "|")
 	if len(parts) != 3 {
+		slog.Debug("AWS::ECS::TaskSet Read: skipping ARN re-inflation, NativeID not composite",
+			"nativeID", request.NativeID)
 		return result, nil
 	}
-	partition, region, account, ok := parseClusterArn(parts[0])
+	partition, region, account, ok := parseEcsArn(parts[0])
 	if !ok {
+		slog.Debug("AWS::ECS::TaskSet Read: skipping ARN re-inflation, NativeID parts[0] not an ECS ARN",
+			"nativeIDPart0", parts[0], "nativeID", request.NativeID)
 		return result, nil
 	}
 
@@ -187,23 +192,6 @@ func (t *TaskSet) readWithClient(ctx context.Context, client ccxReadClient, requ
 		ResourceType: result.ResourceType,
 		Properties:   string(out),
 	}, nil
-}
-
-// parseClusterArn splits an ECS ClusterArn into its partition, region, and
-// account. Returns ok=false for anything that doesn't look like an ECS
-// cluster ARN.
-func parseClusterArn(arn string) (partition, region, account string, ok bool) {
-	if !strings.HasPrefix(arn, "arn:") {
-		return "", "", "", false
-	}
-	parts := strings.Split(arn, ":")
-	if len(parts) < 6 {
-		return "", "", "", false
-	}
-	if parts[2] != "ecs" {
-		return "", "", "", false
-	}
-	return parts[1], parts[3], parts[4], true
 }
 
 func (t *TaskSet) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {

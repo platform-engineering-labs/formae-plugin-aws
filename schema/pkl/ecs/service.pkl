@@ -208,7 +208,10 @@ open class Service extends formae.Resource {
     @aws.FieldHint{hasProviderDefault = true}
     availabilityZoneRebalancing: AvailabilityZoneRebalancing?
 
-    @aws.FieldHint
+    // CC normalizes this to an empty array on Read when the caller didn't
+    // set it (except for launch-type-based services, where CC may omit it
+    // entirely). hasProviderDefault lets the stripper walk into both shapes.
+    @aws.FieldHint{hasProviderDefault = true}
     capacityProviderStrategy: Listing<CapacityProviderStrategy>?
 
     @aws.FieldHint{createOnly = true}
@@ -238,7 +241,8 @@ open class Service extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     launchType: ServiceLaunchType?
 
-    @aws.FieldHint
+    // CC returns [] on Read when the caller didn't set it.
+    @aws.FieldHint{hasProviderDefault = true}
     loadBalancers: Listing<LoadBalancer>?
 
     @aws.FieldHint{hasProviderDefault = true}
@@ -270,7 +274,8 @@ open class Service extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     serviceName: String?
 
-    @aws.FieldHint
+    // CC returns [] on Read when the caller didn't set it.
+    @aws.FieldHint{hasProviderDefault = true}
     serviceRegistries: Listing<ServiceRegistry>?
 
     @aws.FieldHint {
@@ -285,6 +290,9 @@ open class Service extends formae.Resource {
     @aws.FieldHint{writeOnly = true}
     volumeConfigurations: Listing<VolumeConfiguration>?
 
-    @aws.FieldHint
+    // No authoritative AWS doc, but the CC update-side semantics (empty
+    // array required to remove) mirror the other ECS::Service listings;
+    // CC is expected to return [] on Read here too. Annotated defensively.
+    @aws.FieldHint{hasProviderDefault = true}
     vpcLatticeConfigurations: Listing<VpcLatticeConfiguration>?
 }
