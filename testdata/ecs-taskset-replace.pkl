@@ -68,7 +68,12 @@ local testTaskDef = new taskdefinition.TaskDefinition {
 local testService = new service.Service {
   label = "test-service-for-taskset"
   serviceName = "formae-sdk-test-ts-svc-\(testRunID)"
-  cluster = testCluster.res.arn
+  // Short-name Resolvable: see base fixture for why this matters on Update.
+  cluster = new formae.Resolvable {
+    label = testCluster.label
+    type = "AWS::ECS::Cluster"
+    property = "ClusterName"
+  }
   schedulingStrategy = "REPLICA"
   deploymentController = new service.DeploymentController {
     type = "EXTERNAL"
@@ -103,13 +108,18 @@ forma {
 
   // ECS TaskSet under test — setting externalId (createOnly) forces a
   // resource replacement through the full destroy+create lifecycle.
+  // Short-name Resolvables match CC Read output on Cluster/Service.
   new taskset.TaskSet {
     label = "plugin-sdk-test-ecs-taskset"
-    cluster = testCluster.res.arn
+    cluster = new formae.Resolvable {
+      label = testCluster.label
+      type = "AWS::ECS::Cluster"
+      property = "ClusterName"
+    }
     service = new formae.Resolvable {
       label = testService.label
       type = "AWS::ECS::Service"
-      property = "ServiceArn"
+      property = "ServiceName"
     }
     taskDefinition = new formae.Resolvable {
       label = testTaskDef.label
