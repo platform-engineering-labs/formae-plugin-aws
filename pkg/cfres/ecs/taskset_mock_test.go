@@ -22,3 +22,9 @@ func (m *mockECSTaskSetClient) DescribeServices(ctx context.Context, input *ecs.
 	out, _ := args.Get(0).(*ecs.DescribeServicesOutput)
 	return out, args.Error(1)
 }
+
+func (m *mockECSTaskSetClient) UpdateTaskSet(ctx context.Context, input *ecs.UpdateTaskSetInput, optFns ...func(*ecs.Options)) (*ecs.UpdateTaskSetOutput, error) {
+	args := m.Called(ctx, input)
+	out, _ := args.Get(0).(*ecs.UpdateTaskSetOutput)
+	return out, args.Error(1)
+}
