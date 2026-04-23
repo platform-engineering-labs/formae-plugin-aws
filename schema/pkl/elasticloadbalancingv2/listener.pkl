@@ -16,6 +16,12 @@ open class Action extends formae.SubResource {
     authenticateCognitoConfig: AuthenticateCognitoConfig?
     authenticateOidcConfig: AuthenticateOidcConfig?
     fixedResponseConfig: FixedResponseConfig?
+    // AWS ELBv2 derives ForwardConfig (TargetGroups + stickiness defaults) from
+    // the Action's TargetGroupArn when the user specifies a simple forward
+    // target. The derived value shows up in Read and must be stripped from
+    // existing-side comparisons, else every reapply reports a stale diff on
+    // Listener.DefaultActions.
+    @aws.FieldHint{hasProviderDefault = true}
     forwardConfig: ForwardConfig?
     order: Int?
     redirectConfig: RedirectConfig?
