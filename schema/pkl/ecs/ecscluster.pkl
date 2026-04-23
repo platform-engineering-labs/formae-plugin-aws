@@ -77,7 +77,11 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     clusterName: String?
 
-    @aws.FieldHint
+    // AWS ECS populates ClusterSettings with default entries (e.g.
+    // `containerInsights: disabled`) when the user doesn't specify any, so
+    // the field must be stripped from existing-side comparisons to avoid a
+    // spurious update on reapply.
+    @aws.FieldHint{hasProviderDefault = true}
     clusterSettings: Listing<ClusterClusterSettings>?
 
     @aws.FieldHint
