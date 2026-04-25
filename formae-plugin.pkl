@@ -5,11 +5,11 @@
  */
 
 name = "aws"
-version = "0.1.5"
+version = "0.1.6"
 namespace = "AWS"
 description = "AWS CloudControl resource plugin for Formae"
 license = "FSL-1.1-ALv2"
-minFormaeVersion = "0.84.0"
+minFormaeVersion = "0.85.0"
 
 output {
   renderer = new JsonRenderer {}
