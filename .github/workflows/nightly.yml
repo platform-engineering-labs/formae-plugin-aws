@@ -14,11 +14,6 @@ on:
         default: "main"
         type: string
 
-# Prevent concurrent conformance tests (CI and nightly share test resources)
-concurrency:
-  group: aws-conformance-tests
-  cancel-in-progress: false
-
 jobs:
   # Integration tests run against real AWS resources (Route53, EC2, etc.)
   # These are self-contained: each test creates and cleans up its own resources.
@@ -96,6 +91,12 @@ jobs:
   # Each test case runs in its own isolated job via matrix strategy.
   # Cleanup is handled by separate pre/post-cleanup jobs, NOT per test.
   conformance-tests:
+    # Prevent concurrent conformance runs across this workflow and CI,
+    # since they share live AWS test resources. Scoped to this job (not
+    # the whole workflow) so other nightly steps aren't blocked.
+    concurrency:
+      group: aws-conformance-tests
+      cancel-in-progress: false
     needs: [discover-tests, pre-cleanup]
     runs-on: ubuntu-latest
     timeout-minutes: 120
