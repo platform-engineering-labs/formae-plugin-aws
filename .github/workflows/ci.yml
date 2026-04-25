@@ -13,25 +13,20 @@ on:
         default: 'false'
         type: boolean
 
-# Prevent concurrent conformance tests (CI and nightly share test resources)
-concurrency:
-  group: aws-conformance-tests
-  cancel-in-progress: false
-
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Set up Pkl
-        uses: pkl-community/setup-pkl@v0
+        uses: pkl-community/setup-pkl@v0.0.8
         with:
           pkl-version: 0.30.0
 
@@ -66,15 +61,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
@@ -92,7 +87,7 @@ jobs:
       test-cases: ${{ steps.discover.outputs.test-cases }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Discover test cases
         id: discover
@@ -117,10 +112,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
@@ -133,6 +128,13 @@ jobs:
   # Each test case runs in its own isolated job via matrix strategy.
   # Cleanup is handled by separate pre/post-cleanup jobs, NOT per test.
   conformance-tests:
+    # Prevent concurrent conformance runs across this workflow and nightly,
+    # since they share live AWS test resources. Scoped to this job (not the
+    # whole workflow) so PR-only checks don't queue behind in-flight
+    # conformance runs.
+    concurrency:
+      group: aws-conformance-tests
+      cancel-in-progress: false
     needs: [discover-tests, pre-cleanup]
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -147,20 +149,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Set up Pkl
-        uses: pkl-community/setup-pkl@v0
+        uses: pkl-community/setup-pkl@v0.0.8
         with:
           pkl-version: 0.30.0
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
@@ -171,7 +173,7 @@ jobs:
         run: make install
 
       - name: Run conformance test (${{ matrix.test-case }})
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -192,10 +194,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
@@ -212,7 +214,7 @@ jobs:
     steps:
       - name: Check if previous run failed
         id: check_previous
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const runs = await github.rest.actions.listWorkflowRuns({
@@ -235,7 +237,7 @@ jobs:
 
       - name: Notify Slack (Fixed)
         if: steps.check_previous.outputs.result == 'true'
-        uses: slackapi/slack-github-action@v2.1.1
+        uses: slackapi/slack-github-action@v3.0.1
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
@@ -273,7 +275,7 @@ jobs:
     if: failure() && github.event_name == 'push'
     steps:
       - name: Notify Slack
-        uses: slackapi/slack-github-action@v2.1.1
+        uses: slackapi/slack-github-action@v3.0.1
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
