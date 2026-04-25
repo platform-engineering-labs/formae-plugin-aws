@@ -1,0 +1,39 @@
+/*
+ * © 2026 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "orbital:/opkg.pkl"
+
+import "orbital:/requirement.pkl"
+import "pkl:semver"
+import "./formae-plugin.pkl" as plugin
+
+name        = plugin.name
+version     = semver.Version(plugin.version)
+publisher   = read("env:OPS_PUBLISHER")
+originator  = read("env:OPS_ORIGINATOR")
+license     = plugin.license
+summary     = if (plugin.hasProperty("summary")) plugin.summary else plugin.name
+description = if (plugin.hasProperty("description")) plugin.description else plugin.summary
+
+requirements = new Listing<requirement.Requirement> {
+  new {
+    name     = "formae"
+    method   = "depends"
+    operator = "GTE"
+    version  = semver.Version(plugin.minFormaeVersion)
+  }
+}
+
+metadata {
+  ["display"] {
+    ["kind"]     = "plugin"
+    ["category"] = if (plugin.hasProperty("category")) plugin.category else "other"
+  }
+  ["plugin"] {
+    ["type"]      = if (plugin.hasProperty("type")) plugin.type else "resource"
+    ["namespace"] = plugin.namespace
+  }
+}

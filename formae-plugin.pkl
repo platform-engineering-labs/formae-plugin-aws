@@ -7,7 +7,9 @@
 name = "aws"
 version = "0.1.5"
 namespace = "AWS"
+summary = "AWS resource plugin (CloudControl-based)"
 description = "AWS CloudControl resource plugin for Formae"
+category = "cloud"
 license = "FSL-1.1-ALv2"
 minFormaeVersion = "0.84.0"
 
