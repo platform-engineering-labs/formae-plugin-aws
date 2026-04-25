@@ -2,11 +2,7 @@ amends "pkl:Project"
 
 dependencies {
   ["formae"] {
-    // Pre-release dev-channel formae schema introduces FieldHint.attachesTo,
-    // consumed by the targetGroupArn annotations on ECS::Service.
-    // Bump back to a stable URL once the AttachesTo hint ships in a stable
-    // formae release.
-    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/dev/formae@0.85.0"
+    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.83.0"
   }
 }
 
