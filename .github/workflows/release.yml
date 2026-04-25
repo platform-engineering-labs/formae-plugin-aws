@@ -1,0 +1,22 @@
+# © 2026 Platform Engineering Labs Inc.
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
+name: release
+on:
+  push:
+    tags:
+      - '[0-9]*'
+      - 'v[0-9]*'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.HUB_DISPATCH_PAT }}
+        run: |
+          gh workflow run plugin-build.yml \
+            -R platform-engineering-labs/formae-actions \
+            -f plugin-name=aws \
+            -f plugin-repo=$GITHUB_REPOSITORY \
+            -f ref=$GITHUB_REF_NAME
