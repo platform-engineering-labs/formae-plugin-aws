@@ -18,6 +18,13 @@ jobs:
   # Integration tests run against real AWS resources (Route53, EC2, etc.)
   # These are self-contained: each test creates and cleans up its own resources.
   test-integration:
+    # Shared with formae's e2e-tests workflow, which runs aws-nuke against
+    # the same AWS account. Without this group, aws-nuke can delete
+    # hosted zones mid-test. Until the cloud-account tests are made
+    # parallel-safe, serialize across all three workflows.
+    concurrency:
+      group: cloud-e2e-tests
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -91,11 +98,12 @@ jobs:
   # Each test case runs in its own isolated job via matrix strategy.
   # Cleanup is handled by separate pre/post-cleanup jobs, NOT per test.
   conformance-tests:
-    # Prevent concurrent conformance runs across this workflow and CI,
-    # since they share live AWS test resources. Scoped to this job (not
-    # the whole workflow) so other nightly steps aren't blocked.
+    # Shared with formae's e2e-tests workflow (which runs aws-nuke) and
+    # the plugin's own test-integration job. All three target the same
+    # AWS test account. Until the cloud-account tests are made
+    # parallel-safe, serialize across all three workflows.
     concurrency:
-      group: aws-conformance-tests
+      group: cloud-e2e-tests
       cancel-in-progress: false
     needs: [discover-tests, pre-cleanup]
     runs-on: ubuntu-latest
