@@ -98,12 +98,17 @@ jobs:
   # Each test case runs in its own isolated job via matrix strategy.
   # Cleanup is handled by separate pre/post-cleanup jobs, NOT per test.
   conformance-tests:
-    # Shared with formae's e2e-tests workflow (which runs aws-nuke) and
-    # the plugin's own test-integration job. All three target the same
-    # AWS test account. Until the cloud-account tests are made
-    # parallel-safe, serialize across all three workflows.
+    # Prevent concurrent conformance runs across this workflow and CI,
+    # since they share live AWS test resources. Scoped to this job (not
+    # the whole workflow) so other nightly steps aren't blocked.
+    #
+    # NOT in cloud-e2e-tests: matrix entries would cancel each other when
+    # CI and nightly conformance run concurrently. Conformance has its own
+    # resilience (nick-fields/retry max_attempts=3 with on_retry_command
+    # clean-environment.sh), so an aws-nuke hit from formae e2e at most
+    # costs a retry rather than failing the run.
     concurrency:
-      group: cloud-e2e-tests
+      group: aws-conformance-tests
       cancel-in-progress: false
     needs: [discover-tests, pre-cleanup]
     runs-on: ubuntu-latest
