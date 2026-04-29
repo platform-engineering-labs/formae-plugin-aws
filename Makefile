@@ -28,6 +28,7 @@ all: build
 
 ## build: Build the plugin binary and update manifest
 build:
+	@mkdir -p schema/pkl && echo "$(PLUGIN_VERSION)" > schema/pkl/VERSION
 	$(GO) build $(GOFLAGS) -o bin/$(BINARY) .
 	@MIN_VERSION=$$($(GO) list -m -f '{{.Dir}}' github.com/platform-engineering-labs/formae/pkg/plugin 2>/dev/null | xargs -I{} grep 'MinFormaeVersion' {}/version.go 2>/dev/null | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' | tr -d '"'); \
 	if [ -n "$$MIN_VERSION" ]; then \

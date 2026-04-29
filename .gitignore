@@ -28,6 +28,7 @@ dist/
 .pkl-cache/
 *.pkl-expected.pcf
 PklProject.deps.json
+schema/pkl/VERSION
 
 # Editor instructions
 CLAUDE.md
