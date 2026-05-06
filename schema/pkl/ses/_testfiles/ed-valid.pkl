@@ -1,0 +1,6 @@
+amends "../eventdestination.pkl"
+
+eventDestinationName = "bounce-route"
+configurationSet = "hub-transactional"
+matchingEventTypes = new { "BOUNCE"; "COMPLAINT" }
+snsDestination = new { topic = "arn:aws:sns:us-east-1:123:Bounces" }

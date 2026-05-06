@@ -1,0 +1,62 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ses.eventdestination
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+import "ses.pkl" as ses
+
+const type = "AWS::SES::EventDestination"
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "EventDestinationName"
+    parent = "AWS::SES::ConfigurationSet"
+    listParam = new formae.ListProperty {
+        parentProperty = "Name"
+        listParameter = "ConfigurationSetName"
+    }
+    discoverable = true
+}
+open class EventDestination extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    eventDestinationName: String
+
+    /// Resolves to AWS::SES::ConfigurationSet (use myCs.res.name).
+    @aws.FieldHint { createOnly = true }
+    configurationSet: String|formae.Resolvable
+
+    @aws.FieldHint
+    enabled: Boolean = true
+
+    @aws.FieldHint
+    matchingEventTypes: Listing<ses.MatchingEventType>(this.length > 0)
+
+    @aws.FieldHint
+    snsDestination: ses.SnsDestinationConfig?
+
+    @aws.FieldHint
+    kinesisFirehoseDestination: ses.KinesisFirehoseDestinationConfig?
+
+    @aws.FieldHint
+    eventBridgeDestination: ses.EventBridgeDestinationConfig?
+
+    @aws.FieldHint
+    cloudWatchDestination: ses.CloudWatchDestinationConfig?
+
+    /// Invariant: exactly one of the four destination sub-objects is set.
+    /// Throws at PKL evaluation time when violated, so bad shapes never
+    /// reach the agent.
+    fixed hidden _exactlyOneDestination: Boolean = let (
+        count = List(snsDestination, kinesisFirehoseDestination,
+                     eventBridgeDestination, cloudWatchDestination)
+                  .count((d) -> d != null)
+    )
+        if (count == 1) true
+        else throw("EventDestination requires exactly one destination type, got \(count)")
+}

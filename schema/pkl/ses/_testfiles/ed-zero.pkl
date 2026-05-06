@@ -1,0 +1,5 @@
+amends "../eventdestination.pkl"
+
+eventDestinationName = "bounce-route"
+configurationSet = "hub-transactional"
+matchingEventTypes = new { "BOUNCE"; "COMPLAINT" }
