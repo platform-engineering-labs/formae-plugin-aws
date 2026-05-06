@@ -60,7 +60,23 @@ func synthesizeFromIdentity(
 		}
 	}
 
-	// MAIL FROM and region usage land in subsequent commits.
-	_ = region
+	if resp.MailFromAttributes != nil && resp.MailFromAttributes.MailFromDomain != nil &&
+		*resp.MailFromAttributes.MailFromDomain != "" {
+		mailFrom := *resp.MailFromAttributes.MailFromDomain
+		mxPriority := 10
+		records = append(records, DnsRecord{
+			Type:           "MX",
+			Name:           mailFrom,
+			Values:         []string{"feedback-smtp." + region + ".amazonses.com"},
+			RecommendedTtl: 300,
+			Priority:       &mxPriority,
+		})
+		records = append(records, DnsRecord{
+			Type:           "TXT",
+			Name:           mailFrom,
+			Values:         []string{"v=spf1 include:amazonses.com ~all"},
+			RecommendedTtl: 300,
+		})
+	}
 	return records, status, dkimVerified, nil
 }
