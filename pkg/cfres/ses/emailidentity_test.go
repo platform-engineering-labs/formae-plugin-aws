@@ -95,3 +95,42 @@ func TestSynthesizeRequiredDnsRecords_MailFromIncludesMxAndSpf(t *testing.T) {
 	assert.Equal(t, mailFrom, spf.Name)
 	assert.Equal(t, []string{"v=spf1 include:amazonses.com ~all"}, spf.Values)
 }
+
+func TestSynthesizeRequiredDnsRecords_EmailAddressIdentity_NoRecords(t *testing.T) {
+	ctx := context.Background()
+	client := &mockSesV2Client{}
+
+	client.On("GetEmailIdentity", ctx, mock.Anything).Return(&sesv2.GetEmailIdentityOutput{
+		IdentityType:             sesv2types.IdentityTypeEmailAddress,
+		DkimAttributes:           nil,
+		MailFromAttributes:       nil,
+		VerificationStatus:       sesv2types.VerificationStatusPending,
+		VerifiedForSendingStatus: false,
+	}, nil)
+
+	records, status, dkim, err := synthesizeFromIdentity(ctx, client, "alice@example.com", "us-east-1")
+	assert.NoError(t, err)
+	assert.Empty(t, records, "email-address identities have no DNS records")
+	assert.Equal(t, "PENDING", string(status))
+	assert.False(t, dkim)
+}
+
+func TestSynthesizeRequiredDnsRecords_VerifiedIdentity_PassesThroughStatus(t *testing.T) {
+	ctx := context.Background()
+	client := &mockSesV2Client{}
+
+	client.On("GetEmailIdentity", ctx, mock.Anything).Return(&sesv2.GetEmailIdentityOutput{
+		IdentityType: sesv2types.IdentityTypeDomain,
+		DkimAttributes: &sesv2types.DkimAttributes{
+			Tokens: []string{"x", "y", "z"},
+			Status: sesv2types.DkimStatusSuccess,
+		},
+		VerificationStatus:       sesv2types.VerificationStatusSuccess,
+		VerifiedForSendingStatus: true,
+	}, nil)
+
+	_, status, dkim, err := synthesizeFromIdentity(ctx, client, "example.com", "us-east-1")
+	assert.NoError(t, err)
+	assert.Equal(t, "SUCCESS", string(status))
+	assert.True(t, dkim)
+}
