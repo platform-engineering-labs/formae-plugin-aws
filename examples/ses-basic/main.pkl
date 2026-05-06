@@ -1,0 +1,170 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Example: SES outbound email for a transactional sender.
+ *
+ * Demonstrates:
+ *   1. A verified domain identity with Easy DKIM and a custom MAIL FROM
+ *      domain. The provisioner synthesizes the DNS records the user must
+ *      publish (3 DKIM CNAMEs + 1 MAIL FROM MX + 1 SPF TXT) and exposes
+ *      them on `EmailIdentity.requiredDnsRecords` once Read has run.
+ *   2. An explicit `EmailIdentityVerification` gate. Downstream consumers
+ *      should depend on the gate (not on the identity) so they only treat
+ *      the identity as send-ready once SES has observed all three DKIM
+ *      CNAMEs and the MAIL FROM records.
+ *   3. A `ConfigurationSet` with a CloudWatch event destination so
+ *      bounces / complaints / delivery delays land as CloudWatch metrics.
+ *
+ * DNS wiring (intentionally left out of this example):
+ *
+ *   The synthesized `requiredDnsRecords` field is populated at Read time
+ *   by the provisioner — it is null at PKL evaluation time, and there is
+ *   no Resolvable accessor today that would let a static PKL `for` loop
+ *   reach across the eval/apply boundary to enumerate it. Until that
+ *   plumbing lands, wire DNS by one of:
+ *
+ *     a) Apply this forma, then run `formae inventory --type
+ *        AWS::SES::EmailIdentity --output json` to read the synthesized
+ *        records, then declare the matching `AWS::Route53::RecordSet`
+ *        resources by hand and re-apply.
+ *     b) Manage DNS out-of-band (Route53 console, a separate Terraform
+ *        module, your DNS provider's UI) using the same record values.
+ *
+ *   The `EmailIdentityVerification` resource below will block until SES
+ *   confirms the records, regardless of who published them.
+ *
+ * The hosted zone is assumed to already exist and be delegated correctly.
+ * The `domain` property below names the SES identity; the MAIL FROM
+ * domain is derived as `mail.<domain>`.
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+import "@aws/aws.pkl"
+
+import "@aws/ses/ses.pkl" as ses
+import "@aws/ses/emailidentity.pkl"
+import "@aws/ses/emailidentityverification.pkl"
+import "@aws/ses/configurationset.pkl"
+import "@aws/ses/eventdestination.pkl"
+
+description {
+    text = """
+    SES outbound email — verified domain identity gated on verification,
+    with a ConfigurationSet routing bounce / complaint / delivery-delay
+    events to CloudWatch. Apply once per domain you want to send from.
+    DNS records that the identity requires are synthesized into
+    `EmailIdentity.requiredDnsRecords` at Read time; publish them via your
+    DNS provider of choice (see header doc-comment for the wiring story).
+    """
+    confirm = true
+}
+
+properties {
+    domain = new formae.Prop {
+        flag = "domain"
+        default = "example.com"
+    }
+    region = new formae.Prop {
+        flag = "region"
+        default = "us-east-1"
+    }
+}
+
+forma {
+    local stack = new formae.Stack {
+        label = "ses-basic"
+        description = "SES outbound email for \(properties.domain.value)"
+    }
+    stack
+
+    local target = new formae.Target {
+        label = "aws-target"
+        config = new aws.Config {
+            region = properties.region.value
+        }
+    }
+    target
+
+    // ── Email identity ─────────────────────────────────────────────
+    //
+    // Easy DKIM is enabled by setting `dkimSigning`; AWS rotates the
+    // signing keys for you and the identity exposes 3 CNAMEs via
+    // `requiredDnsRecords`. A custom MAIL FROM tightens DMARC alignment
+    // and adds an MX + SPF TXT to the same field.
+
+    local id = new emailidentity.EmailIdentity {
+        label = "primary-sender"
+        emailIdentity = properties.domain.value
+        mailFrom = new ses.MailFromAttributes {
+            mailFromDomain = "mail.\(properties.domain.value)"
+            behaviorOnMxFailure = "USE_DEFAULT_VALUE"
+        }
+        dkimSigning = new ses.DkimSigningAttributes {
+            nextSigningKeyLength = "RSA_2048_BIT"
+        }
+        feedback = new ses.FeedbackAttributes {
+            emailForwardingEnabled = true
+        }
+    }
+    id
+
+    // ── Verification gate ──────────────────────────────────────────
+    //
+    // `Complete` on EmailIdentity means "registered with SES", NOT
+    // "ready to send". This gate is what downstream resources (sending
+    // workloads, monitoring, alarms) should depend on.
+
+    local verified = new emailidentityverification.EmailIdentityVerification {
+        label = "primary-sender-verified"
+        identity = id.res.emailIdentity
+    }
+    verified
+
+    // ── Configuration set + bounce/complaint event destination ─────
+    //
+    // The configuration set is referenced per-message at send time
+    // (X-SES-CONFIGURATION-SET header). The CloudWatch destination
+    // emits one CloudWatch metric per matching event, dimensioned by
+    // the `MessageType` SES message tag — let your sender stamp that
+    // tag with values like `transactional`, `marketing`, etc. so the
+    // metrics partition cleanly.
+
+    local cs = new configurationset.ConfigurationSet {
+        label = "transactional"
+        name = "transactional"
+        deliveryOptions = new ses.DeliveryOptions {
+            tlsPolicy = "REQUIRE"
+        }
+        suppressionOptions = new ses.SuppressionOptions {
+            suppressedReasons = new {
+                "BOUNCE"
+                "COMPLAINT"
+            }
+        }
+    }
+    cs
+
+    new eventdestination.EventDestination {
+        label = "transactional-bounces"
+        eventDestinationName = "bounces"
+        configurationSet = cs.res.name
+        enabled = true
+        matchingEventTypes = new {
+            "BOUNCE"
+            "COMPLAINT"
+            "DELIVERY_DELAY"
+        }
+        cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+            dimensionConfigurations = new {
+                new ses.DimensionConfiguration {
+                    dimensionName = "MessageType"
+                    dimensionValueSource = "MESSAGE_TAG"
+                    defaultDimensionValue = "transactional"
+                }
+            }
+        }
+    }
+}
