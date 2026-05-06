@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ses.emailidentity
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+import "ses.pkl" as ses
+
+const type = "AWS::SES::EmailIdentity"
+
+open class EmailIdentityResolvable extends formae.Resolvable {
+    type = module.type
+
+    hidden emailIdentity: EmailIdentityResolvable = (this) { property = "EmailIdentity" }
+    hidden arn: EmailIdentityResolvable = (this) { property = "Arn" }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "EmailIdentity"
+    discoverable = true
+}
+open class EmailIdentity extends formae.Resource {
+
+    /// Domain (e.g. "example.com") or email address (e.g. "alice@example.com").
+    /// `Complete` for this resource means the identity is REGISTERED with SES,
+    /// not that it can send mail. To gate sending on verification, depend on
+    /// `AWS::SES::EmailIdentityVerification`.
+    @aws.FieldHint { createOnly = true }
+    emailIdentity: String
+
+    /// Optional default configuration set for messages sent through this identity.
+    @aws.FieldHint
+    configurationSet: (String|formae.Resolvable)?
+
+    /// MAIL FROM domain configuration. When set, the synthesized
+    /// `requiredDnsRecords` includes an MX and SPF TXT for `mailFromDomain`.
+    @aws.FieldHint
+    mailFrom: ses.MailFromAttributes?
+
+    /// Feedback forwarding for bounces/complaints.
+    @aws.FieldHint
+    feedback: ses.FeedbackAttributes?
+
+    /// DKIM configuration. v1 supports Easy DKIM only.
+    @aws.FieldHint
+    dkimSigning: ses.DkimSigningAttributes?
+
+    @aws.FieldHint {
+        outputTransformation = formae.transform.capitalizeMemberKeys
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    // ── Computed outputs (populated by the custom Read provisioner) ──
+
+    /// DNS records that must exist for this identity to verify and operate.
+    /// Empty until the first Read; consume via Resolvable to drive Route53,
+    /// cloudflare-dns, or any other DNS plugin.
+    @aws.FieldHint { hasProviderDefault = true }
+    requiredDnsRecords: Listing<ses.DnsRecord>?
+
+    /// Reflects the SES verification status. Informational only — do NOT use
+    /// as a synchronization signal; depend on EmailIdentityVerification instead.
+    @aws.FieldHint { hasProviderDefault = true }
+    verificationStatus: ses.VerificationStatus?
+
+    /// SES's DKIM-verified flag (true once 3 CNAMEs are observed).
+    @aws.FieldHint { hasProviderDefault = true }
+    dkimVerified: Boolean?
+
+    local parent = this
+
+    hidden res: EmailIdentityResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
