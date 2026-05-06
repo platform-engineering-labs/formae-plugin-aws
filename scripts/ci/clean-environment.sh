@@ -941,5 +941,25 @@ aws lambda list-code-signing-configs --region "$REGION" --max-items 100 2>/dev/n
     fi
 done
 
+# --- SES email identities (registers domain/email senders)
+# Match both FORMAE_PREFIX and the SES-specific 'formae-conformance' prefix used
+# by the SES conformance fixtures.
+echo "Cleaning SES test email identities..."
+aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$TEST_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
+    if [[ -n "$ident" ]]; then
+        echo "  Deleting SES email identity: $ident"
+        aws sesv2 delete-email-identity --email-identity "$ident" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# --- SES configuration sets (also implicitly removes their event destinations)
+echo "Cleaning SES test configuration sets..."
+aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
+    if [[ -n "$cs" ]]; then
+        echo "  Deleting SES configuration set: $cs"
+        aws sesv2 delete-configuration-set --configuration-set-name "$cs" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 echo ""
 echo "=== Cleanup complete ==="
