@@ -22,11 +22,6 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
-// sesVerificationTimeout caps how long EmailIdentityVerification will poll
-// before declaring failure. Build with -tags=conformance to use a 60s value
-// suitable for CI conformance runs (Task 17 introduces that override).
-const sesVerificationTimeout = 30 * time.Minute
-
 type verificationOutcome struct {
 	OperationStatus          resource.OperationStatus
 	Message                  string
