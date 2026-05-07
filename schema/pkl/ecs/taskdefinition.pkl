@@ -75,6 +75,7 @@ open class ContainerDefinition extends formae.SubResource {
     systemControls: Listing<SystemControl>?
     ulimits: Listing<Ulimit>?
     user: String?
+    @aws.FieldHint{hasProviderDefault = true}
     versionConsistency: ContainerDefinitionVersionConsistency?
     volumesFrom: Listing<VolumeFrom>?
     workingDirectory: String?
