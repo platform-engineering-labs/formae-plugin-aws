@@ -37,13 +37,6 @@ open class EventDestination extends formae.Resource {
     @aws.FieldHint
     matchingEventTypes: Listing<ses.MatchingEventType>(this.length > 0)
 
-    /// Discriminated-union shape: exactly one of the four `*Destination` fields
-    /// must be set. v1 enforces this at apply time via CloudControl's
-    /// ExactlyOneOf validation against the underlying CFN
-    /// `AWS::SES::ConfigurationSetEventDestination` schema. A schema-flattener
-    /// shift-left invariant was attempted but PKL evaluates `hidden`
-    /// properties lazily, so it never fires; restoring shift-left enforcement
-    /// is tracked as a follow-up (see ses-support design Section 7 risk #1).
     @aws.FieldHint
     snsDestination: ses.SnsDestinationConfig?
 
@@ -55,4 +48,16 @@ open class EventDestination extends formae.Resource {
 
     @aws.FieldHint
     cloudWatchDestination: ses.CloudWatchDestinationConfig?
+
+    /// Eagerly enforced "exactly one destination" invariant. The field's value
+    /// is derived from the four `*Destination` siblings; PKL's `Int(this == 1)`
+    /// type constraint fires at instance construction, so a forma with zero or
+    /// two-plus destinations fails at `pkl eval` rather than at apply time.
+    /// `outputCondition = (_) -> false` keeps the field out of the JSON sent
+    /// to CCAPI (CFN's schema doesn't have it).
+    @aws.FieldHint { outputCondition = (_) -> false }
+    fixed _destinationCount: Int(this == 1) =
+        List(snsDestination, kinesisFirehoseDestination,
+             eventBridgeDestination, cloudWatchDestination)
+            .count((d) -> d != null)
 }
