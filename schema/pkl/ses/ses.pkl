@@ -142,3 +142,46 @@ open class DimensionConfiguration extends formae.SubResource {
     dimensionValueSource: DimensionValueSource
     defaultDimensionValue: String
 }
+
+// ── DnsRecord resolvable wrappers ───────────────────────────────
+//
+// EmailIdentity exposes `requiredDnsRecords` as a computed Listing<DnsRecord>
+// in its resource state (populated by the custom Read provisioner). These
+// resolvable wrappers let formae authors reference individual records by
+// index — e.g. `id.res.requiredDnsRecords.at(0).name` resolves at apply
+// time to the first DKIM CNAME's name.
+//
+// JSON keys come from the Go-side DnsRecord struct's JSON tags
+// (see pkg/cfres/ses/emailidentity.go): PascalCase (Type/Name/Values/
+// RecommendedTtl/Priority).
+
+open class DnsRecordResolvable extends formae.MappingResolvable {
+    local _self = this
+
+    /// Renamed from `type` because Resolvable already declares a `type` slot.
+    hidden recordType: formae.Resolvable = (_self.at("Type"))
+    hidden name: formae.Resolvable = (_self.at("Name"))
+    hidden values: formae.ListingResolvable = new formae.ListingResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = if (_self.property != null) _self.property + ".Values" else "Values"
+        visibility = _self.visibility
+    }
+    hidden recommendedTtl: formae.Resolvable = (_self.at("RecommendedTtl"))
+    hidden priority: formae.Resolvable = (_self.at("Priority"))
+}
+
+open class DnsRecordListingResolvable extends formae.ListingResolvable {
+    local _self = this
+
+    function at(index: Int): DnsRecordResolvable = new DnsRecordResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = if (_self.property != null)
+            _self.property + "." + index.toString()
+            else index.toString()
+        visibility = _self.visibility
+    }
+}

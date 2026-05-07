@@ -7,7 +7,7 @@ amends "pkl:Project"
 // the top-level examples/PklProject.
 dependencies {
   ["formae"] {
-    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.83.0"
+    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.84.0"
   }
   ["aws"] = import("../../schema/pkl/PklProject")
 }

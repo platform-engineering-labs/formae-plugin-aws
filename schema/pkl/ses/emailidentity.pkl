@@ -17,6 +17,14 @@ open class EmailIdentityResolvable extends formae.Resolvable {
 
     hidden emailIdentity: EmailIdentityResolvable = (this) { property = "EmailIdentity" }
     hidden arn: EmailIdentityResolvable = (this) { property = "Arn" }
+
+    local _self = this
+    hidden requiredDnsRecords: ses.DnsRecordListingResolvable = new ses.DnsRecordListingResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = "RequiredDnsRecords"
+    }
 }
 
 @aws.ResourceHint {
