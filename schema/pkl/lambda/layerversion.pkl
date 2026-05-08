@@ -25,10 +25,10 @@ open class Content extends formae.SubResource {
 }
 open class LayerVersion extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     compatibleArchitectures: Listing<String>?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     compatibleRuntimes: Listing<String>?
 
     @aws.FieldHint{
@@ -38,7 +38,7 @@ open class LayerVersion extends formae.Resource {
     }
     content: Content?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     description: String?
 
     @aws.FieldHint{createOnly = true}
