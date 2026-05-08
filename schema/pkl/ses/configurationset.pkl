@@ -1,0 +1,62 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ses.configurationset
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+import "ses.pkl" as ses
+
+const type = "AWS::SES::ConfigurationSet"
+
+open class ConfigurationSetResolvable extends formae.Resolvable {
+    type = module.type
+
+    hidden name: ConfigurationSetResolvable = (this) { property = "Name" }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Name"
+    discoverable = true
+}
+open class ConfigurationSet extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    name: String
+
+    @aws.FieldHint
+    deliveryOptions: ses.DeliveryOptions?
+
+    @aws.FieldHint
+    reputationOptions: ses.ReputationOptions?
+
+    @aws.FieldHint
+    sendingOptions: ses.SendingOptions?
+
+    @aws.FieldHint
+    suppressionOptions: ses.SuppressionOptions?
+
+    @aws.FieldHint
+    trackingOptions: ses.TrackingOptions?
+
+    @aws.FieldHint
+    vdmOptions: ses.VdmOptions?
+
+    @aws.FieldHint {
+        outputTransformation = formae.transform.capitalizeMemberKeys
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: ConfigurationSetResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

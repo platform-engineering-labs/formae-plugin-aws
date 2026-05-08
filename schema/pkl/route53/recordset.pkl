@@ -99,13 +99,13 @@ open class RecordSet extends formae.Resource {
     @aws.FieldHint{
         createOnly = true
     }
-    name: String
+    name: String|formae.Resolvable
 
     region: aws.Region?
 
     @aws.FieldHint {
     }
-    resourceRecords: (Listing<String>)?
+    resourceRecords: (Listing<String|formae.Resolvable>|formae.Resolvable)?
 
     @aws.FieldHint
     setIdentifier: String?

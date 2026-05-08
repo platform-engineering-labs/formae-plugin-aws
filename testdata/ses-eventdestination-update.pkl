@@ -1,0 +1,61 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ses/ses.pkl" as ses
+import "@aws/ses/configurationset.pkl"
+import "@aws/ses/eventdestination.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ses-eventdestination-\(testRunID)"
+
+// ConfigurationSet dependency — EventDestination's parent
+local parentCs = new configurationset.ConfigurationSet {
+  label = "test-cs-for-eventdestination"
+  name = "formae-plugin-sdk-test-ed-cs-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for SES EventDestination"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Parent ConfigurationSet
+  parentCs
+
+  // EventDestination under test — updated enabled flag and matchingEventTypes
+  new eventdestination.EventDestination {
+    label = "plugin-sdk-test-eventdestination"
+    eventDestinationName = "bounces"
+    configurationSet = parentCs.res.name
+    enabled = false
+    matchingEventTypes = new {
+      "BOUNCE"
+      "COMPLAINT"
+    }
+    cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+      dimensionConfigurations = new {
+        new ses.DimensionConfiguration {
+          dimensionName = "MessageType"
+          dimensionValueSource = "MESSAGE_TAG"
+          defaultDimensionValue = "transactional"
+        }
+      }
+    }
+  }
+}

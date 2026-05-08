@@ -1,0 +1,40 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ses.emailidentityverification
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+import "ses.pkl" as ses
+
+const type = "AWS::SES::EmailIdentityVerification"
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "EmailIdentity"
+    discoverable = false
+}
+open class EmailIdentityVerification extends formae.Resource {
+
+    /// The identity to gate on. Resolvable to AWS::SES::EmailIdentity. The
+    /// reverse-edge through this Resolvable is what places verification
+    /// downstream of the identity (and therefore downstream of any DNS
+    /// records the identity's `requiredDnsRecords` drive).
+    @aws.FieldHint { createOnly = true }
+    identity: String|formae.Resolvable
+
+    // ── Computed outputs ────────────────────────────────────────
+
+    @aws.FieldHint { hasProviderDefault = true }
+    verificationStatus: ses.VerificationStatus?
+
+    @aws.FieldHint { hasProviderDefault = true }
+    dkimVerified: Boolean?
+
+    /// ISO-8601 timestamp; populated when the gate first observes SUCCESS.
+    @aws.FieldHint { hasProviderDefault = true }
+    verifiedAt: String?
+}

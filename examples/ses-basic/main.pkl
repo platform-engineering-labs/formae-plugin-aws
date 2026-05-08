@@ -1,0 +1,242 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Example: SES outbound email for a transactional sender.
+ *
+ * Demonstrates:
+ *   1. A verified domain identity with Easy DKIM and a custom MAIL FROM
+ *      domain. The provisioner synthesizes the DNS records the user must
+ *      publish (3 DKIM CNAMEs + 1 MAIL FROM MX + 1 SPF TXT) and exposes
+ *      them on `EmailIdentity.requiredDnsRecords` once Read has run.
+ *   2. Route53 RecordSets driven directly off `requiredDnsRecords` via
+ *      the typed listing resolvable, so the DNS records show up in the
+ *      same forma as the identity that synthesized them.
+ *   3. An explicit `EmailIdentityVerification` gate. Downstream consumers
+ *      should depend on the gate (not on the identity) so they only treat
+ *      the identity as send-ready once SES has observed all three DKIM
+ *      CNAMEs and the MAIL FROM records.
+ *   4. A `ConfigurationSet` with a CloudWatch event destination so
+ *      bounces / complaints / delivery delays land as CloudWatch metrics.
+ *
+ * DNS wiring:
+ *
+ *   `requiredDnsRecords` is exposed as a typed listing resolvable, so the
+ *   individual records are addressable by index at apply time:
+ *
+ *     id.res.requiredDnsRecords.at(0).name
+ *     id.res.requiredDnsRecords.at(0).values
+ *
+ *   Easy DKIM emits exactly 3 CNAME records (indexes 0..2). When MAIL FROM
+ *   is configured (as it is here), the synthesized listing also includes an
+ *   MX (index 3, priority 10) and an SPF TXT (index 4) for the MAIL FROM
+ *   domain. The cardinality is deterministic, so indexed access is enough —
+ *   the resolver does not (yet) support iterating over runtime-determined
+ *   listings.
+ *
+ *   The hosted zone is assumed to already exist and be delegated correctly.
+ *   The `domain` property below names the SES identity; the MAIL FROM
+ *   domain is derived as `mail.<domain>`.
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+import "@aws/aws.pkl"
+
+import "@aws/ses/ses.pkl" as ses
+import "@aws/ses/emailidentity.pkl"
+import "@aws/ses/emailidentityverification.pkl"
+import "@aws/ses/configurationset.pkl"
+import "@aws/ses/eventdestination.pkl"
+import "@aws/route53/hostedzone.pkl"
+import "@aws/route53/recordset.pkl"
+
+description {
+    text = """
+    SES outbound email — verified domain identity gated on verification,
+    with a ConfigurationSet routing bounce / complaint / delivery-delay
+    events to CloudWatch. Apply once per domain you want to send from.
+    The 5 DNS records that the identity requires (3 DKIM CNAMEs, 1 MAIL
+    FROM MX, 1 SPF TXT) are wired into Route53 by index off
+    `id.res.requiredDnsRecords`.
+    """
+    confirm = true
+}
+
+properties {
+    domain = new formae.Prop {
+        flag = "domain"
+        default = "example.com"
+    }
+    region = new formae.Prop {
+        flag = "region"
+        default = "us-east-1"
+    }
+}
+
+forma {
+    local stack = new formae.Stack {
+        label = "ses-basic"
+        description = "SES outbound email for \(properties.domain.value)"
+    }
+    stack
+
+    local target = new formae.Target {
+        label = "aws-target"
+        config = new aws.Config {
+            region = properties.region.value
+        }
+    }
+    target
+
+    // ── Hosted zone ────────────────────────────────────────────────
+    //
+    // Assumed already delegated. The DKIM CNAMEs and MAIL FROM records
+    // get attached to this zone below.
+
+    local zone = new hostedzone.HostedZone {
+        label = "primary-zone"
+        name = properties.domain.value
+    }
+    zone
+
+    // ── Email identity ─────────────────────────────────────────────
+    //
+    // Easy DKIM is enabled by setting `dkimSigning`; AWS rotates the
+    // signing keys for you and the identity exposes 3 CNAMEs via
+    // `requiredDnsRecords`. A custom MAIL FROM tightens DMARC alignment
+    // and adds an MX + SPF TXT to the same field.
+
+    local id = new emailidentity.EmailIdentity {
+        label = "primary-sender"
+        emailIdentity = properties.domain.value
+        mailFrom = new ses.MailFromAttributes {
+            mailFromDomain = "mail.\(properties.domain.value)"
+            behaviorOnMxFailure = "USE_DEFAULT_VALUE"
+        }
+        dkimSigning = new ses.DkimSigningAttributes {
+            nextSigningKeyLength = "RSA_2048_BIT"
+        }
+        feedback = new ses.FeedbackAttributes {
+            emailForwardingEnabled = true
+        }
+    }
+    id
+
+    // ── DNS records for SES verification + MAIL FROM ───────────────
+    //
+    // Easy DKIM emits exactly 3 CNAME records (indexes 0..2). When MAIL
+    // FROM is configured (as it is here), records 3 and 4 are the MX and
+    // SPF TXT for the mailFromDomain. Indexed access via the resolvable
+    // wires each record at apply time without manual token extraction
+    // from the agent's inventory.
+    //
+    // The MX record's `Values` already include the "10 " priority prefix
+    // (the Route53 wire format). For DNS providers that want priority as
+    // a discrete field (e.g. Cloudflare), `at(3).priority` carries the
+    // numeric value (10).
+
+    // DKIM CNAMEs
+    new recordset.RecordSet {
+        label = "ses-dkim-0"
+        hostedZoneId = zone.res.id
+        type = "CNAME"
+        name = id.res.requiredDnsRecords.at(0).name
+        resourceRecords = id.res.requiredDnsRecords.at(0).values
+        ttl = 300
+    }
+    new recordset.RecordSet {
+        label = "ses-dkim-1"
+        hostedZoneId = zone.res.id
+        type = "CNAME"
+        name = id.res.requiredDnsRecords.at(1).name
+        resourceRecords = id.res.requiredDnsRecords.at(1).values
+        ttl = 300
+    }
+    new recordset.RecordSet {
+        label = "ses-dkim-2"
+        hostedZoneId = zone.res.id
+        type = "CNAME"
+        name = id.res.requiredDnsRecords.at(2).name
+        resourceRecords = id.res.requiredDnsRecords.at(2).values
+        ttl = 300
+    }
+
+    // MAIL FROM MX (index 3) — Values has "10 " priority prefix baked in.
+    new recordset.RecordSet {
+        label = "ses-mailfrom-mx"
+        hostedZoneId = zone.res.id
+        type = "MX"
+        name = id.res.requiredDnsRecords.at(3).name
+        resourceRecords = id.res.requiredDnsRecords.at(3).values
+        ttl = 300
+    }
+
+    // MAIL FROM SPF TXT (index 4)
+    new recordset.RecordSet {
+        label = "ses-mailfrom-spf"
+        hostedZoneId = zone.res.id
+        type = "TXT"
+        name = id.res.requiredDnsRecords.at(4).name
+        resourceRecords = id.res.requiredDnsRecords.at(4).values
+        ttl = 300
+    }
+
+    // ── Verification gate ──────────────────────────────────────────
+    //
+    // `Complete` on EmailIdentity means "registered with SES", NOT
+    // "ready to send". This gate is what downstream resources (sending
+    // workloads, monitoring, alarms) should depend on.
+
+    local verified = new emailidentityverification.EmailIdentityVerification {
+        label = "primary-sender-verified"
+        identity = id.res.emailIdentity
+    }
+    verified
+
+    // ── Configuration set + bounce/complaint event destination ─────
+    //
+    // The configuration set is referenced per-message at send time
+    // (X-SES-CONFIGURATION-SET header). The CloudWatch destination
+    // emits one CloudWatch metric per matching event, dimensioned by
+    // the `MessageType` SES message tag — let your sender stamp that
+    // tag with values like `transactional`, `marketing`, etc. so the
+    // metrics partition cleanly.
+
+    local cs = new configurationset.ConfigurationSet {
+        label = "transactional"
+        name = "transactional"
+        deliveryOptions = new ses.DeliveryOptions {
+            tlsPolicy = "REQUIRE"
+        }
+        suppressionOptions = new ses.SuppressionOptions {
+            suppressedReasons = new {
+                "BOUNCE"
+                "COMPLAINT"
+            }
+        }
+    }
+    cs
+
+    new eventdestination.EventDestination {
+        label = "transactional-bounces"
+        eventDestinationName = "bounces"
+        configurationSet = cs.res.name
+        enabled = true
+        matchingEventTypes = new {
+            "BOUNCE"
+            "COMPLAINT"
+            "DELIVERY_DELAY"
+        }
+        cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+            dimensionConfigurations = new {
+                new ses.DimensionConfiguration {
+                    dimensionName = "MessageType"
+                    dimensionValueSource = "MESSAGE_TAG"
+                    defaultDimensionValue = "transactional"
+                }
+            }
+        }
+    }
+}

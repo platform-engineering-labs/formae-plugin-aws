@@ -1,0 +1,63 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ses.eventdestination
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+import "ses.pkl" as ses
+
+const type = "AWS::SES::EventDestination"
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "EventDestinationName"
+    parent = "AWS::SES::ConfigurationSet"
+    listParam = new formae.ListProperty {
+        parentProperty = "Name"
+        listParameter = "ConfigurationSetName"
+    }
+    discoverable = true
+}
+open class EventDestination extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    eventDestinationName: String
+
+    /// Resolves to AWS::SES::ConfigurationSet (use myCs.res.name).
+    @aws.FieldHint { createOnly = true }
+    configurationSet: String|formae.Resolvable
+
+    @aws.FieldHint
+    enabled: Boolean = true
+
+    @aws.FieldHint
+    matchingEventTypes: Listing<ses.MatchingEventType>(this.length > 0)
+
+    @aws.FieldHint
+    snsDestination: ses.SnsDestinationConfig?
+
+    @aws.FieldHint
+    kinesisFirehoseDestination: ses.KinesisFirehoseDestinationConfig?
+
+    @aws.FieldHint
+    eventBridgeDestination: ses.EventBridgeDestinationConfig?
+
+    @aws.FieldHint
+    cloudWatchDestination: ses.CloudWatchDestinationConfig?
+
+    /// Eagerly enforced "exactly one destination" invariant. The field's value
+    /// is derived from the four `*Destination` siblings; PKL's `Int(this == 1)`
+    /// type constraint fires at instance construction, so a forma with zero or
+    /// two-plus destinations fails at `pkl eval` rather than at apply time.
+    /// `outputCondition = (_) -> false` keeps the field out of the JSON sent
+    /// to CCAPI (CFN's schema doesn't have it).
+    @aws.FieldHint { outputCondition = (_) -> false }
+    fixed _destinationCount: Int(this == 1) =
+        List(snsDestination, kinesisFirehoseDestination,
+             eventBridgeDestination, cloudWatchDestination)
+            .count((d) -> d != null)
+}

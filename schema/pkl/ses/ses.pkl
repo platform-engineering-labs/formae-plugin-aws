@@ -1,0 +1,187 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.ses.types
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+
+// ── DNS record value-object (provider-neutral) ───────────────────
+
+typealias DnsRecordType = "TXT"|"CNAME"|"MX"|"A"|"AAAA"
+
+class DnsRecord {
+    /// DNS record type.
+    type: DnsRecordType
+    /// FQDN, no trailing dot.
+    name: String
+    /// Multi-value record. Route53 native; Cloudflare splits one record per value.
+    values: Listing<String>(this.length > 0)
+    /// Recommended TTL in seconds.
+    recommendedTtl: Int = 300
+    /// MX/SRV priority. Route53 stuffs into the value string; Cloudflare uses a
+    /// separate field. Always populated for "MX" records.
+    priority: Int?
+}
+
+// ── SES enum typealiases (SESv2 SCREAMING_SNAKE_CASE) ────────────
+
+typealias TlsPolicy = "REQUIRE"|"OPTIONAL"
+typealias HttpsPolicy = "REQUIRE"|"REQUIRE_OPEN_ONLY"|"OPTIONAL"
+typealias MatchingEventType = "SEND"|"REJECT"|"BOUNCE"|"COMPLAINT"|"DELIVERY"|"OPEN"|"CLICK"|"RENDERING_FAILURE"|"DELIVERY_DELAY"|"SUBSCRIPTION"
+typealias BehaviorOnMxFailure = "USE_DEFAULT_VALUE"|"REJECT_MESSAGE"
+typealias DkimSigningKeyLength = "RSA_1024_BIT"|"RSA_2048_BIT"
+typealias SuppressedReason = "BOUNCE"|"COMPLAINT"
+typealias DimensionValueSource = "MESSAGE_TAG"|"EMAIL_HEADER"|"LINK_TAG"
+typealias VerificationStatus = "PENDING"|"SUCCESS"|"FAILED"|"TEMPORARY_FAILURE"|"NOT_STARTED"
+typealias EngagementMetricsState = "ENABLED"|"DISABLED"
+typealias OptimizedSharedDeliveryState = "ENABLED"|"DISABLED"
+
+// ── EmailIdentity attribute sub-classes ──────────────────────────
+
+@aws.SubResourceHint
+open class MailFromAttributes extends formae.SubResource {
+    /// e.g. "mail.example.com"
+    @aws.FieldHint { createOnly = true }
+    mailFromDomain: String
+
+    behaviorOnMxFailure: BehaviorOnMxFailure = "USE_DEFAULT_VALUE"
+}
+
+@aws.SubResourceHint
+open class FeedbackAttributes extends formae.SubResource {
+    emailForwardingEnabled: Boolean = true
+}
+
+@aws.SubResourceHint
+open class DkimSigningAttributes extends formae.SubResource {
+    /// Easy DKIM signing key length. AWS rotates the keys; you publish 3 CNAMEs once.
+    nextSigningKeyLength: DkimSigningKeyLength = "RSA_2048_BIT"
+}
+
+// ── ConfigurationSet sub-classes ─────────────────────────────────
+
+@aws.SubResourceHint
+open class DeliveryOptions extends formae.SubResource {
+    tlsPolicy: TlsPolicy = "OPTIONAL"
+    /// 5 min – 14 hrs (300 .. 50400).
+    maxDeliverySeconds: Int(isBetween(300, 50400))?
+}
+
+@aws.SubResourceHint
+open class ReputationOptions extends formae.SubResource {
+    reputationMetricsEnabled: Boolean = true
+}
+
+@aws.SubResourceHint
+open class SendingOptions extends formae.SubResource {
+    sendingEnabled: Boolean = true
+}
+
+@aws.SubResourceHint
+open class SuppressionOptions extends formae.SubResource {
+    suppressedReasons: Listing<SuppressedReason>?
+}
+
+@aws.SubResourceHint
+open class TrackingOptions extends formae.SubResource {
+    customRedirectDomain: String?
+    httpsPolicy: HttpsPolicy = "REQUIRE"
+}
+
+@aws.SubResourceHint
+open class VdmOptions extends formae.SubResource {
+    dashboardOptions: DashboardOptions?
+    guardianOptions: GuardianOptions?
+}
+
+@aws.SubResourceHint
+open class DashboardOptions extends formae.SubResource {
+    engagementMetrics: EngagementMetricsState = "ENABLED"
+}
+
+@aws.SubResourceHint
+open class GuardianOptions extends formae.SubResource {
+    optimizedSharedDelivery: OptimizedSharedDeliveryState = "ENABLED"
+}
+
+// ── EventDestination sub-classes ─────────────────────────────────
+
+@aws.SubResourceHint
+open class SnsDestinationConfig extends formae.SubResource {
+    /// SNS topic ARN. Resolves to AWS::SNS::Topic.
+    topic: String|formae.Resolvable
+}
+
+@aws.SubResourceHint
+open class KinesisFirehoseDestinationConfig extends formae.SubResource {
+    /// Firehose delivery stream ARN.
+    deliveryStream: String|formae.Resolvable
+    /// IAM role ARN that SES assumes to write to Firehose.
+    iamRole: String|formae.Resolvable
+}
+
+@aws.SubResourceHint
+open class EventBridgeDestinationConfig extends formae.SubResource {
+    /// EventBridge bus ARN.
+    eventBus: String|formae.Resolvable
+}
+
+@aws.SubResourceHint
+open class CloudWatchDestinationConfig extends formae.SubResource {
+    /// At least one dimension configuration is required.
+    dimensionConfigurations: Listing<DimensionConfiguration>(this.length > 0)
+}
+
+@aws.SubResourceHint
+open class DimensionConfiguration extends formae.SubResource {
+    dimensionName: String
+    dimensionValueSource: DimensionValueSource
+    defaultDimensionValue: String
+}
+
+// ── DnsRecord resolvable wrappers ───────────────────────────────
+//
+// EmailIdentity exposes `requiredDnsRecords` as a computed Listing<DnsRecord>
+// in its resource state (populated by the custom Read provisioner). These
+// resolvable wrappers let formae authors reference individual records by
+// index — e.g. `id.res.requiredDnsRecords.at(0).name` resolves at apply
+// time to the first DKIM CNAME's name.
+//
+// JSON keys come from the Go-side DnsRecord struct's JSON tags
+// (see pkg/cfres/ses/emailidentity.go): PascalCase (Type/Name/Values/
+// RecommendedTtl/Priority).
+
+open class DnsRecordResolvable extends formae.MappingResolvable {
+    local _self = this
+
+    /// Renamed from `type` because Resolvable already declares a `type` slot.
+    hidden recordType: formae.Resolvable = (_self.at("Type"))
+    hidden name: formae.Resolvable = (_self.at("Name"))
+    hidden values: formae.ListingResolvable = new formae.ListingResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = if (_self.property != null) _self.property + ".Values" else "Values"
+        visibility = _self.visibility
+    }
+    hidden recommendedTtl: formae.Resolvable = (_self.at("RecommendedTtl"))
+    hidden priority: formae.Resolvable = (_self.at("Priority"))
+}
+
+open class DnsRecordListingResolvable extends formae.ListingResolvable {
+    local _self = this
+
+    function at(index: Int): DnsRecordResolvable = new DnsRecordResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = if (_self.property != null)
+            _self.property + "." + index.toString()
+            else index.toString()
+        visibility = _self.visibility
+    }
+}
