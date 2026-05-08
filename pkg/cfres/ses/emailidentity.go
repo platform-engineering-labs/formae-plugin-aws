@@ -106,10 +106,14 @@ func synthesizeFromIdentity(
 		*resp.MailFromAttributes.MailFromDomain != "" {
 		mailFrom := *resp.MailFromAttributes.MailFromDomain
 		mxPriority := 10
+		// Values has the priority baked in (Route53's MX wire format).
+		// Priority stays populated for DNS providers (e.g. Cloudflare) that
+		// want priority as a discrete field — they can derive it from this
+		// field and use Values[0] minus the prefix.
 		records = append(records, DnsRecord{
 			Type:           "MX",
 			Name:           mailFrom,
-			Values:         []string{"feedback-smtp." + region + ".amazonses.com"},
+			Values:         []string{"10 feedback-smtp." + region + ".amazonses.com"},
 			RecommendedTtl: 300,
 			Priority:       &mxPriority,
 		})

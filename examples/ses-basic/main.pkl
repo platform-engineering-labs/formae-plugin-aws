@@ -127,21 +127,15 @@ forma {
     // ── DNS records for SES verification + MAIL FROM ───────────────
     //
     // Easy DKIM emits exactly 3 CNAME records (indexes 0..2). When MAIL
-    // FROM is configured (as it is here), records 3 and 4 are the MX
-    // (priority 10) and SPF TXT for the mailFromDomain. Indexed access
-    // via the resolvable wires each record at apply time without manual
-    // token extraction from the agent's inventory.
+    // FROM is configured (as it is here), records 3 and 4 are the MX and
+    // SPF TXT for the mailFromDomain. Indexed access via the resolvable
+    // wires each record at apply time without manual token extraction
+    // from the agent's inventory.
     //
-    // NOTE on the MX record: AWS exposes the MAIL FROM MX value as the
-    // host only ("feedback-smtp.<region>.amazonses.com") and a separate
-    // priority (10). Route53 wants the priority embedded in the value
-    // string ("10 host..."). Because `at(3).values` is a Resolvable —
-    // resolved on the agent at apply time — we cannot string-interpolate
-    // the "10 " prefix in PKL. We emit the bare host value here; Route53
-    // will accept it but list it without an explicit priority. Operators
-    // who need the canonical "10 host" format should declare the MX
-    // record by hand for now (and we will track a follow-up to teach the
-    // resolver to handle string templating against Resolvable values).
+    // The MX record's `Values` already include the "10 " priority prefix
+    // (the Route53 wire format). For DNS providers that want priority as
+    // a discrete field (e.g. Cloudflare), `at(3).priority` carries the
+    // numeric value (10).
 
     // DKIM CNAMEs
     new recordset.RecordSet {
@@ -169,7 +163,7 @@ forma {
         ttl = 300
     }
 
-    // MAIL FROM MX (index 3) — see NOTE above re: priority encoding.
+    // MAIL FROM MX (index 3) — Values has "10 " priority prefix baked in.
     new recordset.RecordSet {
         label = "ses-mailfrom-mx"
         hostedZoneId = zone.res.id

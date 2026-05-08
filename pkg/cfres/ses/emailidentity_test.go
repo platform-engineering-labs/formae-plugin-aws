@@ -87,7 +87,7 @@ func TestSynthesizeRequiredDnsRecords_MailFromIncludesMxAndSpf(t *testing.T) {
 	}
 	assert.NotNil(t, mx, "MX record present")
 	assert.Equal(t, mailFrom, mx.Name)
-	assert.Equal(t, []string{"feedback-smtp.eu-central-1.amazonses.com"}, mx.Values)
+	assert.Equal(t, []string{"10 feedback-smtp.eu-central-1.amazonses.com"}, mx.Values)
 	assert.NotNil(t, mx.Priority)
 	assert.Equal(t, 10, *mx.Priority)
 
