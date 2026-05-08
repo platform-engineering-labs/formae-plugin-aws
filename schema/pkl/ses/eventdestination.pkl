@@ -10,7 +10,7 @@ import "../aws.pkl"
 import "@formae/formae.pkl"
 import "ses.pkl" as ses
 
-const type = "AWS::SES::EventDestination"
+const type = "AWS::SES::ConfigurationSetEventDestination"
 
 @aws.ResourceHint {
     type = module.type
