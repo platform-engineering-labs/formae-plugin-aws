@@ -20,7 +20,10 @@ open class PlacementGroup extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     partitionCount: Int?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
     spreadLevel: String?
 
     @aws.FieldHint{createOnly = true}
