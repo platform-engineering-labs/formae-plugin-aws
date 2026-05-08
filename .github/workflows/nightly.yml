@@ -145,7 +145,15 @@ jobs:
           LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
           echo "Building formae with VERSION=${LATEST_TAG}"
           make build VERSION="${LATEST_TAG}"
-          echo "FORMAE_BINARY=/tmp/formae/formae" >> $GITHUB_ENV
+
+          # formae main expects an orbital tree at the path derived from the
+          # binary location (introduced in formae#bfeeb541 — orbital-based
+          # plugin distribution). `make build` only produces the binary; we
+          # have to lay out the tree skeleton ourselves. Mirrors the pattern
+          # used in formae's own e2e-tests workflow.
+          mkdir -p dist/bin dist/.ops
+          cp formae dist/bin/formae
+          echo "FORMAE_BINARY=/tmp/formae/dist/bin/formae" >> $GITHUB_ENV
 
       - name: Track formae clone
         if: env.POSTHOG_API_KEY != ''
