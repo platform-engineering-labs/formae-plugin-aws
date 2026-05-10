@@ -221,20 +221,22 @@ forma {
 
     new eventdestination.EventDestination {
         label = "transactional-bounces"
-        eventDestinationName = "bounces"
         configurationSet = cs.res.name
-        enabled = true
-        matchingEventTypes = new {
-            "BOUNCE"
-            "COMPLAINT"
-            "DELIVERY_DELAY"
-        }
-        cloudWatchDestination = new ses.CloudWatchDestinationConfig {
-            dimensionConfigurations = new {
-                new ses.DimensionConfiguration {
-                    dimensionName = "MessageType"
-                    dimensionValueSource = "MESSAGE_TAG"
-                    defaultDimensionValue = "transactional"
+        eventDestination = new ses.EventDestinationDefinition {
+            name = "bounces"
+            enabled = true
+            matchingEventTypes = new {
+                "BOUNCE"
+                "COMPLAINT"
+                "DELIVERY_DELAY"
+            }
+            cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+                dimensionConfigurations = new {
+                    new ses.DimensionConfiguration {
+                        dimensionName = "MessageType"
+                        dimensionValueSource = "MESSAGE_TAG"
+                        defaultDimensionValue = "transactional"
+                    }
                 }
             }
         }

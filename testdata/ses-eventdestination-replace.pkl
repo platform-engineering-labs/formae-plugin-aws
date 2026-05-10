@@ -16,10 +16,12 @@ import "@aws/ses/eventdestination.pkl"
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-ses-eventdestination-\(testRunID)"
 
-// ConfigurationSet dependency — EventDestination's parent
+// Replaced parent CS — `ConfigurationSetName` is the only createOnly
+// property on AWS::SES::ConfigurationSetEventDestination, so swapping it
+// is what triggers the destroy/recreate cycle in the replace path.
 local parentCs = new configurationset.ConfigurationSet {
   label = "test-cs-for-eventdestination"
-  name = "formae-plugin-sdk-test-ed-cs-\(testRunID)"
+  name = "formae-plugin-sdk-test-ed-cs-replaced-\(testRunID)"
 }
 
 forma {
@@ -35,26 +37,26 @@ forma {
     }
   }
 
-  // Parent ConfigurationSet
   parentCs
 
-  // Replaced eventDestinationName (createOnly field) — forces destroy/recreate
   new eventdestination.EventDestination {
     label = "plugin-sdk-test-eventdestination"
-    eventDestinationName = "bounces-renamed"
     configurationSet = parentCs.res.name
-    enabled = true
-    matchingEventTypes = new {
-      "BOUNCE"
-      "COMPLAINT"
-      "DELIVERY_DELAY"
-    }
-    cloudWatchDestination = new ses.CloudWatchDestinationConfig {
-      dimensionConfigurations = new {
-        new ses.DimensionConfiguration {
-          dimensionName = "MessageType"
-          dimensionValueSource = "MESSAGE_TAG"
-          defaultDimensionValue = "transactional"
+    eventDestination = new ses.EventDestinationDefinition {
+      name = "bounces"
+      enabled = true
+      matchingEventTypes = new {
+        "BOUNCE"
+        "COMPLAINT"
+        "DELIVERY_DELAY"
+      }
+      cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+        dimensionConfigurations = new {
+          new ses.DimensionConfiguration {
+            dimensionName = "MessageType"
+            dimensionValueSource = "MESSAGE_TAG"
+            defaultDimensionValue = "transactional"
+          }
         }
       }
     }
