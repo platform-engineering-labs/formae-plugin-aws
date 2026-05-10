@@ -32,8 +32,18 @@ open class EventDestination extends formae.Resource {
     }
     configurationSet: String|formae.Resolvable
 
-    /// The actual event-destination configuration (CFN nests this under an
-    /// `EventDestination` object on the resource).
+    /// The actual event-destination configuration. CFN's
+    /// `AWS::SES::ConfigurationSetEventDestination` nests the destination
+    /// definition under an `EventDestination` property; the user must
+    /// populate exactly one of `snsDestination`,
+    /// `kinesisFirehoseDestination`, `eventBridgeDestination`, or
+    /// `cloudWatchDestination`. We attempted a PKL-evaluation-time
+    /// `_destinationCount` invariant to enforce this client-side, but the
+    /// schema flattener serializes the marker field through to CCAPI even
+    /// with `outputCondition = (_) -> false`, and CCAPI rejects it as
+    /// `extraneous key`. Until that's fixed in formae core, the
+    /// "exactly one" rule is enforced at apply time by CCAPI's own
+    /// `ExactlyOneOf` validation against the CFN schema.
     @aws.FieldHint
     eventDestination: ses.EventDestinationDefinition
 }

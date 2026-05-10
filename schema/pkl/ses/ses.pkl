@@ -157,18 +157,6 @@ open class EventDestinationDefinition extends formae.SubResource {
     kinesisFirehoseDestination: KinesisFirehoseDestinationConfig?
     eventBridgeDestination: EventBridgeDestinationConfig?
     cloudWatchDestination: CloudWatchDestinationConfig?
-
-    /// Eagerly enforced "exactly one destination" invariant. The field's value
-    /// is derived from the four `*Destination` siblings; PKL's
-    /// `Int(this == 1)` type constraint fires at instance construction, so a
-    /// forma with zero or two-plus destinations fails at `pkl eval` rather
-    /// than at apply time. `outputCondition = (_) -> false` keeps the field
-    /// out of the JSON sent to CCAPI (CFN's schema doesn't have it).
-    @aws.FieldHint { outputCondition = (_) -> false }
-    fixed _destinationCount: Int(this == 1) =
-        List(snsDestination, kinesisFirehoseDestination,
-             eventBridgeDestination, cloudWatchDestination)
-            .count((d) -> d != null)
 }
 
 @aws.SubResourceHint
