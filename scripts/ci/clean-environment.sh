@@ -501,6 +501,26 @@ aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
     fi
 done
 
+# --- ECS task sets (before services; task sets block service deletion)
+# AWS CLI has no `ecs list-task-sets`; task set ARNs come from
+# `describe-services` under `.services[].taskSets[].taskSetArn`.
+echo "Cleaning ECS test task sets..."
+aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
+    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
+        aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r svc_arn; do
+            if [[ -n "$svc_arn" ]]; then
+                aws ecs describe-services --cluster "$cluster_arn" --services "$svc_arn" --region "$REGION" \
+                    --query "services[].taskSets[].taskSetArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r ts_arn; do
+                    if [[ -n "$ts_arn" ]]; then
+                        echo "  Deleting ECS task set: $ts_arn"
+                        aws ecs delete-task-set --cluster "$cluster_arn" --service "$svc_arn" --task-set "$ts_arn" --force --region "$REGION" 2>/dev/null || true
+                    fi
+                done
+            fi
+        done
+    fi
+done
+
 # --- ECS services (before clusters)
 echo "Cleaning ECS test services..."
 aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
@@ -772,7 +792,7 @@ done
 # 29. Delete ECS clusters with test prefix
 echo "Cleaning ECS test clusters..."
 aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && "$cluster_arn" == *"$FORMAE_PREFIX"* ]]; then
+    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
         echo "  Deleting ECS cluster: $cluster_arn"
         aws ecs delete-cluster --cluster "$cluster_arn" --region "$REGION" 2>/dev/null || true
     fi
@@ -780,19 +800,21 @@ done
 
 # 30. Deregister ECS task definitions with test prefix
 echo "Cleaning ECS test task definitions..."
-aws ecs list-task-definition-families --region "$REGION" --family-prefix "$FORMAE_PREFIX" --status ACTIVE \
-    --query "families[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r family; do
-    if [[ -n "$family" ]]; then
-        echo "  Deregistering task definitions for family: $family"
-        aws ecs list-task-definitions --region "$REGION" --family-prefix "$family" --status ACTIVE \
-            --query "taskDefinitionArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r td_arn; do
-            [[ -n "$td_arn" ]] && aws ecs deregister-task-definition --task-definition "$td_arn" --region "$REGION" 2>/dev/null || true
-        done
-        # Also delete inactive task definitions
-        aws ecs delete-task-definitions --region "$REGION" --task-definitions \
-            $(aws ecs list-task-definitions --region "$REGION" --family-prefix "$family" --status INACTIVE \
-                --query "taskDefinitionArns[]" --output text 2>/dev/null) 2>/dev/null || true
-    fi
+for ecs_family_prefix in "$FORMAE_PREFIX" "$SDK_PREFIX"; do
+    aws ecs list-task-definition-families --region "$REGION" --family-prefix "$ecs_family_prefix" --status ACTIVE \
+        --query "families[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r family; do
+        if [[ -n "$family" ]]; then
+            echo "  Deregistering task definitions for family: $family"
+            aws ecs list-task-definitions --region "$REGION" --family-prefix "$family" --status ACTIVE \
+                --query "taskDefinitionArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r td_arn; do
+                [[ -n "$td_arn" ]] && aws ecs deregister-task-definition --task-definition "$td_arn" --region "$REGION" 2>/dev/null || true
+            done
+            # Also delete inactive task definitions
+            aws ecs delete-task-definitions --region "$REGION" --task-definitions \
+                $(aws ecs list-task-definitions --region "$REGION" --family-prefix "$family" --status INACTIVE \
+                    --query "taskDefinitionArns[]" --output text 2>/dev/null) 2>/dev/null || true
+        fi
+    done
 done
 
 # ============================================================================
