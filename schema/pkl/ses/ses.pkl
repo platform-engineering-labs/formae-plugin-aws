@@ -13,7 +13,8 @@ import "@formae/formae.pkl"
 
 typealias DnsRecordType = "TXT"|"CNAME"|"MX"|"A"|"AAAA"
 
-class DnsRecord {
+@aws.SubResourceHint
+open class DnsRecord extends formae.SubResource {
     /// DNS record type.
     type: DnsRecordType
     /// FQDN, no trailing dot.
