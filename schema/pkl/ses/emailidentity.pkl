@@ -47,15 +47,15 @@ open class EmailIdentity extends formae.Resource {
 
     /// MAIL FROM domain configuration. When set, the synthesized
     /// `requiredDnsRecords` includes an MX and SPF TXT for `mailFromDomain`.
-    @aws.FieldHint
+    @aws.FieldHint { outputField = "MailFromAttributes" }
     mailFrom: ses.MailFromAttributes?
 
     /// Feedback forwarding for bounces/complaints.
-    @aws.FieldHint
+    @aws.FieldHint { outputField = "FeedbackAttributes" }
     feedback: ses.FeedbackAttributes?
 
     /// DKIM configuration. v1 supports Easy DKIM only.
-    @aws.FieldHint
+    @aws.FieldHint { outputField = "DkimSigningAttributes" }
     dkimSigning: ses.DkimSigningAttributes?
 
     @aws.FieldHint {

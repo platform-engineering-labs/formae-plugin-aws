@@ -38,23 +38,27 @@ forma {
   // Parent ConfigurationSet
   parentCs
 
-  // EventDestination under test
+  // EventDestination under test. CFN's `AWS::SES::ConfigurationSetEventDestination`
+  // nests the destination config under the `EventDestination` property; the
+  // resource's primary identifier is `Id` (a composite the agent computes).
   new eventdestination.EventDestination {
     label = "plugin-sdk-test-eventdestination"
-    eventDestinationName = "bounces"
     configurationSet = parentCs.res.name
-    enabled = true
-    matchingEventTypes = new {
-      "BOUNCE"
-      "COMPLAINT"
-      "DELIVERY_DELAY"
-    }
-    cloudWatchDestination = new ses.CloudWatchDestinationConfig {
-      dimensionConfigurations = new {
-        new ses.DimensionConfiguration {
-          dimensionName = "MessageType"
-          dimensionValueSource = "MESSAGE_TAG"
-          defaultDimensionValue = "transactional"
+    eventDestination = new ses.EventDestinationDefinition {
+      name = "bounces"
+      enabled = true
+      matchingEventTypes = new {
+        "BOUNCE"
+        "COMPLAINT"
+        "DELIVERY_DELAY"
+      }
+      cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+        dimensionConfigurations = new {
+          new ses.DimensionConfiguration {
+            dimensionName = "MessageType"
+            dimensionValueSource = "MESSAGE_TAG"
+            defaultDimensionValue = "transactional"
+          }
         }
       }
     }

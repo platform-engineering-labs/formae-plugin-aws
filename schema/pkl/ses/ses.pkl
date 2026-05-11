@@ -13,7 +13,8 @@ import "@formae/formae.pkl"
 
 typealias DnsRecordType = "TXT"|"CNAME"|"MX"|"A"|"AAAA"
 
-class DnsRecord {
+@aws.SubResourceHint
+open class DnsRecord extends formae.SubResource {
     /// DNS record type.
     type: DnsRecordType
     /// FQDN, no trailing dot.
@@ -113,20 +114,24 @@ open class GuardianOptions extends formae.SubResource {
 @aws.SubResourceHint
 open class SnsDestinationConfig extends formae.SubResource {
     /// SNS topic ARN. Resolves to AWS::SNS::Topic.
+    @aws.FieldHint { outputField = "TopicARN" }
     topic: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
 open class KinesisFirehoseDestinationConfig extends formae.SubResource {
     /// Firehose delivery stream ARN.
+    @aws.FieldHint { outputField = "DeliveryStreamARN" }
     deliveryStream: String|formae.Resolvable
     /// IAM role ARN that SES assumes to write to Firehose.
+    @aws.FieldHint { outputField = "IAMRoleARN" }
     iamRole: String|formae.Resolvable
 }
 
 @aws.SubResourceHint
 open class EventBridgeDestinationConfig extends formae.SubResource {
     /// EventBridge bus ARN.
+    @aws.FieldHint { outputField = "EventBusArn" }
     eventBus: String|formae.Resolvable
 }
 
@@ -134,6 +139,25 @@ open class EventBridgeDestinationConfig extends formae.SubResource {
 open class CloudWatchDestinationConfig extends formae.SubResource {
     /// At least one dimension configuration is required.
     dimensionConfigurations: Listing<DimensionConfiguration>(this.length > 0)
+}
+
+/// Nested EventDestination config (the body of the CFN
+/// `AWS::SES::ConfigurationSetEventDestination` resource's
+/// `EventDestination` property).
+@aws.SubResourceHint
+open class EventDestinationDefinition extends formae.SubResource {
+    /// Friendly destination name. Becomes part of the resource's
+    /// `Id` (the CFN primary identifier).
+    name: String?
+
+    enabled: Boolean = true
+
+    matchingEventTypes: Listing<MatchingEventType>(this.length > 0)
+
+    snsDestination: SnsDestinationConfig?
+    kinesisFirehoseDestination: KinesisFirehoseDestinationConfig?
+    eventBridgeDestination: EventBridgeDestinationConfig?
+    cloudWatchDestination: CloudWatchDestinationConfig?
 }
 
 @aws.SubResourceHint

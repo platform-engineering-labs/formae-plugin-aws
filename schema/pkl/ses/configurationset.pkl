@@ -31,10 +31,12 @@ open class ConfigurationSet extends formae.Resource {
     @aws.FieldHint
     deliveryOptions: ses.DeliveryOptions?
 
-    @aws.FieldHint
+    /// AWS auto-populates these even when not specified — mark
+    /// hasProviderDefault so the planner doesn't see drift on first sync.
+    @aws.FieldHint { hasProviderDefault = true }
     reputationOptions: ses.ReputationOptions?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     sendingOptions: ses.SendingOptions?
 
     @aws.FieldHint

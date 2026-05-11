@@ -38,22 +38,24 @@ forma {
   // Parent ConfigurationSet
   parentCs
 
-  // EventDestination under test — updated enabled flag and matchingEventTypes
+  // EventDestination under test — updated enabled flag and matchingEventTypes.
   new eventdestination.EventDestination {
     label = "plugin-sdk-test-eventdestination"
-    eventDestinationName = "bounces"
     configurationSet = parentCs.res.name
-    enabled = false
-    matchingEventTypes = new {
-      "BOUNCE"
-      "COMPLAINT"
-    }
-    cloudWatchDestination = new ses.CloudWatchDestinationConfig {
-      dimensionConfigurations = new {
-        new ses.DimensionConfiguration {
-          dimensionName = "MessageType"
-          dimensionValueSource = "MESSAGE_TAG"
-          defaultDimensionValue = "transactional"
+    eventDestination = new ses.EventDestinationDefinition {
+      name = "bounces"
+      enabled = false
+      matchingEventTypes = new {
+        "BOUNCE"
+        "COMPLAINT"
+      }
+      cloudWatchDestination = new ses.CloudWatchDestinationConfig {
+        dimensionConfigurations = new {
+          new ses.DimensionConfiguration {
+            dimensionName = "MessageType"
+            dimensionValueSource = "MESSAGE_TAG"
+            defaultDimensionValue = "transactional"
+          }
         }
       }
     }
