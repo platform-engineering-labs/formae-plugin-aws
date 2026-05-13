@@ -171,7 +171,7 @@ func TestCreateResource_InProgress_NilIdentifier(t *testing.T) {
 	require.Equal(t, "", result.ProgressResult.NativeID)
 }
 
-func TestStatusResource_F11_TGNotAssociated_RemapsToInProgress(t *testing.T) {
+func TestStatusResource_TGCreateRace_RemapsToInProgress(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
 
@@ -189,7 +189,7 @@ func TestStatusResource_F11_TGNotAssociated_RemapsToInProgress(t *testing.T) {
 
 	result, err := client.StatusResource(
 		context.Background(),
-		&resource.StatusRequest{RequestID: "req-token-f11"},
+		&resource.StatusRequest{RequestID: "req-token-tg-race"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			t.Fatalf("readFunc should not be called when remapping to InProgress")
 			return nil, nil
@@ -199,10 +199,10 @@ func TestStatusResource_F11_TGNotAssociated_RemapsToInProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
-		"F-11 'TG not associated' on Create must remap to InProgress so PluginOperator keeps polling")
+		"'TG not associated' on Create must remap to InProgress so PluginOperator keeps polling")
 }
 
-func TestStatusResource_F11_NotRemappedOnUpdate(t *testing.T) {
+func TestStatusResource_TGCreateRace_NotRemappedOnUpdate(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
 
@@ -220,7 +220,7 @@ func TestStatusResource_F11_NotRemappedOnUpdate(t *testing.T) {
 
 	result, err := client.StatusResource(
 		context.Background(),
-		&resource.StatusRequest{RequestID: "req-token-f11-update"},
+		&resource.StatusRequest{RequestID: "req-token-tg-race-update"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			return nil, nil
 		},
@@ -229,10 +229,10 @@ func TestStatusResource_F11_NotRemappedOnUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEqual(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
-		"F-11 pattern on Update is a different state (not the create-vs-listener race) — must not remap")
+		"'TG not associated' on Update is a different state (not the create-vs-listener race) — must not remap")
 }
 
-func TestStatusResource_F11_NotRemappedOnDifferentErrorCode(t *testing.T) {
+func TestStatusResource_TGCreateRace_NotRemappedOnDifferentErrorCode(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
 
@@ -250,7 +250,7 @@ func TestStatusResource_F11_NotRemappedOnDifferentErrorCode(t *testing.T) {
 
 	result, err := client.StatusResource(
 		context.Background(),
-		&resource.StatusRequest{RequestID: "req-token-f11-wrong-code"},
+		&resource.StatusRequest{RequestID: "req-token-tg-race-wrong-code"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			return nil, nil
 		},
@@ -262,7 +262,7 @@ func TestStatusResource_F11_NotRemappedOnDifferentErrorCode(t *testing.T) {
 		"matching message text under a different error code must not remap — code is the safety rail")
 }
 
-func TestStatusResource_F11_NotRemappedOnUnrelatedMessage(t *testing.T) {
+func TestStatusResource_TGCreateRace_NotRemappedOnUnrelatedMessage(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
 
@@ -280,7 +280,7 @@ func TestStatusResource_F11_NotRemappedOnUnrelatedMessage(t *testing.T) {
 
 	result, err := client.StatusResource(
 		context.Background(),
-		&resource.StatusRequest{RequestID: "req-token-f11-wrong-msg"},
+		&resource.StatusRequest{RequestID: "req-token-tg-race-wrong-msg"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			return nil, nil
 		},
