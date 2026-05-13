@@ -171,6 +171,127 @@ func TestCreateResource_InProgress_NilIdentifier(t *testing.T) {
 	require.Equal(t, "", result.ProgressResult.NativeID)
 }
 
+func TestStatusResource_F11_TGNotAssociated_RemapsToInProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationCreate,
+				OperationStatus: cctypes.OperationStatusFailed,
+				ErrorCode:       cctypes.HandlerErrorCodeInvalidRequest,
+				StatusMessage:   ptr.Of("The target group with targetGroupArn arn:aws:elasticloadbalancing:us-west-2:123:targetgroup/foo/abc does not have an associated load balancer."),
+				TypeName:        ptr.Of("AWS::ECS::Service"),
+			},
+		}, nil,
+	)
+
+	result, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-token-f11"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			t.Fatalf("readFunc should not be called when remapping to InProgress")
+			return nil, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"F-11 'TG not associated' on Create must remap to InProgress so PluginOperator keeps polling")
+}
+
+func TestStatusResource_F11_NotRemappedOnUpdate(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationUpdate,
+				OperationStatus: cctypes.OperationStatusFailed,
+				ErrorCode:       cctypes.HandlerErrorCodeInvalidRequest,
+				StatusMessage:   ptr.Of("The target group with targetGroupArn arn:aws:elasticloadbalancing:us-west-2:123:targetgroup/foo/abc does not have an associated load balancer."),
+				TypeName:        ptr.Of("AWS::ECS::Service"),
+			},
+		}, nil,
+	)
+
+	result, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-token-f11-update"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			return nil, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEqual(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"F-11 pattern on Update is a different state (not the create-vs-listener race) — must not remap")
+}
+
+func TestStatusResource_F11_NotRemappedOnDifferentErrorCode(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationCreate,
+				OperationStatus: cctypes.OperationStatusFailed,
+				ErrorCode:       cctypes.HandlerErrorCodeAccessDenied,
+				StatusMessage:   ptr.Of("The target group with targetGroupArn arn:aws:elasticloadbalancing:us-west-2:123:targetgroup/foo/abc does not have an associated load balancer."),
+				TypeName:        ptr.Of("AWS::ECS::Service"),
+			},
+		}, nil,
+	)
+
+	result, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-token-f11-wrong-code"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			return nil, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEqual(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"matching message text under a different error code must not remap — code is the safety rail")
+}
+
+func TestStatusResource_F11_NotRemappedOnUnrelatedMessage(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationCreate,
+				OperationStatus: cctypes.OperationStatusFailed,
+				ErrorCode:       cctypes.HandlerErrorCodeInvalidRequest,
+				StatusMessage:   ptr.Of("Some other validation error about a different field"),
+				TypeName:        ptr.Of("AWS::ECS::Service"),
+			},
+		}, nil,
+	)
+
+	result, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-token-f11-wrong-msg"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			return nil, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEqual(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"InvalidRequest on Create with an unrelated message must not remap — message is the discriminator")
+}
+
 func TestUpdateResource_SynchronousSuccess_PopulatesResourceProperties(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}

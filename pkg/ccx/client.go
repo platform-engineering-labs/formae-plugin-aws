@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,6 +26,13 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ptr"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/status"
 )
+
+// tgNotAssociatedPattern matches the AWS error surfaced when an ECS service
+// is created before its target group has been wired to a load balancer
+// (F-11). Combined with HandlerErrorCodeInvalidRequest in StatusResource,
+// this turns the error into a "keep polling" signal so the PluginOperator's
+// existing retry budget can absorb the race.
+var tgNotAssociatedPattern = regexp.MustCompile(`(?i)target group .* does not have an associated load balancer`)
 
 // cloudControlAPI defines the CloudControl operations used by Client.
 type cloudControlAPI interface {
@@ -338,6 +346,18 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	// in AWS's control plane. Treat as InProgress to keep polling rather than
 	// retrying the create (which could cause AlreadyExists errors).
 	if result.ProgressEvent.Operation == cctypes.OperationCreate && result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotFound {
+		operationStatus = resource.OperationStatusInProgress
+	}
+
+	// F-11: TG not associated with LB during ECS Service create. The Listener
+	// that wires the TG↔LB association may still be in flight in the same apply;
+	// keep polling so the next CloudControl retry succeeds once Listener.create
+	// completes. Pairing the error code with a status-message substring means a
+	// wording change alone produces a missed remap (graceful) and a code change
+	// fails loudly (caught by the dedicated unit test).
+	if result.ProgressEvent.Operation == cctypes.OperationCreate &&
+		result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeInvalidRequest &&
+		tgNotAssociatedPattern.MatchString(aws.ToString(result.ProgressEvent.StatusMessage)) {
 		operationStatus = resource.OperationStatusInProgress
 	}
 
