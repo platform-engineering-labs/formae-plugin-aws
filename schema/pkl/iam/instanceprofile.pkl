@@ -11,6 +11,18 @@ import "../aws.pkl"
 
 const type = "AWS::IAM::InstanceProfile"
 
+open class InstanceProfileResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: InstanceProfileResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden instanceProfileName: InstanceProfileResolvable = (this) {
+        property = "InstanceProfileName"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "InstanceProfileName"
@@ -25,4 +37,11 @@ open class InstanceProfile extends formae.Resource {
 
     @aws.FieldHint
     roles: Listing<String|formae.Resolvable>
+
+    hidden parent = this
+
+    hidden res: InstanceProfileResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
