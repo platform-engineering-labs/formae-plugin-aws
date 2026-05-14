@@ -23,7 +23,7 @@ open class MountTargetResolvable extends formae.Resolvable {
     }
 
     hidden fileSystemId: MountTargetResolvable = (this) {
-        property = "fileSystemId"
+        property = "FileSystemId"
     }
 }
 
