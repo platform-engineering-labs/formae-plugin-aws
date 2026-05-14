@@ -1,0 +1,191 @@
+name: Debug Conformance
+
+# On-demand workflow for re-running a focused set of conformance tests.
+# Used to bisect regressions or iterate on a fix without paying for the
+# full conformance matrix.
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_cases:
+        description: "Comma-separated test cases (e.g. ses-eventdestination,route53-recordset)"
+        required: true
+        type: string
+      formae_ref:
+        description: "Formae git ref (branch/tag/SHA) to build from. Leave empty to use the latest released binary."
+        required: false
+        default: ""
+        type: string
+      max_attempts:
+        description: "Retries per test (default 1; debug runs typically don't want retries)"
+        required: false
+        default: "1"
+        type: string
+      pre_cleanup:
+        description: "Run pre-cleanup before tests"
+        required: false
+        default: true
+        type: boolean
+
+# Share the conformance-tests serialization group with CI/nightly so we
+# never race for shared AWS state. Debug invocations queue behind any
+# in-flight CI/nightly run.
+concurrency:
+  group: aws-conformance-tests
+  cancel-in-progress: false
+
+jobs:
+  parse-input:
+    runs-on: ubuntu-latest
+    outputs:
+      test-cases: ${{ steps.parse.outputs.test-cases }}
+    steps:
+      - name: Parse test_cases input
+        id: parse
+        run: |
+          # Convert "a, b,c" → ["a","b","c"]
+          TEST_CASES=$(echo '${{ inputs.test_cases }}' \
+            | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "Parsed test cases: ${TEST_CASES}"
+          echo "test-cases=${TEST_CASES}" >> "$GITHUB_OUTPUT"
+
+  pre-cleanup:
+    needs: [parse-input]
+    if: inputs.pre_cleanup
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v6
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: DebugPreCleanup
+
+      - name: Clean test resources
+        run: ./scripts/ci/clean-environment.sh
+
+  conformance-tests:
+    needs: [parse-input, pre-cleanup]
+    # When pre_cleanup=false the pre-cleanup job is skipped; without an
+    # explicit if-clause this job would skip too because a needed job
+    # didn't succeed.
+    if: ${{ !cancelled() && needs.parse-input.result == 'success' && (needs.pre-cleanup.result == 'success' || needs.pre-cleanup.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        test-case: ${{ fromJson(needs.parse-input.outputs.test-cases) }}
+      max-parallel: 5
+      fail-fast: false
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Set up Pkl
+        uses: pkl-community/setup-pkl@v0.0.8
+        with:
+          pkl-version: 0.30.0
+
+      # === Source-build path: only runs when formae_ref is provided ===
+      # When unset, scripts/run-conformance-tests.sh downloads the latest
+      # released formae binary, matching CI behavior.
+
+      - name: Build formae from ref ${{ inputs.formae_ref }}
+        if: inputs.formae_ref != ''
+        run: |
+          REF="${{ inputs.formae_ref }}"
+          echo "Building formae from ref: ${REF}"
+          # Full clone — --branch doesn't accept arbitrary SHAs.
+          git clone https://github.com/platform-engineering-labs/formae.git /tmp/formae
+          cd /tmp/formae
+          git checkout "${REF}"
+          git fetch --tags
+          # Latest release tag becomes the build's VERSION (skips pre-releases).
+          LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
+          echo "Building formae with VERSION=${LATEST_TAG}"
+          make build VERSION="${LATEST_TAG}"
+
+          # formae main expects an orbital tree at the path derived from the
+          # binary location (introduced in formae#bfeeb541). `make build`
+          # only produces the binary; lay out the tree skeleton ourselves.
+          mkdir -p dist/bin dist/.ops
+          cp formae dist/bin/formae
+          echo "FORMAE_BINARY=/tmp/formae/dist/bin/formae" >> $GITHUB_ENV
+
+      - name: Inject formae replace directives
+        if: inputs.formae_ref != ''
+        run: |
+          FORMAE_SRC=/tmp/formae
+          for pkg in pkg/auth pkg/model pkg/plugin pkg/plugin-conformance-tests; do
+            if grep -q "formae/$pkg" go.mod 2>/dev/null; then
+              echo "Injecting replace for $pkg -> $FORMAE_SRC/$pkg"
+              go mod edit -replace "github.com/platform-engineering-labs/formae/$pkg=$FORMAE_SRC/$pkg"
+            fi
+          done
+          go mod tidy
+
+      # Note: nightly's "Align plugin branch with formae Makefile" step is
+      # intentionally omitted. Debug runs test the plugin code at the ref
+      # the workflow was dispatched on, regardless of formae's Makefile pin.
+      # === End source-build path ===
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: DebugConformance
+          role-duration-seconds: 7200
+
+      - name: Install plugin
+        run: make install
+
+      - name: Run conformance test (${{ matrix.test-case }})
+        uses: nick-fields/retry@v4
+        env:
+          AWS_REGION: us-east-1
+          FORMAE_TEST_RUN_ID: debug-${{ github.run_id }}-${{ github.run_attempt }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+        with:
+          timeout_minutes: 60
+          max_attempts: ${{ fromJson(inputs.max_attempts) }}
+          on_retry_command: ./scripts/ci/clean-environment.sh || true
+          command: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=60
+
+  post-cleanup:
+    needs: [conformance-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v6
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
+          role-session-name: DebugPostCleanup
+
+      - name: Clean test resources
+        run: ./scripts/ci/clean-environment.sh
