@@ -5,7 +5,7 @@
  */
 
 name = "aws"
-version = "0.1.7"
+version = "0.1.8-dev.0"
 namespace = "AWS"
 summary = "AWS resource plugin (CloudControl-based)"
 description = "AWS CloudControl resource plugin for Formae"

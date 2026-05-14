@@ -62,8 +62,6 @@ github.com/aws/aws-sdk-go-v2/service/sesv2 v1.60.4 h1:X/PtmuX/EwPivJ9lHCf3Auo8Ak
 github.com/aws/aws-sdk-go-v2/service/sesv2 v1.60.4/go.mod h1:l5cTwZSX9kzxDHz9IpgZC0XIJ/cc43JL6hZzCd0iTwI=
 github.com/aws/aws-sdk-go-v2/service/signin v1.0.10 h1:a1Fq/KXn75wSzoJaPQTgZO0wHGqE9mjFnylnqEPTchA=
 github.com/aws/aws-sdk-go-v2/service/signin v1.0.10/go.mod h1:p6+MXNxW7IA6dMgHfTAzljuwSKD0NCm/4lbS4t6+7vI=
-github.com/aws/aws-sdk-go-v2/service/sns v1.39.17 h1:synXIPC/L4Cc489P0XDcrVJzHSLj7krKRpFLalbGM2k=
-github.com/aws/aws-sdk-go-v2/service/sns v1.39.17/go.mod h1:4ABZnI23uNK37waIjGwkubnCwGhepIt9x1GvASfljJA=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.42.23 h1:Rw3+8VaLH0jozccNR52bSvCPYtkiQeNn576l7HCHvL0=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.42.23/go.mod h1:MdjRkQEd2EUOiifYnkg/6f1NGtZSN3dFOLNByzufXok=
 github.com/aws/aws-sdk-go-v2/service/sso v1.30.16 h1:x6bKbmDhsgSZwv6q19wY/u3rLk/3FGjJWyqKcIRufpE=
@@ -126,12 +124,12 @@ github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df h1:1xWk/De6cs3h2r
 github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df/go.mod h1:sTJHuiEPB0WNdPYPOP9M6FQU4YTHemXgDLIQqkbBdDI=
 github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 h1:ZMTgKwSomy2cVcl/+NivSqopbWeHbmYeQ+BxoYq8bVY=
 github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1/go.mod h1:0ncHFCsGA6b0w1kBm6m+QwJ823qAY2vL47GvoR0BTyU=
-github.com/platform-engineering-labs/formae/pkg/model v0.1.23 h1:vn1Zifj9IgPew36LQXxQ0HHxf5iQT4DXulhcwf7Nys4=
-github.com/platform-engineering-labs/formae/pkg/model v0.1.23/go.mod h1:XmGJA7jNPX9cEGc8TxTiEDitBuEVJOddNakdTZ/bH4U=
-github.com/platform-engineering-labs/formae/pkg/plugin v0.2.2-0.20260425033718-2ccb40eaf779 h1:aSrjp0GjbYSgJMEbeVGvPe8OLCtX/JNh/z+EzGek4eM=
-github.com/platform-engineering-labs/formae/pkg/plugin v0.2.2-0.20260425033718-2ccb40eaf779/go.mod h1:78S5dbEGcJnOTifi/2pnHNw0JEGTD9x6eYWsntkWBFo=
-github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.3-0.20260424201437-d7edc93ccc9f h1:2PL9AuAIeAMevJsdRedM2LEIs+SLHrfNxos6qPbR0zk=
-github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.3-0.20260424201437-d7edc93ccc9f/go.mod h1:gq591ZeRZ4jAHpdSvCyrOvi8qyALxcXQQhd0B6GRMAo=
+github.com/platform-engineering-labs/formae/pkg/model v0.1.24 h1:FZH3m0zlkXSJMYRy23jZrJPdYv1+6yOxCS5NDHAjNQU=
+github.com/platform-engineering-labs/formae/pkg/model v0.1.24/go.mod h1:1dmsFwoaJZkHevBsAIZr068CWzG7de1VNz7PFWvM3Z8=
+github.com/platform-engineering-labs/formae/pkg/plugin v0.2.2 h1:woOwbsEk9y9LL2xyPurtkUAB/1gB9nCekLBvgc8E9P8=
+github.com/platform-engineering-labs/formae/pkg/plugin v0.2.2/go.mod h1:rQwaELhpPX042nqpB0n9XcTnyRMnWWp+CJWlOSX5eVA=
+github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.4 h1:7Ww45TQ3sNNQVwMiEMPKles+HCXZLJRSVjgMJZMj0sQ=
+github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.4/go.mod h1:gq591ZeRZ4jAHpdSvCyrOvi8qyALxcXQQhd0B6GRMAo=
 github.com/platform-engineering-labs/orbital v0.1.36 h1:nPMLxDbwDrjlhJoMQXAE86HtVhQHC2A6BJlWYmNM75c=
 github.com/platform-engineering-labs/orbital v0.1.36/go.mod h1:wwVPqOmW5RO78dDzL/G5CN1Ioao0P/aUsOZVrPVx64s=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=

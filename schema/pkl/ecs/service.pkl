@@ -83,6 +83,7 @@ open class LoadBalancer extends formae.SubResource {
     containerName: String?
     containerPort: Int?
     loadBalancerName: (String|formae.Resolvable)?
+    @aws.FieldHint{attachesTo = true}
     targetGroupArn: (String|formae.Resolvable)?
 }
 
@@ -194,6 +195,7 @@ open class TimeoutConfiguration extends formae.SubResource {
 open class VpcLatticeConfiguration extends formae.SubResource {
     portName: String
     roleArn: String|formae.Resolvable
+    @aws.FieldHint{attachesTo = true}
     targetGroupArn: String|formae.Resolvable
 }
 
