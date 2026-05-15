@@ -174,8 +174,19 @@ func (e *EventDestination) List(ctx context.Context, request *resource.ListReque
 // EventDestinationName (no '|' separator) and we know the
 // ConfigurationSetName, prefix it. No-op when pr is nil, csName is empty,
 // or the NativeID is already composite.
+//
+// When pr.NativeID is empty (async create — CloudControl returned a
+// RequestID with no identifier yet), we stash csName as a "csName|"
+// placeholder so the subsequent Status poll's request.NativeID carries
+// the csName context the readFunc needs to rewrite the eventually-
+// returned bare identifier. The placeholder is overwritten with the
+// actual composite once the post-success Read fires inside Status.
 func rewriteToComposite(pr *resource.ProgressResult, csName string) {
-	if pr == nil || csName == "" || pr.NativeID == "" {
+	if pr == nil || csName == "" {
+		return
+	}
+	if pr.NativeID == "" {
+		pr.NativeID = csName + "|"
 		return
 	}
 	if strings.Contains(pr.NativeID, "|") {
