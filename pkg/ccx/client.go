@@ -134,6 +134,9 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 		TypeName:     &request.ResourceType,
 	})
 	if err != nil {
+		if pr, ok := classifyCloudControlError(err, resource.OperationCreate); ok {
+			return &resource.CreateResult{ProgressResult: pr}, nil
+		}
 		return nil, err
 	}
 
@@ -170,6 +173,9 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		TypeName:   &request.ResourceType,
 	})
 	if err != nil {
+		if pr, ok := classifyCloudControlError(err, resource.OperationUpdate); ok {
+			return &resource.UpdateResult{ProgressResult: pr}, nil
+		}
 		return nil, err
 	}
 
@@ -213,6 +219,9 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		TypeName:      ptr.Of(request.ResourceType),
 	})
 	if err != nil {
+		if pr, ok := classifyCloudControlError(err, resource.OperationUpdate); ok {
+			return &resource.UpdateResult{ProgressResult: pr}, nil
+		}
 		return nil, err
 	}
 
@@ -246,6 +255,9 @@ func (c *Client) DeleteResource(ctx context.Context, request *resource.DeleteReq
 		TypeName:   ptr.Of(request.ResourceType),
 	})
 	if err != nil {
+		if pr, ok := classifyCloudControlError(err, resource.OperationDelete); ok {
+			return &resource.DeleteResult{ProgressResult: pr}, nil
+		}
 		return nil, err
 	}
 
