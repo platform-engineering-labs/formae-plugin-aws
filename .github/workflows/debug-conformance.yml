@@ -159,6 +159,18 @@ jobs:
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=60
 
+      - name: Dump formae client log on failure
+        if: failure()
+        run: |
+          LOG="$HOME/.pel/formae/log/client.log"
+          if [ -f "$LOG" ]; then
+            echo "::group::client.log (last 400 lines)"
+            tail -400 "$LOG"
+            echo "::endgroup::"
+          else
+            echo "No client.log at $LOG"
+          fi
+
   post-cleanup:
     needs: [conformance-tests]
     if: always()
