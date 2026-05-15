@@ -297,4 +297,94 @@ func TestEventDestination_Delete_OtherSDKError_Propagates(t *testing.T) {
 	require.Contains(t, err.Error(), "DeleteConfigurationSetEventDestination")
 }
 
+func TestEventDestination_List_WalksAllConfigurationSets_EmitsComposites(t *testing.T) {
+	client := &mockSesV2Client{}
+	prov := newEventDestinationTestProvisioner(client)
+
+	// Page 1: two CSes
+	client.On("ListConfigurationSets", mock.Anything, mock.MatchedBy(func(in *sesv2.ListConfigurationSetsInput) bool {
+		return in.NextToken == nil
+	})).Return(&sesv2.ListConfigurationSetsOutput{
+		ConfigurationSets: []string{"cs-a", "cs-b"},
+		NextToken:         stringPtr("page2"),
+	}, nil)
+
+	// Page 2: one CS, no further pages
+	client.On("ListConfigurationSets", mock.Anything, mock.MatchedBy(func(in *sesv2.ListConfigurationSetsInput) bool {
+		return in.NextToken != nil && *in.NextToken == "page2"
+	})).Return(&sesv2.ListConfigurationSetsOutput{
+		ConfigurationSets: []string{"cs-c"},
+		NextToken:         nil,
+	}, nil)
+
+	client.On("GetConfigurationSetEventDestinations", mock.Anything, mock.MatchedBy(func(in *sesv2.GetConfigurationSetEventDestinationsInput) bool {
+		return in.ConfigurationSetName != nil && *in.ConfigurationSetName == "cs-a"
+	})).Return(&sesv2.GetConfigurationSetEventDestinationsOutput{
+		EventDestinations: []sesv2types.EventDestination{{Name: stringPtr("bounces")}, {Name: stringPtr("complaints")}},
+	}, nil)
+	client.On("GetConfigurationSetEventDestinations", mock.Anything, mock.MatchedBy(func(in *sesv2.GetConfigurationSetEventDestinationsInput) bool {
+		return in.ConfigurationSetName != nil && *in.ConfigurationSetName == "cs-b"
+	})).Return(&sesv2.GetConfigurationSetEventDestinationsOutput{
+		EventDestinations: []sesv2types.EventDestination{}, // no destinations
+	}, nil)
+	client.On("GetConfigurationSetEventDestinations", mock.Anything, mock.MatchedBy(func(in *sesv2.GetConfigurationSetEventDestinationsInput) bool {
+		return in.ConfigurationSetName != nil && *in.ConfigurationSetName == "cs-c"
+	})).Return(&sesv2.GetConfigurationSetEventDestinationsOutput{
+		EventDestinations: []sesv2types.EventDestination{{Name: stringPtr("deliveries")}},
+	}, nil)
+
+	result, err := prov.List(context.Background(), &resource.ListRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.ElementsMatch(t, []string{"cs-a|bounces", "cs-a|complaints", "cs-c|deliveries"}, result.NativeIDs,
+		"List must emit composite IDs so subsequent Read/Update/Delete have the parent CS context")
+}
+
+func TestEventDestination_List_SkipsCSWhereGetFails(t *testing.T) {
+	// A CS that we can't read shouldn't fail the entire discovery scan —
+	// just skip it. AWS commonly returns AccessDenied for CSes we don't own.
+	client := &mockSesV2Client{}
+	prov := newEventDestinationTestProvisioner(client)
+
+	client.On("ListConfigurationSets", mock.Anything, mock.Anything).Return(&sesv2.ListConfigurationSetsOutput{
+		ConfigurationSets: []string{"cs-good", "cs-broken"},
+	}, nil)
+	client.On("GetConfigurationSetEventDestinations", mock.Anything, mock.MatchedBy(func(in *sesv2.GetConfigurationSetEventDestinationsInput) bool {
+		return in.ConfigurationSetName != nil && *in.ConfigurationSetName == "cs-good"
+	})).Return(&sesv2.GetConfigurationSetEventDestinationsOutput{
+		EventDestinations: []sesv2types.EventDestination{{Name: stringPtr("bounces")}},
+	}, nil)
+	client.On("GetConfigurationSetEventDestinations", mock.Anything, mock.MatchedBy(func(in *sesv2.GetConfigurationSetEventDestinationsInput) bool {
+		return in.ConfigurationSetName != nil && *in.ConfigurationSetName == "cs-broken"
+	})).Return((*sesv2.GetConfigurationSetEventDestinationsOutput)(nil), errors.New("AccessDenied"))
+
+	result, err := prov.List(context.Background(), &resource.ListRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"cs-good|bounces"}, result.NativeIDs)
+}
+
+func TestEventDestination_List_ListConfigurationSetsError_Propagates(t *testing.T) {
+	// If we can't even start listing CSes, fail loudly — that's not a
+	// recoverable per-CS hiccup.
+	client := &mockSesV2Client{}
+	prov := newEventDestinationTestProvisioner(client)
+
+	client.On("ListConfigurationSets", mock.Anything, mock.Anything).Return(
+		(*sesv2.ListConfigurationSetsOutput)(nil), errors.New("throttled"),
+	)
+
+	_, err := prov.List(context.Background(), &resource.ListRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ListConfigurationSets")
+}
+
 func stringPtr(s string) *string { return &s }

@@ -66,6 +66,7 @@ func init() {
 			resource.OperationUpdate,
 			resource.OperationCheckStatus,
 			resource.OperationDelete,
+			resource.OperationList,
 		},
 		func(cfg *config.Config) prov.Provisioner {
 			return &EventDestination{
@@ -507,8 +508,57 @@ func (e *EventDestination) Status(ctx context.Context, request *resource.StatusR
 	return result, nil
 }
 
+// List enumerates every event destination across every configuration set in
+// the account/region and returns composite "<csName>|<edName>" identifiers.
+// CCAPI's ListResources for this resource type returns bare
+// EventDestinationNames ("bounces"), which discovery can't subsequently
+// Read because every other path (Read/Update/Delete) requires the parent
+// ConfigurationSetName too. Walking the SES SDK directly is the only way
+// to emit usable identifiers — SES has no top-level "list all event
+// destinations" API.
+//
+// Pagination: ListConfigurationSets returns up to 100 CSes per page;
+// follow NextToken until exhausted. GetConfigurationSetEventDestinations
+// returns all destinations for a single CS in one call (per the SES API
+// docs, no pagination on that endpoint).
 func (e *EventDestination) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
-	return nil, fmt.Errorf("list not implemented for EventDestination provisioner - cloudcontrol natively supports this operation")
+	sesClient, err := e.sesClientFactory(e.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination List: build SES client: %w", err)
+	}
+
+	var composites []string
+	var nextToken *string
+	for {
+		csOut, err := sesClient.ListConfigurationSets(ctx, &sesv2.ListConfigurationSetsInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ses eventdestination List: ListConfigurationSets: %w", err)
+		}
+		for _, csName := range csOut.ConfigurationSets {
+			cs := csName
+			edOut, err := sesClient.GetConfigurationSetEventDestinations(ctx, &sesv2.GetConfigurationSetEventDestinationsInput{
+				ConfigurationSetName: &cs,
+			})
+			if err != nil {
+				// Skip CSes we can't read (e.g. just deleted, transient
+				// AccessDenied) rather than fail the whole discovery scan.
+				continue
+			}
+			for _, ed := range edOut.EventDestinations {
+				if ed.Name == nil || *ed.Name == "" {
+					continue
+				}
+				composites = append(composites, cs+"|"+*ed.Name)
+			}
+		}
+		if csOut.NextToken == nil || *csOut.NextToken == "" {
+			break
+		}
+		nextToken = csOut.NextToken
+	}
+	return &resource.ListResult{NativeIDs: composites}, nil
 }
 
 // rewriteToComposite mutates pr in place: if NativeID is a bare

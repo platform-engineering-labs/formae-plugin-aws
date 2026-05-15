@@ -48,3 +48,11 @@ func (m *mockSesV2Client) DeleteConfigurationSetEventDestination(ctx context.Con
 	}
 	return args.Get(0).(*sesv2.DeleteConfigurationSetEventDestinationOutput), args.Error(1)
 }
+
+func (m *mockSesV2Client) ListConfigurationSets(ctx context.Context, input *sesv2.ListConfigurationSetsInput, optFns ...func(*sesv2.Options)) (*sesv2.ListConfigurationSetsOutput, error) {
+	args := m.Called(ctx, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*sesv2.ListConfigurationSetsOutput), args.Error(1)
+}
