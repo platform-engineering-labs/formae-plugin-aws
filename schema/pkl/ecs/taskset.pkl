@@ -124,7 +124,7 @@ open class TaskSet extends formae.Resource {
     }
     serviceRegistries: Listing<ServiceRegistry>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     tags: Listing<formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}
