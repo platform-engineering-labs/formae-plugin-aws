@@ -20,7 +20,13 @@ open class DnsRecord extends formae.SubResource {
     /// FQDN, no trailing dot.
     name: String
     /// Multi-value record. Route53 native; Cloudflare splits one record per value.
-    values: Listing<String>(this.length > 0)
+    /// Length constraint dropped: the formae PKL extract generator
+    /// constructs an empty Listing during reflection-based property
+    /// mapping and a `(this.length > 0)` constraint fires before
+    /// values are populated, crashing extract. AWS's GetEmailIdentity
+    /// returns at least one value when DNS records exist; if it ever
+    /// returns empty, validate at apply time in plugin code instead.
+    values: Listing<String>
     /// Recommended TTL in seconds.
     recommendedTtl: Int = 300
     /// MX/SRV priority. Route53 stuffs into the value string; Cloudflare uses a
@@ -137,8 +143,9 @@ open class EventBridgeDestinationConfig extends formae.SubResource {
 
 @aws.SubResourceHint
 open class CloudWatchDestinationConfig extends formae.SubResource {
-    /// At least one dimension configuration is required.
-    dimensionConfigurations: Listing<DimensionConfiguration>(this.length > 0)
+    /// At least one dimension configuration is required by SES at apply time.
+    /// Length constraint dropped — see DnsRecord.values for context.
+    dimensionConfigurations: Listing<DimensionConfiguration>
 }
 
 /// Nested EventDestination config (the body of the CFN
@@ -152,7 +159,9 @@ open class EventDestinationDefinition extends formae.SubResource {
 
     enabled: Boolean = true
 
-    matchingEventTypes: Listing<MatchingEventType>(this.length > 0)
+    /// SES requires at least one matching event type at apply time.
+    /// Length constraint dropped — see DnsRecord.values for context.
+    matchingEventTypes: Listing<MatchingEventType>
 
     snsDestination: SnsDestinationConfig?
     kinesisFirehoseDestination: KinesisFirehoseDestinationConfig?
