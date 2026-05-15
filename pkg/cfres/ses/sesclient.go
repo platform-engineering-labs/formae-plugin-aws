@@ -15,4 +15,5 @@ import (
 // unit tests can mock just the methods we actually call.
 type SesV2ClientInterface interface {
 	GetEmailIdentity(ctx context.Context, params *sesv2.GetEmailIdentityInput, optFns ...func(*sesv2.Options)) (*sesv2.GetEmailIdentityOutput, error)
+	GetConfigurationSetEventDestinations(ctx context.Context, params *sesv2.GetConfigurationSetEventDestinationsInput, optFns ...func(*sesv2.Options)) (*sesv2.GetConfigurationSetEventDestinationsOutput, error)
 }
