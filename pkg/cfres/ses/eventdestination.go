@@ -7,6 +7,7 @@ package ses
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -175,12 +176,53 @@ func (e *EventDestination) Update(ctx context.Context, request *resource.UpdateR
 	return updateResult, nil
 }
 
+// Delete uses the SESv2 SDK directly. Same root cause as the custom Read
+// and Update: CCAPI's DeleteResource rejects the composite identifier with
+// a ValidationException for this resource type. SESv2's
+// DeleteConfigurationSetEventDestination accepts csName and edName
+// separately and applies the delete synchronously.
+//
+// AWS treats deleting a non-existent destination as a NotFound error; we
+// translate that to a success ProgressResult so the agent's destroy flow
+// is idempotent (matches the ccx.DeleteResource behavior for the same
+// case at pkg/ccx/client.go).
 func (e *EventDestination) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	ccxClient, err := ccx.NewClient(e.cfg)
-	if err != nil {
-		return nil, err
+	csName, edName, ok := splitComposite(request.NativeID)
+	if !ok || csName == "" || edName == "" {
+		return nil, fmt.Errorf("ses eventdestination Delete: NativeID %q is not a composite <csName>|<edName>", request.NativeID)
 	}
-	return ccxClient.DeleteResource(ctx, request)
+
+	sesClient, err := e.sesClientFactory(e.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination Delete: build SES client: %w", err)
+	}
+
+	_, err = sesClient.DeleteConfigurationSetEventDestination(ctx, &sesv2.DeleteConfigurationSetEventDestinationInput{
+		ConfigurationSetName: &csName,
+		EventDestinationName: &edName,
+	})
+	if err != nil {
+		var notFound *sesv2types.NotFoundException
+		if errors.As(err, &notFound) {
+			return &resource.DeleteResult{
+				ProgressResult: &resource.ProgressResult{
+					Operation:       resource.OperationDelete,
+					OperationStatus: resource.OperationStatusSuccess,
+					NativeID:        request.NativeID,
+					ErrorCode:       resource.OperationErrorCodeNotFound,
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("ses eventdestination Delete: DeleteConfigurationSetEventDestination(%q, %q): %w", csName, edName, err)
+	}
+
+	return &resource.DeleteResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationDelete,
+			OperationStatus: resource.OperationStatusSuccess,
+			NativeID:        request.NativeID,
+		},
+	}, nil
 }
 
 // Read uses the SESv2 SDK directly instead of CloudControl. CCAPI's

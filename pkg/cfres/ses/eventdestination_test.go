@@ -213,4 +213,88 @@ func TestParseEventDestinationFromDesired_AllDestinationTypes(t *testing.T) {
 	require.Equal(t, "arn:aws:mobiletargeting:us-east-1:1:apps/x", *sdkED.PinpointDestination.ApplicationArn)
 }
 
+func TestEventDestination_Delete_SDKCall_SplitsCompositeIdentifier(t *testing.T) {
+	client := &mockSesV2Client{}
+	prov := newEventDestinationTestProvisioner(client)
+
+	client.On("DeleteConfigurationSetEventDestination", mock.Anything, mock.MatchedBy(func(input *sesv2.DeleteConfigurationSetEventDestinationInput) bool {
+		return input.ConfigurationSetName != nil && *input.ConfigurationSetName == "my-cs" &&
+			input.EventDestinationName != nil && *input.EventDestinationName == "bounces"
+	})).Return(&sesv2.DeleteConfigurationSetEventDestinationOutput{}, nil)
+
+	result, err := prov.Delete(context.Background(), &resource.DeleteRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+		NativeID:     "my-cs|bounces",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "my-cs|bounces", result.ProgressResult.NativeID)
+	client.AssertExpectations(t)
+}
+
+func TestEventDestination_Delete_BareNativeID_ReturnsError(t *testing.T) {
+	prov := newEventDestinationTestProvisioner(&mockSesV2Client{})
+
+	_, err := prov.Delete(context.Background(), &resource.DeleteRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+		NativeID:     "bounces",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "composite")
+}
+
+func TestEventDestination_Delete_PlaceholderNativeID_ReturnsError(t *testing.T) {
+	prov := newEventDestinationTestProvisioner(&mockSesV2Client{})
+
+	_, err := prov.Delete(context.Background(), &resource.DeleteRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+		NativeID:     "my-cs|",
+	})
+
+	require.Error(t, err)
+}
+
+func TestEventDestination_Delete_NotFoundException_ReturnsSuccess(t *testing.T) {
+	// Idempotent delete: AWS NotFound becomes a successful no-op so a
+	// destroy that runs twice (e.g., a retried changeset step) doesn't
+	// fail the second time.
+	client := &mockSesV2Client{}
+	prov := newEventDestinationTestProvisioner(client)
+
+	client.On("DeleteConfigurationSetEventDestination", mock.Anything, mock.Anything).Return(
+		(*sesv2.DeleteConfigurationSetEventDestinationOutput)(nil),
+		&sesv2types.NotFoundException{Message: stringPtr("Event destination not found")},
+	)
+
+	result, err := prov.Delete(context.Background(), &resource.DeleteRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+		NativeID:     "my-cs|bounces",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeNotFound, result.ProgressResult.ErrorCode)
+}
+
+func TestEventDestination_Delete_OtherSDKError_Propagates(t *testing.T) {
+	client := &mockSesV2Client{}
+	prov := newEventDestinationTestProvisioner(client)
+
+	client.On("DeleteConfigurationSetEventDestination", mock.Anything, mock.Anything).Return(
+		(*sesv2.DeleteConfigurationSetEventDestinationOutput)(nil), errors.New("AccessDenied"),
+	)
+
+	_, err := prov.Delete(context.Background(), &resource.DeleteRequest{
+		ResourceType: "AWS::SES::ConfigurationSetEventDestination",
+		NativeID:     "my-cs|bounces",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "DeleteConfigurationSetEventDestination")
+}
+
 func stringPtr(s string) *string { return &s }
