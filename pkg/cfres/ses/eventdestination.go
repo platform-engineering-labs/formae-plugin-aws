@@ -99,13 +99,14 @@ func (e *EventDestination) Create(ctx context.Context, request *resource.CreateR
 
 	// Sync-success case: ccx.CreateResource already attempted a post-create
 	// Read with the bare identifier and got InternalFailure, so
-	// ResourceProperties is empty. Redo the Read with the composite
-	// identifier we just constructed.
+	// ResourceProperties is empty. Redo the Read via the plugin's own Read
+	// (SES SDK) — CCAPI rejects the composite identifier with a
+	// ValidationException for this resource type.
 	if result.ProgressResult != nil &&
 		result.ProgressResult.OperationStatus == resource.OperationStatusSuccess &&
 		len(result.ProgressResult.ResourceProperties) == 0 &&
 		strings.Contains(result.ProgressResult.NativeID, "|") {
-		readResult, readErr := ccxClient.ReadResource(ctx, &resource.ReadRequest{
+		readResult, readErr := e.Read(ctx, &resource.ReadRequest{
 			NativeID:     result.ProgressResult.NativeID,
 			ResourceType: request.ResourceType,
 			TargetConfig: request.TargetConfig,
@@ -286,13 +287,18 @@ func (e *EventDestination) Status(ctx context.Context, request *resource.StatusR
 
 	csName := configurationSetNameFromComposite(request.NativeID)
 
+	// Route the post-success Read through the plugin's own Read (which
+	// uses SESv2.GetConfigurationSetEventDestinations) instead of
+	// ccxClient.ReadResource directly. CCAPI's GetResource for this
+	// resource type rejects the composite identifier with a
+	// ValidationException, so we must avoid CCAPI on the read path.
 	read := func(rctx context.Context, rreq *resource.ReadRequest) (*resource.ReadResult, error) {
 		if csName != "" && !strings.Contains(rreq.NativeID, "|") {
 			rreqCopy := *rreq
 			rreqCopy.NativeID = csName + "|" + rreq.NativeID
-			return ccxClient.ReadResource(rctx, &rreqCopy)
+			return e.Read(rctx, &rreqCopy)
 		}
-		return ccxClient.ReadResource(rctx, rreq)
+		return e.Read(rctx, rreq)
 	}
 
 	result, err := ccxClient.StatusResource(ctx, request, read)
