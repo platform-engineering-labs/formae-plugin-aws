@@ -51,6 +51,9 @@ local testTaskDef = new taskdefinition.TaskDefinition {
   networkMode = "awsvpc"
   cpu = "256"
   memory = "512"
+  // See ecs-taskdefinition.pkl — AWS returns these as [] when unset and the
+  // conformance harness flags them as drift unless they appear in expected.
+  tags = new Listing<aws.Tag> {}
   containerDefinitions {
     new {
       name = "test-container"
@@ -67,6 +70,25 @@ local testTaskDef = new taskdefinition.TaskDefinition {
         // NativeID stays unchanged and the harness fails the replace assertion.
         new { name = "INITIAL_VAR"; value = "v2" }
       }
+      // See ecs-taskdefinition.pkl for why these are set explicitly.
+      command = new Listing<String> {}
+      credentialSpecs = new Listing<String> {}
+      dependsOn = new Listing<taskdefinition.ContainerDependency> {}
+      dnsSearchDomains = new Listing<String> {}
+      dnsServers = new Listing<String> {}
+      dockerLabels = new Mapping<String, Any> {}
+      dockerSecurityOptions = new Listing<String> {}
+      entryPoint = new Listing<String> {}
+      environmentFiles = new Listing<taskdefinition.EnvironmentFile> {}
+      extraHosts = new Listing<taskdefinition.HostEntry> {}
+      links = new Listing<String> {}
+      mountPoints = new Listing<taskdefinition.MountPoint> {}
+      portMappings = new Listing<taskdefinition.PortMapping> {}
+      resourceRequirements = new Listing<taskdefinition.ResourceRequirement> {}
+      secrets = new Listing<taskdefinition.Secret> {}
+      systemControls = new Listing<taskdefinition.SystemControl> {}
+      ulimits = new Listing<taskdefinition.Ulimit> {}
+      volumesFrom = new Listing<taskdefinition.VolumeFrom> {}
     }
   }
 }

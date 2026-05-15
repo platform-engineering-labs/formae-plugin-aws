@@ -51,6 +51,13 @@ local testTaskDef = new taskdefinition.TaskDefinition {
   networkMode = "awsvpc"
   cpu = "256"
   memory = "512"
+  // AWS returns Tags as [] when unset. The conformance harness's reverse
+  // loop flags "extra" actual fields not in expected and not marked as
+  // hasProviderDefault. Set explicitly so the harness sees Tags as
+  // "in expected" and skips the check. Tags is user-canonical so we don't
+  // want hasProviderDefault on the schema (would silently drop user changes
+  // per f8bcba4).
+  tags = new Listing<aws.Tag> {}
   containerDefinitions {
     new {
       name = "test-container"
@@ -59,6 +66,28 @@ local testTaskDef = new taskdefinition.TaskDefinition {
       environment {
         new { name = "INITIAL_VAR"; value = "v1" }
       }
+      // AWS returns these container fields as [] / {} when unset. Same harness
+      // reason as Tags above. Schema deliberately omits hasProviderDefault on
+      // them (per f8bcba4) because they are user-canonical and the strip
+      // would silently drop user changes.
+      command = new Listing<String> {}
+      credentialSpecs = new Listing<String> {}
+      dependsOn = new Listing<taskdefinition.ContainerDependency> {}
+      dnsSearchDomains = new Listing<String> {}
+      dnsServers = new Listing<String> {}
+      dockerLabels = new Mapping<String, Any> {}
+      dockerSecurityOptions = new Listing<String> {}
+      entryPoint = new Listing<String> {}
+      environmentFiles = new Listing<taskdefinition.EnvironmentFile> {}
+      extraHosts = new Listing<taskdefinition.HostEntry> {}
+      links = new Listing<String> {}
+      mountPoints = new Listing<taskdefinition.MountPoint> {}
+      portMappings = new Listing<taskdefinition.PortMapping> {}
+      resourceRequirements = new Listing<taskdefinition.ResourceRequirement> {}
+      secrets = new Listing<taskdefinition.Secret> {}
+      systemControls = new Listing<taskdefinition.SystemControl> {}
+      ulimits = new Listing<taskdefinition.Ulimit> {}
+      volumesFrom = new Listing<taskdefinition.VolumeFrom> {}
     }
   }
 }
