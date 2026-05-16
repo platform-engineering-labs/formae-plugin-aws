@@ -21,8 +21,8 @@ require (
 	github.com/aws/smithy-go v1.25.1
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.24
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.2.3-0.20260516003828-54274057c9f0
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.5-0.20260516003828-54274057c9f0
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.2.3-0.20260516041807-7c30834d7277
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.5-0.20260516041807-7c30834d7277
 	github.com/stretchr/testify v1.11.1
 )
 
