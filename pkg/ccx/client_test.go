@@ -9,8 +9,10 @@ package ccx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
@@ -375,6 +377,143 @@ func TestUpdateResource_InProgress_DoesNotRead(t *testing.T) {
 	require.Nil(t, result.ProgressResult.ResourceProperties)
 	// GetResource should only be called once (existence check), not twice (no post-update Read)
 	mockAPI.AssertNumberOfCalls(t, "GetResource", 1)
+}
+
+func TestCreateResource_SyncCloudControlError_ReturnsFailureProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	awsErr := ccOpError(&cctypes.InvalidRequestException{
+		Message: aws.String("DesiredState contains an unknown property 'Foo'"),
+	})
+	mockAPI.On("CreateResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.CreateResourceOutput)(nil), awsErr,
+	)
+
+	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
+		ResourceType: "AWS::EC2::FlowLog",
+		Properties:   json.RawMessage(`{}`),
+	})
+
+	require.NoError(t, err, "classified CC errors must surface via ProgressResult, not as a raw Go error")
+	require.NotNil(t, result)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeInvalidRequest, result.ProgressResult.ErrorCode)
+	require.Equal(t, resource.OperationCreate, result.ProgressResult.Operation)
+}
+
+func TestCreateResource_RDSSubnetEventualConsistency_RemapsToResourceConflict(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	awsErr := ccOpError(&cctypes.InvalidRequestException{
+		Message: aws.String("Some input subnets in :[subnet-0f7a9adc9560fae45, subnet-07544dcf861d1f761] are invalid."),
+	})
+	mockAPI.On("CreateResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.CreateResourceOutput)(nil), awsErr,
+	)
+
+	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
+		ResourceType: "AWS::RDS::DBSubnetGroup",
+		Properties:   json.RawMessage(`{"DBSubnetGroupName":"test","SubnetIds":["subnet-x","subnet-y"]}`),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeResourceConflict, result.ProgressResult.ErrorCode,
+		"AWS subnet-invalid-after-create is eventual consistency; must remap to ResourceConflict so PluginOperator retries")
+}
+
+func TestCreateResource_NonCloudControlError_BubblesAsRawError(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("CreateResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.CreateResourceOutput)(nil), errors.New("transport: connection reset"),
+	)
+
+	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
+		ResourceType: "AWS::EC2::FlowLog",
+		Properties:   json.RawMessage(`{}`),
+	})
+
+	require.Error(t, err, "unclassified errors must bubble as raw Go errors so the agent tags them UnforeseenError")
+	require.Nil(t, result)
+}
+
+func TestUpdateResource_SyncCloudControlError_ReturnsFailureProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	// Existence pre-check succeeds.
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceOutput{
+			ResourceDescription: &cctypes.ResourceDescription{Properties: ptr.Of(`{}`)},
+		}, nil,
+	)
+	// Actual update fails with a recoverable Throttling exception.
+	mockAPI.On("UpdateResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.UpdateResourceOutput)(nil),
+		ccOpError(&cctypes.ThrottlingException{Message: aws.String("Rate exceeded")}),
+	)
+
+	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
+		ResourceType:  "AWS::EC2::FlowLog",
+		NativeID:      "fl-test",
+		PatchDocument: ptr.Of(`[]`),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeThrottling, result.ProgressResult.ErrorCode)
+	require.True(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
+}
+
+func TestUpdateResource_GetResourcePrecheckCloudControlError_ReturnsFailureProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceOutput)(nil),
+		ccOpError(&cctypes.ResourceNotFoundException{Message: aws.String("not found")}),
+	)
+
+	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
+		ResourceType:  "AWS::EC2::FlowLog",
+		NativeID:      "fl-missing",
+		PatchDocument: ptr.Of(`[]`),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeNotFound, result.ProgressResult.ErrorCode)
+	require.Equal(t, resource.OperationUpdate, result.ProgressResult.Operation)
+	mockAPI.AssertNotCalled(t, "UpdateResource", mock.Anything, mock.Anything)
+}
+
+func TestDeleteResource_SyncCloudControlError_ReturnsFailureProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("DeleteResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.DeleteResourceOutput)(nil),
+		ccOpError(&cctypes.ThrottlingException{Message: aws.String("Rate exceeded")}),
+	)
+
+	result, err := client.DeleteResource(context.Background(), &resource.DeleteRequest{
+		ResourceType: "AWS::EC2::FlowLog",
+		NativeID:     "fl-test",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeThrottling, result.ProgressResult.ErrorCode)
+	require.Equal(t, resource.OperationDelete, result.ProgressResult.Operation)
 }
 
 func TestCreateResource_Success_NilIdentifier_ReturnsError(t *testing.T) {

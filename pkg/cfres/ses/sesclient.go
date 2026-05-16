@@ -16,4 +16,7 @@ import (
 type SesV2ClientInterface interface {
 	GetEmailIdentity(ctx context.Context, params *sesv2.GetEmailIdentityInput, optFns ...func(*sesv2.Options)) (*sesv2.GetEmailIdentityOutput, error)
 	GetConfigurationSetEventDestinations(ctx context.Context, params *sesv2.GetConfigurationSetEventDestinationsInput, optFns ...func(*sesv2.Options)) (*sesv2.GetConfigurationSetEventDestinationsOutput, error)
+	UpdateConfigurationSetEventDestination(ctx context.Context, params *sesv2.UpdateConfigurationSetEventDestinationInput, optFns ...func(*sesv2.Options)) (*sesv2.UpdateConfigurationSetEventDestinationOutput, error)
+	DeleteConfigurationSetEventDestination(ctx context.Context, params *sesv2.DeleteConfigurationSetEventDestinationInput, optFns ...func(*sesv2.Options)) (*sesv2.DeleteConfigurationSetEventDestinationOutput, error)
+	ListConfigurationSets(ctx context.Context, params *sesv2.ListConfigurationSetsInput, optFns ...func(*sesv2.Options)) (*sesv2.ListConfigurationSetsOutput, error)
 }

@@ -7,6 +7,7 @@ package ses
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -65,6 +66,7 @@ func init() {
 			resource.OperationUpdate,
 			resource.OperationCheckStatus,
 			resource.OperationDelete,
+			resource.OperationList,
 		},
 		func(cfg *config.Config) prov.Provisioner {
 			return &EventDestination{
@@ -119,20 +121,109 @@ func (e *EventDestination) Create(ctx context.Context, request *resource.CreateR
 	return result, nil
 }
 
+// Update uses the SESv2 SDK directly instead of CloudControl. The plugin's
+// formae-core handoff (2026-05-15) confirmed that CCAPI's UpdateResource
+// returns a synchronous Failure within ~4 ms for this resource type —
+// consistent with CCAPI rejecting the composite "<csName>|<edName>"
+// identifier the same way it does on GetResource (ValidationException:
+// "not valid for identifier [/properties/Id]"). SESv2's
+// UpdateConfigurationSetEventDestination accepts the parts separately and
+// applies the update synchronously, so we issue the SDK call and then
+// re-Read to populate ResourceProperties for the agent.
 func (e *EventDestination) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	ccxClient, err := ccx.NewClient(e.cfg)
-	if err != nil {
-		return nil, err
+	csName, edName, ok := splitComposite(request.NativeID)
+	if !ok || csName == "" || edName == "" {
+		return nil, fmt.Errorf("ses eventdestination Update: NativeID %q is not a composite <csName>|<edName>", request.NativeID)
 	}
-	return ccxClient.UpdateResource(ctx, request)
+
+	desired, err := parseEventDestinationFromDesired(request.DesiredProperties)
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination Update: %w", err)
+	}
+
+	sesClient, err := e.sesClientFactory(e.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination Update: build SES client: %w", err)
+	}
+
+	_, err = sesClient.UpdateConfigurationSetEventDestination(ctx, &sesv2.UpdateConfigurationSetEventDestinationInput{
+		ConfigurationSetName: &csName,
+		EventDestinationName: &edName,
+		EventDestination:     desired,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination Update: UpdateConfigurationSetEventDestination(%q, %q): %w", csName, edName, err)
+	}
+
+	// SES doesn't return the updated state — re-Read via our own Read so
+	// the agent gets ResourceProperties populated and any drift detected
+	// post-update is based on the actual AWS-side response, not on what
+	// we sent.
+	readResult, err := e.Read(ctx, &resource.ReadRequest{
+		NativeID:     request.NativeID,
+		ResourceType: request.ResourceType,
+		TargetConfig: request.TargetConfig,
+	})
+	updateResult := &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationUpdate,
+			OperationStatus: resource.OperationStatusSuccess,
+			NativeID:        request.NativeID,
+		},
+	}
+	if err == nil && readResult != nil && readResult.ErrorCode == "" && readResult.Properties != "" {
+		updateResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
+	}
+	return updateResult, nil
 }
 
+// Delete uses the SESv2 SDK directly. Same root cause as the custom Read
+// and Update: CCAPI's DeleteResource rejects the composite identifier with
+// a ValidationException for this resource type. SESv2's
+// DeleteConfigurationSetEventDestination accepts csName and edName
+// separately and applies the delete synchronously.
+//
+// AWS treats deleting a non-existent destination as a NotFound error; we
+// translate that to a success ProgressResult so the agent's destroy flow
+// is idempotent (matches the ccx.DeleteResource behavior for the same
+// case at pkg/ccx/client.go).
 func (e *EventDestination) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	ccxClient, err := ccx.NewClient(e.cfg)
-	if err != nil {
-		return nil, err
+	csName, edName, ok := splitComposite(request.NativeID)
+	if !ok || csName == "" || edName == "" {
+		return nil, fmt.Errorf("ses eventdestination Delete: NativeID %q is not a composite <csName>|<edName>", request.NativeID)
 	}
-	return ccxClient.DeleteResource(ctx, request)
+
+	sesClient, err := e.sesClientFactory(e.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination Delete: build SES client: %w", err)
+	}
+
+	_, err = sesClient.DeleteConfigurationSetEventDestination(ctx, &sesv2.DeleteConfigurationSetEventDestinationInput{
+		ConfigurationSetName: &csName,
+		EventDestinationName: &edName,
+	})
+	if err != nil {
+		var notFound *sesv2types.NotFoundException
+		if errors.As(err, &notFound) {
+			return &resource.DeleteResult{
+				ProgressResult: &resource.ProgressResult{
+					Operation:       resource.OperationDelete,
+					OperationStatus: resource.OperationStatusSuccess,
+					NativeID:        request.NativeID,
+					ErrorCode:       resource.OperationErrorCodeNotFound,
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("ses eventdestination Delete: DeleteConfigurationSetEventDestination(%q, %q): %w", csName, edName, err)
+	}
+
+	return &resource.DeleteResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationDelete,
+			OperationStatus: resource.OperationStatusSuccess,
+			NativeID:        request.NativeID,
+		},
+	}, nil
 }
 
 // Read uses the SESv2 SDK directly instead of CloudControl. CCAPI's
@@ -196,6 +287,113 @@ func (e *EventDestination) Read(ctx context.Context, request *resource.ReadReque
 		ResourceType: request.ResourceType,
 		ErrorCode:    "NotFound",
 	}, nil
+}
+
+// parseEventDestinationFromDesired extracts the EventDestination sub-object
+// from the CFN-shape DesiredProperties JSON and converts it into the SESv2
+// SDK's EventDestinationDefinition. The inverse of marshalEventDestinationToCFN —
+// keep the two in sync. CFN renders some ARN fields with uppercase suffixes
+// (TopicARN vs SDK TopicArn) so we cannot just rely on Go struct-tag JSON
+// unmarshaling against the SDK types directly.
+func parseEventDestinationFromDesired(desired json.RawMessage) (*sesv2types.EventDestinationDefinition, error) {
+	if len(desired) == 0 {
+		return nil, fmt.Errorf("DesiredProperties is empty")
+	}
+
+	var wrapper struct {
+		EventDestination *cfnEventDestination `json:"EventDestination"`
+	}
+	if err := json.Unmarshal(desired, &wrapper); err != nil {
+		return nil, fmt.Errorf("parse DesiredProperties: %w", err)
+	}
+	if wrapper.EventDestination == nil {
+		return nil, fmt.Errorf("DesiredProperties has no EventDestination object")
+	}
+	return wrapper.EventDestination.toSDK(), nil
+}
+
+type cfnEventDestination struct {
+	Enabled                    bool                          `json:"Enabled"`
+	MatchingEventTypes         []string                      `json:"MatchingEventTypes,omitempty"`
+	CloudWatchDestination      *cfnCloudWatchDestination     `json:"CloudWatchDestination,omitempty"`
+	SnsDestination             *cfnSnsDestination            `json:"SnsDestination,omitempty"`
+	KinesisFirehoseDestination *cfnKinesisFirehoseDestination `json:"KinesisFirehoseDestination,omitempty"`
+	EventBridgeDestination     *cfnEventBridgeDestination    `json:"EventBridgeDestination,omitempty"`
+	PinpointDestination        *cfnPinpointDestination       `json:"PinpointDestination,omitempty"`
+}
+
+type cfnCloudWatchDestination struct {
+	DimensionConfigurations []cfnDimensionConfig `json:"DimensionConfigurations,omitempty"`
+}
+
+type cfnDimensionConfig struct {
+	DimensionName         string `json:"DimensionName"`
+	DefaultDimensionValue string `json:"DefaultDimensionValue"`
+	DimensionValueSource  string `json:"DimensionValueSource"`
+}
+
+type cfnSnsDestination struct {
+	TopicARN string `json:"TopicARN"`
+}
+
+type cfnKinesisFirehoseDestination struct {
+	IAMRoleARN        string `json:"IAMRoleARN"`
+	DeliveryStreamARN string `json:"DeliveryStreamARN"`
+}
+
+type cfnEventBridgeDestination struct {
+	EventBusArn string `json:"EventBusArn"`
+}
+
+type cfnPinpointDestination struct {
+	ApplicationArn string `json:"ApplicationArn"`
+}
+
+func (c *cfnEventDestination) toSDK() *sesv2types.EventDestinationDefinition {
+	out := &sesv2types.EventDestinationDefinition{
+		Enabled: c.Enabled,
+	}
+	if len(c.MatchingEventTypes) > 0 {
+		types := make([]sesv2types.EventType, len(c.MatchingEventTypes))
+		for i, t := range c.MatchingEventTypes {
+			types[i] = sesv2types.EventType(t)
+		}
+		out.MatchingEventTypes = types
+	}
+	if c.CloudWatchDestination != nil {
+		dims := make([]sesv2types.CloudWatchDimensionConfiguration, len(c.CloudWatchDestination.DimensionConfigurations))
+		for i, dc := range c.CloudWatchDestination.DimensionConfigurations {
+			name := dc.DimensionName
+			def := dc.DefaultDimensionValue
+			dims[i] = sesv2types.CloudWatchDimensionConfiguration{
+				DimensionName:         &name,
+				DefaultDimensionValue: &def,
+				DimensionValueSource:  sesv2types.DimensionValueSource(dc.DimensionValueSource),
+			}
+		}
+		out.CloudWatchDestination = &sesv2types.CloudWatchDestination{DimensionConfigurations: dims}
+	}
+	if c.SnsDestination != nil {
+		arn := c.SnsDestination.TopicARN
+		out.SnsDestination = &sesv2types.SnsDestination{TopicArn: &arn}
+	}
+	if c.KinesisFirehoseDestination != nil {
+		role := c.KinesisFirehoseDestination.IAMRoleARN
+		stream := c.KinesisFirehoseDestination.DeliveryStreamARN
+		out.KinesisFirehoseDestination = &sesv2types.KinesisFirehoseDestination{
+			IamRoleArn:        &role,
+			DeliveryStreamArn: &stream,
+		}
+	}
+	if c.EventBridgeDestination != nil {
+		bus := c.EventBridgeDestination.EventBusArn
+		out.EventBridgeDestination = &sesv2types.EventBridgeDestination{EventBusArn: &bus}
+	}
+	if c.PinpointDestination != nil {
+		app := c.PinpointDestination.ApplicationArn
+		out.PinpointDestination = &sesv2types.PinpointDestination{ApplicationArn: &app}
+	}
+	return out
 }
 
 // splitComposite splits "<csName>|<edName>" into its parts. ok is false if
@@ -310,8 +508,57 @@ func (e *EventDestination) Status(ctx context.Context, request *resource.StatusR
 	return result, nil
 }
 
+// List enumerates every event destination across every configuration set in
+// the account/region and returns composite "<csName>|<edName>" identifiers.
+// CCAPI's ListResources for this resource type returns bare
+// EventDestinationNames ("bounces"), which discovery can't subsequently
+// Read because every other path (Read/Update/Delete) requires the parent
+// ConfigurationSetName too. Walking the SES SDK directly is the only way
+// to emit usable identifiers — SES has no top-level "list all event
+// destinations" API.
+//
+// Pagination: ListConfigurationSets returns up to 100 CSes per page;
+// follow NextToken until exhausted. GetConfigurationSetEventDestinations
+// returns all destinations for a single CS in one call (per the SES API
+// docs, no pagination on that endpoint).
 func (e *EventDestination) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
-	return nil, fmt.Errorf("list not implemented for EventDestination provisioner - cloudcontrol natively supports this operation")
+	sesClient, err := e.sesClientFactory(e.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ses eventdestination List: build SES client: %w", err)
+	}
+
+	var composites []string
+	var nextToken *string
+	for {
+		csOut, err := sesClient.ListConfigurationSets(ctx, &sesv2.ListConfigurationSetsInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ses eventdestination List: ListConfigurationSets: %w", err)
+		}
+		for _, csName := range csOut.ConfigurationSets {
+			cs := csName
+			edOut, err := sesClient.GetConfigurationSetEventDestinations(ctx, &sesv2.GetConfigurationSetEventDestinationsInput{
+				ConfigurationSetName: &cs,
+			})
+			if err != nil {
+				// Skip CSes we can't read (e.g. just deleted, transient
+				// AccessDenied) rather than fail the whole discovery scan.
+				continue
+			}
+			for _, ed := range edOut.EventDestinations {
+				if ed.Name == nil || *ed.Name == "" {
+					continue
+				}
+				composites = append(composites, cs+"|"+*ed.Name)
+			}
+		}
+		if csOut.NextToken == nil || *csOut.NextToken == "" {
+			break
+		}
+		nextToken = csOut.NextToken
+	}
+	return &resource.ListResult{NativeIDs: composites}, nil
 }
 
 // rewriteToComposite mutates pr in place: if NativeID is a bare
