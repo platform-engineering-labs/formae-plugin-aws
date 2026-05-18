@@ -52,6 +52,14 @@ var IgnoredFields = map[string][]string{
 	"AWS::EC2::SecurityGroup":                      {"$.SecurityGroupEgress", "$.SecurityGroupIngress"},
 	"AWS::IAM::Role":                               {"$.Policies"},
 	"AWS::ElasticBeanstalk::ConfigurationTemplate": {"$.OptionSettings"},
+	// Targets is populated at runtime by ECS Services (and other consumers
+	// calling register-targets); LoadBalancerArns is populated when a
+	// Listener attaches the TG to an ALB. Neither is meaningfully
+	// user-settable, and tracking them in formae state makes the
+	// Synchronizer write a new resource version on every task placement
+	// or attach — which then trips the reconcile drift gate on the next
+	// apply. Strip them in Read so they never enter the stored state.
+	"AWS::ElasticLoadBalancingV2::TargetGroup": {"$.Targets", "$.LoadBalancerArns"},
 }
 
 // normalizeCompositeIdentifier fixes inconsistencies in CloudControl composite

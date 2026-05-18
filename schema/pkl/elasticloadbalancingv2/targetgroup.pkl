@@ -18,13 +18,6 @@ open class Matcher extends formae.SubResource {
 }
 
 @aws.SubResourceHint
-open class TargetDescription extends formae.SubResource {
-    availabilityZone: aws.AvailabilityZone?
-    id: String
-    port: Int?
-}
-
-@aws.SubResourceHint
 open class TargetGroupAttribute extends formae.SubResource {
     key: String?
     value: String?
@@ -40,9 +33,6 @@ open class TargetGroupResolvable extends formae.Resolvable {
 
     hidden arn: TargetGroupResolvable = (this) {
         property = "TargetGroupArn"
-    }
-    hidden loadBalancerArns: TargetGroupResolvable = (this) {
-        property = "LoadBalancerArns"
     }
 
     hidden targetGroupArn: TargetGroupResolvable = (this) {
@@ -125,9 +115,6 @@ open class TargetGroup extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     targetType: String?
-
-    @aws.FieldHint{hasProviderDefault = true}
-    targets: Listing<TargetDescription>?
 
     @aws.FieldHint{hasProviderDefault = true}
     unhealthyThresholdCount: Int?
