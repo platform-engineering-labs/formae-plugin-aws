@@ -221,7 +221,7 @@ func (s *Service) finalSuccess(ctx context.Context, req *resource.StatusRequest,
 		}
 	}
 
-	// Build canonical NativeID + final Read (full classifier in Task 16).
+	// Build canonical NativeID.
 	canonical := buildCanonicalNativeID(aws.ToString(svc.ServiceArn),
 		deriveClusterShortName(req.NativeID, svc))
 	readResult, readErr := s.Read(ctx, &resource.ReadRequest{
@@ -229,19 +229,39 @@ func (s *Service) finalSuccess(ctx context.Context, req *resource.StatusRequest,
 		ResourceType: req.ResourceType,
 		TargetConfig: req.TargetConfig,
 	})
-	if readErr != nil || readResult == nil || readResult.ErrorCode != "" || readResult.Properties == "" {
-		// Task 16 wires this through classifyReadResultForFinal + inProgressOrFinalReadTimeout.
-		return s.inProgressOrTimeout(op, req, unixStart, "post-stability Read returned no properties"), nil
+	code, retryable, ok := classifyReadResultForFinal(readResult, readErr)
+	if ok {
+		return &resource.StatusResult{
+			ProgressResult: &resource.ProgressResult{
+				Operation:          op,
+				OperationStatus:    resource.OperationStatusSuccess,
+				NativeID:           canonical,
+				RequestID:          "",
+				ResourceProperties: []byte(readResult.Properties),
+			},
+		}, nil
+	}
+	if retryable {
+		return s.inProgressOrFinalReadTimeout(op, req, unixStart,
+			"post-stability Read transient: "+formatReadFailure(readResult, readErr)), nil
 	}
 	return &resource.StatusResult{
-		ProgressResult: &resource.ProgressResult{
-			Operation:          op,
-			OperationStatus:    resource.OperationStatusSuccess,
-			NativeID:           canonical,
-			RequestID:          "",
-			ResourceProperties: []byte(readResult.Properties),
-		},
+		ProgressResult: terminalFailurePR(op, req.NativeID, "", code,
+			"post-stability Read failed: "+formatReadFailure(readResult, readErr)),
 	}, nil
+}
+
+func formatReadFailure(rr *resource.ReadResult, readErr error) string {
+	if readErr != nil {
+		return readErr.Error()
+	}
+	if rr == nil {
+		return "nil ReadResult"
+	}
+	if rr.ErrorCode != "" {
+		return string(rr.ErrorCode)
+	}
+	return "empty Properties"
 }
 
 // deriveClusterShortName extracts the cluster short name from whichever NativeID

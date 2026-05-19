@@ -84,3 +84,39 @@ func TestTerminalFailurePR(t *testing.T) {
 	assert.Equal(t, resource.OperationErrorCodeAccessDenied, pr.ErrorCode)
 	assert.Contains(t, pr.StatusMessage, "denied here")
 }
+
+func TestClassifyReadResultForFinal_Success(t *testing.T) {
+	rr := &resource.ReadResult{Properties: `{"k":"v"}`}
+	code, retryable, ok := classifyReadResultForFinal(rr, nil)
+	assert.True(t, ok)
+	assert.False(t, retryable)
+	assert.Equal(t, resource.OperationErrorCode(""), code)
+}
+
+func TestClassifyReadResultForFinal_NotFound_Retryable(t *testing.T) {
+	rr := &resource.ReadResult{ErrorCode: resource.OperationErrorCodeNotFound}
+	_, retryable, ok := classifyReadResultForFinal(rr, nil)
+	assert.False(t, ok)
+	assert.True(t, retryable)
+}
+
+func TestClassifyReadResultForFinal_AccessDenied_Terminal(t *testing.T) {
+	rr := &resource.ReadResult{ErrorCode: resource.OperationErrorCodeAccessDenied}
+	code, retryable, ok := classifyReadResultForFinal(rr, nil)
+	assert.False(t, ok)
+	assert.False(t, retryable)
+	assert.Equal(t, resource.OperationErrorCodeAccessDenied, code)
+}
+
+func TestClassifyReadResultForFinal_EmptyProperties_Retryable(t *testing.T) {
+	rr := &resource.ReadResult{ErrorCode: "", Properties: ""}
+	_, retryable, ok := classifyReadResultForFinal(rr, nil)
+	assert.False(t, ok)
+	assert.True(t, retryable)
+}
+
+func TestClassifyReadResultForFinal_GoError_GoesThroughAWSClassifier(t *testing.T) {
+	_, retryable, ok := classifyReadResultForFinal(nil, &fakeAPIError{code: "Throttling"})
+	assert.False(t, ok)
+	assert.True(t, retryable)
+}

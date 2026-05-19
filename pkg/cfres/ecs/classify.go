@@ -89,3 +89,41 @@ func terminalFailurePR(op resource.Operation, nativeID, requestID string,
 		StatusMessage:   msg,
 	}
 }
+
+// classifyReadResultForFinal classifies a post-stability Read outcome. Handles
+// both Go errors and ReadResult.ErrorCode (ccx.ReadResource maps CCAPI errors
+// into ErrorCode without returning a Go error — see pkg/ccx/client.go:294-303).
+//
+// Returns:
+//   - ok=true:                 Read returned non-empty Properties → caller emits Success
+//   - ok=false, retryable=true: route through inProgressOrFinalReadTimeout (grace-bounded)
+//   - ok=false, retryable=false: terminal Failure with `code`
+func classifyReadResultForFinal(rr *resource.ReadResult, readErr error) (resource.OperationErrorCode, bool, bool) {
+	if readErr != nil {
+		code, retryable := classifyAWSError(readErr)
+		return code, retryable, false
+	}
+	if rr == nil {
+		return resource.OperationErrorCodeGeneralServiceException, false, false
+	}
+	switch rr.ErrorCode {
+	case "":
+		if rr.Properties == "" {
+			return "", true, false // retryable: empty body without error
+		}
+		return "", false, true // success
+	case resource.OperationErrorCodeNotFound,
+		resource.OperationErrorCodeThrottling,
+		resource.OperationErrorCodeServiceInternalError,
+		resource.OperationErrorCodeServiceTimeout,
+		resource.OperationErrorCodeNetworkFailure,
+		resource.OperationErrorCodeInternalFailure:
+		return rr.ErrorCode, true, false
+	case resource.OperationErrorCodeAccessDenied,
+		resource.OperationErrorCodeInvalidCredentials,
+		resource.OperationErrorCodeInvalidRequest:
+		return rr.ErrorCode, false, false
+	default:
+		return resource.OperationErrorCodeGeneralServiceException, false, false
+	}
+}

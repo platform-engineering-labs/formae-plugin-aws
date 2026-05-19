@@ -329,6 +329,105 @@ func TestStatusPhaseB_ClassicELB_SkipsTGCheck(t *testing.T) {
 	elb.AssertNotCalled(t, "DescribeTargetHealth")
 }
 
+func TestStatusPhaseB_FinalReadNotFound_WithinGrace_InProgress(t *testing.T) {
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				ServiceArn:   aws.String("arn:aws:ecs:us-east-1:123:service/c/s"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+	ccx := &mockCCXClient{}
+	// Final Read returns NotFound (eventual consistency on a just-stabilized service).
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(
+		&resource.ReadResult{
+			ResourceType: "AWS::ECS::Service",
+			ErrorCode:    resource.OperationErrorCodeNotFound,
+		}, nil)
+
+	s := newServiceWithMocks(ccx, ecsCli, nil)
+	// 20m 30s after unixStart — inside operationTimeout + finalReadGrace (22m).
+	s.now = func() time.Time { return time.Unix(1747526400, 0).Add(20*time.Minute + 30*time.Second) }
+
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus,
+		"stable service within finalReadGrace should still be InProgress, not terminal")
+}
+
+func TestStatusPhaseB_FinalReadAccessDenied_Terminal(t *testing.T) {
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				ServiceArn:   aws.String("arn:aws:ecs:us-east-1:123:service/c/s"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+	ccx := &mockCCXClient{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(
+		&resource.ReadResult{ErrorCode: resource.OperationErrorCodeAccessDenied}, nil)
+
+	s := newServiceWithMocks(ccx, ecsCli, nil)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeAccessDenied, res.ProgressResult.ErrorCode)
+}
+
+func TestStatusPhaseB_StableAtBoundary_SucceedsNotTimeoutsOut(t *testing.T) {
+	// Service stabilized just before the 20m boundary. Final Read succeeds.
+	// Verify Success even though `now - unixStart` > operationTimeout would
+	// have escalated via inProgressOrTimeout — but the success path doesn't
+	// route through that helper.
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				ServiceArn:   aws.String("arn:aws:ecs:us-east-1:123:service/c/s"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+	ccx := &mockCCXClient{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(
+		&resource.ReadResult{ResourceType: "AWS::ECS::Service", Properties: `{"k":"v"}`}, nil)
+
+	s := newServiceWithMocks(ccx, ecsCli, nil)
+	s.now = func() time.Time { return time.Unix(1747526400, 0).Add(20*time.Minute + 1*time.Second) }
+
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+}
+
 func TestStatusPhaseB_TGUnhealthy_InProgress(t *testing.T) {
 	primaryStart := time.Unix(1747526400, 0)
 	ecsCli := &mockECSClient{}
