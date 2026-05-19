@@ -167,11 +167,14 @@ local testCluster = new ecscluster.Cluster {
   }
 }
 
-// Updated: container image bumped from nginx:latest to nginx:1.25. This is
-// not a createOnly field on TaskDefinition (the TaskDef itself will be
-// replaced, producing a new TaskDefinitionArn), which in turn causes the
-// ECS Service to roll a new deployment -- exactly the path the Phase B
-// new-deployment detection + grace window logic needs to cover.
+// TaskDefinition is identical to the base fixture. We intentionally do NOT
+// change containerDefinitions here because that field is createOnly on
+// AWS::ECS::TaskDefinition -- any change triggers a Replace of the TaskDef,
+// which cascades into a Replace of the Service (delete + create), not the
+// in-place Update we want to test. To trigger a new ECS deployment for
+// Phase B's new-deployment-detection logic, the Update bumps the Service's
+// desiredCount below instead (1 -> 2), which ECS handles as a normal
+// in-place service update with a new deployment.
 local testTaskDef = new taskdefinition.TaskDefinition {
   label = "test-taskdef-for-ecs-svc-lb"
   family = "formae-sdk-svc-lb-taskdef-\(testRunID)"
@@ -184,7 +187,7 @@ local testTaskDef = new taskdefinition.TaskDefinition {
   containerDefinitions {
     new {
       name = "test-container"
-      image = "nginx:1.25"
+      image = "nginx:latest"
       essential = true
       portMappings {
         new {
@@ -249,7 +252,12 @@ forma {
       type = "AWS::ECS::TaskDefinition"
       property = "TaskDefinitionArn"
     }
-    desiredCount = 1
+    // Updated: scale from 1 -> 2 tasks. This triggers ECS to roll a new
+    // deployment to bring up the extra task, which is exactly the path
+    // Phase B's new-deployment-detection + TG-health-gate logic needs to
+    // cover. desiredCount is a normal updatable field on AWS::ECS::Service
+    // (not createOnly), so this is an in-place Update -- no Replace.
+    desiredCount = 2
     schedulingStrategy = "REPLICA"
     launchType = "FARGATE"
     networkConfiguration = new service.NetworkConfiguration {
