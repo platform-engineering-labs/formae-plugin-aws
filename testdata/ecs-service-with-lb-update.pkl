@@ -1,0 +1,226 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ec2/securitygroupingress.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/elasticloadbalancingv2/targetgroup.pkl"
+import "@aws/elasticloadbalancingv2/listener.pkl"
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+import "@aws/ecs/service.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-svc-lb-\(testRunID)"
+
+// All supporting resources mirror the base fixture exactly -- this is an
+// Update, not a Replace, so cluster name / service name / SG names / VPC
+// CIDR / etc. must be identical.
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-ecs-svc-lb"
+  cidrBlock = "10.231.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnetA = new subnet.Subnet {
+  label = "test-subnet-a-for-ecs-svc-lb"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.231.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnetB = new subnet.Subnet {
+  label = "test-subnet-b-for-ecs-svc-lb"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.231.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+local albSG = new securitygroup.SecurityGroup {
+  label = "test-alb-sg-for-ecs-svc-lb"
+  groupDescription = "Allow HTTP to internal ALB for ECS Service conformance test"
+  groupName = "formae-sdk-alb-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+local albIngress = new securitygroupingress.SecurityGroupIngress {
+  label = "test-alb-sg-ingress-for-ecs-svc-lb"
+  groupId = albSG.res.groupId
+  ipProtocol = "tcp"
+  fromPort = 80
+  toPort = 80
+  cidrIp = "0.0.0.0/0"
+}
+
+local tasksSG = new securitygroup.SecurityGroup {
+  label = "test-tasks-sg-for-ecs-svc-lb"
+  groupDescription = "Allow HTTP from ALB to ECS tasks for conformance test"
+  groupName = "formae-sdk-tasks-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+local tasksIngress = new securitygroupingress.SecurityGroupIngress {
+  label = "test-tasks-sg-ingress-for-ecs-svc-lb"
+  groupId = tasksSG.res.groupId
+  ipProtocol = "tcp"
+  fromPort = 80
+  toPort = 80
+  sourceSecurityGroupId = albSG.res.groupId
+}
+
+local testALB = new loadbalancer.LoadBalancer {
+  label = "test-alb-for-ecs-svc"
+  name = "formae-sdk-alb-\(testRunID)"
+  scheme = "internal"
+  type = "application"
+  subnets {
+    testSubnetA.res.subnetId
+    testSubnetB.res.subnetId
+  }
+  securityGroups {
+    albSG.res.groupId
+  }
+}
+
+local testTG = new targetgroup.TargetGroup {
+  label = "test-tg-for-ecs-svc"
+  name = "formae-sdk-tg-\(testRunID)"
+  port = 80
+  protocol = "HTTP"
+  targetType = "ip"
+  vpcId = testVpc.res.vpcId
+}
+
+local testListener = new listener.Listener {
+  label = "test-listener-for-ecs-svc"
+  loadBalancerArn = testALB.res.loadBalancerArn
+  port = 80
+  protocol = "HTTP"
+  defaultActions {
+    new listener.Action {
+      type = "forward"
+      targetGroupArn = testTG.res.targetGroupArn
+    }
+  }
+}
+
+local testCluster = new ecscluster.Cluster {
+  label = "test-cluster-for-ecs-svc-lb"
+  clusterName = "formae-sdk-svc-lb-cluster-\(testRunID)"
+  clusterSettings {
+    new {
+      name = "containerInsights"
+      value = "disabled"
+    }
+  }
+}
+
+// Updated: container image bumped from nginx:latest to nginx:1.25. This is
+// not a createOnly field on TaskDefinition (the TaskDef itself will be
+// replaced, producing a new TaskDefinitionArn), which in turn causes the
+// ECS Service to roll a new deployment -- exactly the path the Phase B
+// new-deployment detection + grace window logic needs to cover.
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "test-taskdef-for-ecs-svc-lb"
+  family = "formae-sdk-svc-lb-taskdef-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "256"
+  memory = "512"
+  containerDefinitions {
+    new {
+      name = "test-container"
+      image = "nginx:1.25"
+      essential = true
+      portMappings {
+        new {
+          containerPort = 80
+          protocol = "tcp"
+        }
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ECS Service with ALB/TG attachment"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  testSubnetA
+  testSubnetB
+
+  albSG
+  albIngress
+  tasksSG
+  tasksIngress
+
+  testALB
+  testTG
+  testListener
+
+  testCluster
+  testTaskDef
+
+  // ECS Service -- service definition itself is identical to the base
+  // fixture. The TaskDefinitionArn Resolvable picks up the new TaskDef
+  // revision automatically, which triggers a new ECS deployment.
+  new service.Service {
+    label = "plugin-sdk-test-ecs-service-with-lb"
+    serviceName = "formae-sdk-svc-lb-\(testRunID)"
+    cluster = testCluster.res.arn
+    taskDefinition = new formae.Resolvable {
+      label = testTaskDef.label
+      type = "AWS::ECS::TaskDefinition"
+      property = "TaskDefinitionArn"
+    }
+    desiredCount = 1
+    schedulingStrategy = "REPLICA"
+    launchType = "FARGATE"
+    networkConfiguration = new service.NetworkConfiguration {
+      awsvpcConfiguration = new service.AwsVpcConfiguration {
+        assignPublicIp = "DISABLED"
+        subnets {
+          testSubnetA.res.subnetId
+          testSubnetB.res.subnetId
+        }
+        securityGroups {
+          tasksSG.res.groupId
+        }
+      }
+    }
+    loadBalancers {
+      new service.LoadBalancer {
+        containerName = "test-container"
+        containerPort = 80
+        targetGroupArn = testListener.res.targetGroupArn
+      }
+    }
+    healthCheckGracePeriodSeconds = 60
+    deploymentConfiguration = new service.DeploymentConfiguration {
+      maximumPercent = 200
+      minimumHealthyPercent = 100
+    }
+  }
+}
