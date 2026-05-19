@@ -30,19 +30,27 @@ const (
 	primaryCreatedSlack     = 10 * time.Second
 )
 
-// Service is a custom provisioner for AWS::ECS::Service. CloudControl accepts
-// either a cluster short name or a full ARN in the Cluster field on Create,
-// but its Read response always returns the bare short name. When the caller
-// set Cluster with an ARN-valued Resolvable (e.g. `cluster = ecsCluster.res.arn`),
-// that mismatch surfaces on every reapply as a phantom createOnly diff on the
-// Cluster field — the planner promotes the Update to a full Replace.
+// Service is a custom provisioner for AWS::ECS::Service that implements:
 //
-// This provisioner intercepts Read and re-inflates the bare cluster name back
-// to a full ARN using the region and account parsed from the always-present
-// ServiceArn, so the comparator sees the same shape the user sent on Create.
-// Create/Update/Delete/Status continue through the generic CloudControl path.
+//  1. Cluster ARN re-inflation on Read (legacy behavior). CloudControl's Read
+//     response always returns the bare cluster short name, which causes phantom
+//     createOnly diffs when the caller used a full ARN. Read re-inflates the
+//     short name back to the ARN using region/account parsed from ServiceArn.
 //
-// Bug reference: formae@.claude/handover/spurious-replace-ecs/BUG-2-CLUSTER-ARN-DRIFT.md.
+//  2. Two-phase stability tracking on Create/Update for REPLICA + ECS-controller
+//     services. Phase A polls CCAPI's request token; once CCAPI accepts the
+//     registration, Phase B polls DescribeServices + DescribeTargetHealth until
+//     the deployment is stable (rolloutState=COMPLETED, runningCount=desiredCount,
+//     ≥1 healthy target per attached ELBv2 target group). State is encoded in
+//     a composite RequestID ("formae-ecs/<op>/<unixStart>/<ccapiToken>") set
+//     once at Create/Update return and preserved across polls by the operator.
+//
+// Non-default shapes (CODE_DEPLOY / EXTERNAL controllers, DAEMON scheduling,
+// classic-ELB attachments) fall through to generic CCAPI Status via the shape
+// gate in Create/Update.
+//
+// Design: ~/dev/personal/engineering-notes/formae-plugin-aws/design/2026-05-18-ecs-service-stability-tracking.md
+// Bug:    ~/dev/personal/engineering-notes/formae-plugin-aws/2026-05-17-ecs-service-create-should-report-inprogress-until-deployment-stable.md
 type Service struct {
 	cfg                *config.Config
 	ccxClientFactory   func(*config.Config) (ccxClient, error)

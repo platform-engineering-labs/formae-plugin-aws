@@ -463,3 +463,100 @@ func TestStatusPhaseB_TGUnhealthy_InProgress(t *testing.T) {
 	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
 	assert.Contains(t, res.ProgressResult.StatusMessage, "healthy")
 }
+
+func TestStatusPhaseB_UpdateWithNewDeployment_NormalFlow(t *testing.T) {
+	// Update where primary.CreatedAt >= unixStart - slack (the new deployment IS ours).
+	// Phase B proceeds normally, returns InProgress for a still-rolling deployment.
+	unixStart := int64(1747526400)
+	primaryStart := time.Unix(unixStart, 0).Add(5 * time.Second) // new deployment just appeared
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				RunningCount: 0,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	// Now is shortly after the deployment started
+	s.now = func() time.Time { return primaryStart.Add(10 * time.Second) }
+	req := &resource.StatusRequest{RequestID: "formae-ecs/update/1747526400/tU", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationUpdate, unixStart, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "0/1")
+}
+
+func TestStatusPhaseB_UpdateNoNewDeployment_WithinGrace_InProgress(t *testing.T) {
+	// Update where primary.CreatedAt is well before unixStart-slack AND we are still
+	// inside the updateGraceWindow (60s) since unixStart. Should return InProgress
+	// with "waiting for new deployment to start".
+	unixStart := int64(1747526400)
+	primaryStart := time.Unix(unixStart, 0).Add(-1 * time.Hour) // pre-existing deployment
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	// 30s after unixStart — inside the 60s grace window
+	s.now = func() time.Time { return time.Unix(unixStart, 0).Add(30 * time.Second) }
+	req := &resource.StatusRequest{RequestID: "formae-ecs/update/1747526400/tU", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationUpdate, unixStart, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "waiting for new deployment to start")
+}
+
+func TestStatusPhaseB_UpdateNoNewDeployment_PastGrace_NoopUpdate_Success(t *testing.T) {
+	// Update where primary.CreatedAt is well before unixStart-slack AND we are PAST
+	// the updateGraceWindow. The implementation falls through to stability check
+	// on the existing primary. Since it's stable + no TGs, it should report Success.
+	unixStart := int64(1747526400)
+	primaryStart := time.Unix(unixStart, 0).Add(-1 * time.Hour) // pre-existing, stable
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				ServiceArn:   aws.String("arn:aws:ecs:us-east-1:123:service/c/s"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+	ccx := &mockCCXClient{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(
+		&resource.ReadResult{ResourceType: "AWS::ECS::Service", Properties: `{"k":"v"}`}, nil)
+
+	s := newServiceWithMocks(ccx, ecsCli, nil)
+	// 5 min after unixStart — past 60s grace
+	s.now = func() time.Time { return time.Unix(unixStart, 0).Add(5 * time.Minute) }
+	req := &resource.StatusRequest{RequestID: "formae-ecs/update/1747526400/tU", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationUpdate, unixStart, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus,
+		"no-op Update past grace with stable existing primary should report Success")
+	assert.Equal(t, resource.OperationUpdate, res.ProgressResult.Operation)
+}
