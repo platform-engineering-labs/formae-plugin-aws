@@ -122,6 +122,10 @@ func shapeSupportsPhaseB(props json.RawMessage) bool {
 // parseCreateClusterAndService extracts Cluster (normalized to short name) and
 // ServiceName from a Create request's Properties. Returns a wrapped error
 // pointing at the schema field if ServiceName is missing.
+//
+// Cluster is optional in the AWS::ECS::Service schema: when absent, ECS places
+// the service in a cluster literally named "default" (auto-created on first
+// use). We mirror that semantic here so Phase B polls the right cluster.
 func parseCreateClusterAndService(props json.RawMessage) (cluster, service string, err error) {
 	var p struct {
 		Cluster     string `json:"Cluster"`
@@ -141,7 +145,7 @@ func parseCreateClusterAndService(props json.RawMessage) (cluster, service strin
 		}
 	}
 	if cluster == "" {
-		return "", "", fmt.Errorf("AWS::ECS::Service.Cluster is required")
+		cluster = "default"
 	}
 	return cluster, p.ServiceName, nil
 }

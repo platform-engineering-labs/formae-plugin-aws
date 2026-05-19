@@ -172,6 +172,18 @@ func TestParseCreateClusterAndService_MissingServiceName(t *testing.T) {
 	assert.Contains(t, err.Error(), "ServiceName")
 }
 
+func TestParseCreateClusterAndService_MissingCluster_DefaultsToDefaultCluster(t *testing.T) {
+	// Schema marks Cluster as optional. When absent, ECS places the service in
+	// a cluster literally named "default". Regression coverage for the gap the
+	// adversarial review caught: pre-this-branch the generic CCAPI path handled
+	// this transparently, so Phase B must mirror that semantic.
+	props := []byte(`{"ServiceName": "my-svc"}`)
+	cluster, service, err := parseCreateClusterAndService(props)
+	assert.NoError(t, err)
+	assert.Equal(t, "default", cluster)
+	assert.Equal(t, "my-svc", service)
+}
+
 func TestParseUpdateClusterAndService_Canonical(t *testing.T) {
 	cluster, service, err := parseUpdateClusterAndService(
 		"arn:aws:ecs:us-east-1:123456789012:service/my-cluster/my-svc|my-cluster")
