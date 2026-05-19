@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -18,6 +19,18 @@ import (
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
+
+func newServiceWithMocks(ccx ccxClient, ecsCli ecsClient, elb elbv2Client) *Service {
+	return &Service{
+		cfg:                &config.Config{},
+		ccxClientFactory:   func(*config.Config) (ccxClient, error) { return ccx, nil },
+		ecsClientFactory:   func(*config.Config) (ecsClient, error) { return ecsCli, nil },
+		elbv2ClientFactory: func(*config.Config) (elbv2Client, error) { return elb, nil },
+		now:                func() time.Time { return time.Unix(1747526400, 0) },
+		operationTimeout:   20 * time.Minute,
+		finalReadGrace:     2 * time.Minute,
+	}
+}
 
 func TestService_Read_ReinflatesBareClusterNameToArn(t *testing.T) {
 	ctx := context.Background()
@@ -129,4 +142,110 @@ func TestService_Read_PropagatesInnerError(t *testing.T) {
 	})
 
 	assert.Error(t, err)
+}
+
+func TestService_Create_REPLICA_ECS_WrapsComposite(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.CreateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCreate,
+			OperationStatus: resource.OperationStatusInProgress,
+			RequestID:       "ccapi-tA",
+			NativeID:        "",
+		},
+	}
+	ccx.On("CreateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.CreateRequest{
+		ResourceType: "AWS::ECS::Service",
+		Properties:   []byte(`{"Cluster":"my-cluster","ServiceName":"my-svc"}`),
+	}
+	res, err := s.Create(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, "formae-ecs/create/1747526400/ccapi-tA", res.ProgressResult.RequestID)
+	assert.Equal(t, "pending|my-cluster|my-svc", res.ProgressResult.NativeID)
+}
+
+func TestService_Create_CODE_DEPLOY_Passthrough(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.CreateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCreate,
+			OperationStatus: resource.OperationStatusInProgress,
+			RequestID:       "ccapi-tA",
+			NativeID:        "",
+		},
+	}
+	ccx.On("CreateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.CreateRequest{
+		ResourceType: "AWS::ECS::Service",
+		Properties:   []byte(`{"DeploymentController":{"Type":"CODE_DEPLOY"}}`),
+	}
+	res, err := s.Create(context.Background(), req)
+	assert.NoError(t, err)
+	// No composite wrap — bare CCAPI token.
+	assert.Equal(t, "ccapi-tA", res.ProgressResult.RequestID)
+	assert.Equal(t, "", res.ProgressResult.NativeID)
+}
+
+func TestService_Create_DAEMON_Passthrough(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.CreateResult{
+		ProgressResult: &resource.ProgressResult{
+			OperationStatus: resource.OperationStatusInProgress,
+			RequestID:       "ccapi-tA",
+		},
+	}
+	ccx.On("CreateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.CreateRequest{
+		ResourceType: "AWS::ECS::Service",
+		Properties:   []byte(`{"SchedulingStrategy":"DAEMON"}`),
+	}
+	res, err := s.Create(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, "ccapi-tA", res.ProgressResult.RequestID, "DAEMON shapes pass through without composite wrap")
+}
+
+func TestService_Create_REPLICA_MissingServiceName_InvalidRequest(t *testing.T) {
+	// shapeSupportsPhaseB(true) AND ServiceName missing → terminal Failure.
+	s := newServiceWithMocks(&mockCCXClient{}, nil, nil)
+	req := &resource.CreateRequest{
+		ResourceType: "AWS::ECS::Service",
+		Properties:   []byte(`{"Cluster":"my-cluster"}`),
+	}
+	res, err := s.Create(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeInvalidRequest, res.ProgressResult.ErrorCode)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "ServiceName")
+}
+
+func TestService_Create_SyncSuccess_RewritesToInProgress(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.CreateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:          resource.OperationCreate,
+			OperationStatus:    resource.OperationStatusSuccess,
+			RequestID:          "ccapi-tA",
+			NativeID:           "arn:aws:ecs:us-east-1:123:service/my-cluster/my-svc|my-cluster",
+			ResourceProperties: []byte(`{"k":"v"}`),
+		},
+	}
+	ccx.On("CreateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.CreateRequest{
+		ResourceType: "AWS::ECS::Service",
+		Properties:   []byte(`{"Cluster":"my-cluster","ServiceName":"my-svc"}`),
+	}
+	res, err := s.Create(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	assert.Nil(t, res.ProgressResult.ResourceProperties)
+	assert.Equal(t, "formae-ecs/create/1747526400/ccapi-tA", res.ProgressResult.RequestID)
 }

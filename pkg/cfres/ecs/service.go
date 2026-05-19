@@ -149,7 +149,38 @@ func parseEcsArn(arn string) (partition, region, account string, ok bool) {
 }
 
 func (s *Service) Create(ctx context.Context, req *resource.CreateRequest) (*resource.CreateResult, error) {
-	panic("Service.Create: implemented in Task 10")
+	// Shape gate FIRST. Non-Phase-B shapes (CODE_DEPLOY/EXTERNAL/DAEMON) skip
+	// the wrap entirely and fall through to generic CCAPI Status.
+	usePhaseB := shapeSupportsPhaseB(req.Properties)
+
+	var cluster, service string
+	if usePhaseB {
+		c, s2, err := parseCreateClusterAndService(req.Properties)
+		if err != nil {
+			return &resource.CreateResult{
+				ProgressResult: terminalFailurePR(resource.OperationCreate, "", "",
+					resource.OperationErrorCodeInvalidRequest, err.Error()),
+			}, nil
+		}
+		cluster, service = c, s2
+	}
+
+	cli, err := s.ccxClientFactory(s.cfg)
+	if err != nil {
+		return &resource.CreateResult{
+			ProgressResult: classifyForEntry(err, resource.OperationCreate, "", "build CCAPI client"),
+		}, nil
+	}
+	res, err := cli.CreateResource(ctx, req)
+	if err != nil {
+		return &resource.CreateResult{
+			ProgressResult: classifyForEntry(err, resource.OperationCreate, "", "ccx.CreateResource"),
+		}, nil
+	}
+	if usePhaseB {
+		s.wrapForCreate(res.ProgressResult, cluster, service)
+	}
+	return res, nil
 }
 
 func (s *Service) Update(ctx context.Context, req *resource.UpdateRequest) (*resource.UpdateResult, error) {
