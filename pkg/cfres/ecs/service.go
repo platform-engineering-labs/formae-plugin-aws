@@ -10,12 +10,25 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
+)
+
+// Constants used across Phase A/Phase B. Some are wired in subsequent tasks;
+// staged here so later diffs stay focused on behavior rather than constants.
+const (
+	phaseBPrefix            = "formae-ecs/"
+	opSegCreate             = "create"
+	opSegUpdate             = "update"
+	defaultOperationTimeout = 20 * time.Minute
+	defaultFinalReadGrace   = 2 * time.Minute
+	updateGraceWindow       = 60 * time.Second
+	primaryCreatedSlack     = 10 * time.Second
 )
 
 // Service is a custom provisioner for AWS::ECS::Service. CloudControl accepts
@@ -32,7 +45,13 @@ import (
 //
 // Bug reference: formae@.claude/handover/spurious-replace-ecs/BUG-2-CLUSTER-ARN-DRIFT.md.
 type Service struct {
-	cfg *config.Config
+	cfg                *config.Config
+	ccxClientFactory   func(*config.Config) (ccxClient, error)
+	ecsClientFactory   func(*config.Config) (ecsClient, error)
+	elbv2ClientFactory func(*config.Config) (elbv2Client, error)
+	now                func() time.Time
+	operationTimeout   time.Duration
+	finalReadGrace     time.Duration
 }
 
 type ccxReadClient interface {
@@ -43,9 +62,24 @@ var _ prov.Provisioner = &Service{}
 
 func init() {
 	registry.Register("AWS::ECS::Service",
-		[]resource.Operation{resource.OperationRead},
+		[]resource.Operation{
+			resource.OperationRead,
+			resource.OperationCreate,
+			resource.OperationUpdate,
+			resource.OperationCheckStatus,
+			// Delete intentionally NOT registered — generic CCAPI Delete polls correctly
+			// per the bug report's 6-minute deleting state observation.
+		},
 		func(cfg *config.Config) prov.Provisioner {
-			return &Service{cfg: cfg}
+			return &Service{
+				cfg:                cfg,
+				ccxClientFactory:   defaultCCXClientFactory,
+				ecsClientFactory:   defaultECSClientFactory,
+				elbv2ClientFactory: defaultELBv2ClientFactory,
+				now:                time.Now,
+				operationTimeout:   defaultOperationTimeout,
+				finalReadGrace:     defaultFinalReadGrace,
+			}
 		})
 }
 
@@ -114,22 +148,22 @@ func parseEcsArn(arn string) (partition, region, account string, ok bool) {
 	return parts[1], parts[3], parts[4], true
 }
 
-func (s *Service) Create(_ context.Context, _ *resource.CreateRequest) (*resource.CreateResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner only implements Read")
+func (s *Service) Create(ctx context.Context, req *resource.CreateRequest) (*resource.CreateResult, error) {
+	panic("Service.Create: implemented in Task 10")
 }
 
-func (s *Service) Update(_ context.Context, _ *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner only implements Read")
+func (s *Service) Update(ctx context.Context, req *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	panic("Service.Update: implemented in Task 11")
+}
+
+func (s *Service) Status(ctx context.Context, req *resource.StatusRequest) (*resource.StatusResult, error) {
+	panic("Service.Status: implemented in Task 12")
 }
 
 func (s *Service) Delete(_ context.Context, _ *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner only implements Read")
-}
-
-func (s *Service) Status(_ context.Context, _ *resource.StatusRequest) (*resource.StatusResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner only implements Read")
+	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner does not implement Delete")
 }
 
 func (s *Service) List(_ context.Context, _ *resource.ListRequest) (*resource.ListResult, error) {
-	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner only implements Read")
+	return nil, fmt.Errorf("AWS::ECS::Service custom provisioner does not implement List")
 }
