@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
@@ -152,4 +154,60 @@ func parseUpdateClusterAndService(nativeID string) (cluster, service string, err
 		return "", "", fmt.Errorf("malformed Update NativeID: %q", nativeID)
 	}
 	return c, s, nil
+}
+
+// wrapForCreate encodes the composite RequestID and (when CCAPI didn't give us a
+// canonical identifier) a synthetic NativeID, so the operator-preserved fields
+// carry enough state for Phase B dispatch without depending on CCAPI returning
+// an Identifier first. If CCAPI returned sync Success, also rewrite to InProgress
+// so the operator transitions into status-polling. No-op for missing RequestID
+// (CCAPI returned an error-shaped result with no token).
+func (s *Service) wrapForCreate(pr *resource.ProgressResult, cluster, service string) {
+	if pr == nil || pr.RequestID == "" {
+		return
+	}
+	if pr.OperationStatus == resource.OperationStatusSuccess {
+		pr.OperationStatus = resource.OperationStatusInProgress
+		pr.ResourceProperties = nil
+		pr.StatusMessage = "ECS registration complete; waiting for service to appear"
+	}
+	pr.RequestID = composeRequestID(opSegCreate, s.now().Unix(), pr.RequestID)
+	if pr.NativeID == "" {
+		pr.NativeID = "pending|" + cluster + "|" + service
+	}
+	pr.Operation = resource.OperationCreate
+}
+
+// wrapForUpdate is the Update analogue. NativeID is always canonical for Update
+// (req.NativeID is populated by definition), but we set it defensively in case
+// ccx returned an empty one.
+func (s *Service) wrapForUpdate(pr *resource.ProgressResult, canonicalNativeID, cluster, service string) {
+	if pr == nil || pr.RequestID == "" {
+		return
+	}
+	if pr.OperationStatus == resource.OperationStatusSuccess {
+		pr.OperationStatus = resource.OperationStatusInProgress
+		pr.ResourceProperties = nil
+		pr.StatusMessage = "ECS update accepted; waiting for deployment to stabilize"
+	}
+	pr.RequestID = composeRequestID(opSegUpdate, s.now().Unix(), pr.RequestID)
+	if pr.NativeID == "" {
+		pr.NativeID = canonicalNativeID
+	}
+	pr.Operation = resource.OperationUpdate
+}
+
+// hasInactiveFailure scans DescribeServices.Failures for any entry whose Reason
+// is "INACTIVE" — the fast path for OOB-delete detection. AWS keeps INACTIVE
+// tombstones for ~1 hour post-delete.
+func hasInactiveFailure(out *awsecs.DescribeServicesOutput) bool {
+	if out == nil {
+		return false
+	}
+	for _, f := range out.Failures {
+		if f.Reason != nil && *f.Reason == "INACTIVE" {
+			return true
+		}
+	}
+	return false
 }

@@ -8,7 +8,10 @@ package ecs
 
 import (
 	"testing"
+	"time"
 
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
@@ -181,3 +184,83 @@ func TestParseUpdateClusterAndService_Malformed(t *testing.T) {
 	_, _, err := parseUpdateClusterAndService("garbage")
 	assert.Error(t, err)
 }
+
+func TestWrapForCreate_AsyncInProgress(t *testing.T) {
+	s := &Service{now: func() time.Time { return time.Unix(1747526400, 0) }}
+	pr := &resource.ProgressResult{
+		Operation:       resource.OperationCreate,
+		OperationStatus: resource.OperationStatusInProgress,
+		RequestID:       "ccapi-tA",
+		NativeID:        "",
+	}
+	s.wrapForCreate(pr, "my-cluster", "my-svc")
+	assert.Equal(t, resource.OperationCreate, pr.Operation)
+	assert.Equal(t, resource.OperationStatusInProgress, pr.OperationStatus)
+	assert.Equal(t, "formae-ecs/create/1747526400/ccapi-tA", pr.RequestID)
+	assert.Equal(t, "pending|my-cluster|my-svc", pr.NativeID)
+}
+
+func TestWrapForCreate_SyncSuccess_RewritesToInProgress(t *testing.T) {
+	s := &Service{now: func() time.Time { return time.Unix(1747526400, 0) }}
+	pr := &resource.ProgressResult{
+		Operation:          resource.OperationCreate,
+		OperationStatus:    resource.OperationStatusSuccess,
+		RequestID:          "ccapi-tA",
+		NativeID:           "arn:aws:ecs:us-east-1:123:service/my-cluster/my-svc|my-cluster",
+		ResourceProperties: []byte(`{"some":"props"}`),
+	}
+	s.wrapForCreate(pr, "my-cluster", "my-svc")
+	assert.Equal(t, resource.OperationStatusInProgress, pr.OperationStatus)
+	assert.Nil(t, pr.ResourceProperties)
+	assert.Contains(t, pr.StatusMessage, "waiting")
+	assert.Equal(t, "formae-ecs/create/1747526400/ccapi-tA", pr.RequestID)
+	// NativeID stays canonical when CCAPI gave us one.
+	assert.Equal(t, "arn:aws:ecs:us-east-1:123:service/my-cluster/my-svc|my-cluster", pr.NativeID)
+}
+
+func TestWrapForCreate_EmptyRequestID_NoOp(t *testing.T) {
+	s := &Service{now: func() time.Time { return time.Unix(1747526400, 0) }}
+	pr := &resource.ProgressResult{
+		OperationStatus: resource.OperationStatusFailure,
+		RequestID:       "",
+	}
+	s.wrapForCreate(pr, "c", "s")
+	assert.Equal(t, "", pr.RequestID)
+	assert.Equal(t, "", pr.NativeID)
+}
+
+func TestWrapForUpdate_NativeIDStaysCanonical(t *testing.T) {
+	s := &Service{now: func() time.Time { return time.Unix(1747526400, 0) }}
+	pr := &resource.ProgressResult{
+		Operation:       resource.OperationUpdate,
+		OperationStatus: resource.OperationStatusInProgress,
+		RequestID:       "ccapi-tU",
+		NativeID:        "",
+	}
+	canonical := "arn:aws:ecs:us-east-1:123:service/my-cluster/my-svc|my-cluster"
+	s.wrapForUpdate(pr, canonical, "my-cluster", "my-svc")
+	assert.Equal(t, "formae-ecs/update/1747526400/ccapi-tU", pr.RequestID)
+	assert.Equal(t, canonical, pr.NativeID)
+	assert.Equal(t, resource.OperationUpdate, pr.Operation)
+}
+
+func TestHasInactiveFailure(t *testing.T) {
+	out := &awsecs.DescribeServicesOutput{
+		Failures: []ecstypes.Failure{
+			{Arn: ptrString("arn"), Reason: ptrString("INACTIVE")},
+		},
+	}
+	assert.True(t, hasInactiveFailure(out))
+
+	out2 := &awsecs.DescribeServicesOutput{
+		Failures: []ecstypes.Failure{
+			{Arn: ptrString("arn"), Reason: ptrString("MISSING")},
+		},
+	}
+	assert.False(t, hasInactiveFailure(out2))
+
+	out3 := &awsecs.DescribeServicesOutput{}
+	assert.False(t, hasInactiveFailure(out3))
+}
+
+func ptrString(s string) *string { return &s }
