@@ -5,6 +5,7 @@
 package ecs
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -87,4 +88,68 @@ func parseClusterAndServiceFromNativeID(nativeID string) (cluster, service strin
 // form the agent persists. Used by finalSuccess once Phase B stability is observed.
 func buildCanonicalNativeID(serviceArn, clusterShortName string) string {
 	return serviceArn + "|" + clusterShortName
+}
+
+// shapeSupportsPhaseB returns true iff the request properties describe the shape
+// our Phase B tracking handles: deploymentController.type == "ECS" (or absent),
+// AND schedulingStrategy == "REPLICA" (or absent). Anything else (CODE_DEPLOY,
+// EXTERNAL, DAEMON) falls through to generic CCAPI Status. Empty/nil props →
+// false (conservative — let the generic path handle whatever it is).
+func shapeSupportsPhaseB(props json.RawMessage) bool {
+	if len(props) == 0 {
+		return false
+	}
+	var shape struct {
+		DeploymentController *struct {
+			Type string `json:"Type"`
+		} `json:"DeploymentController"`
+		SchedulingStrategy string `json:"SchedulingStrategy"`
+	}
+	if err := json.Unmarshal(props, &shape); err != nil {
+		return false
+	}
+	if shape.DeploymentController != nil && shape.DeploymentController.Type != "" && shape.DeploymentController.Type != "ECS" {
+		return false
+	}
+	if shape.SchedulingStrategy != "" && shape.SchedulingStrategy != "REPLICA" {
+		return false
+	}
+	return true
+}
+
+// parseCreateClusterAndService extracts Cluster (normalized to short name) and
+// ServiceName from a Create request's Properties. Returns a wrapped error
+// pointing at the schema field if ServiceName is missing.
+func parseCreateClusterAndService(props json.RawMessage) (cluster, service string, err error) {
+	var p struct {
+		Cluster     string `json:"Cluster"`
+		ServiceName string `json:"ServiceName"`
+	}
+	if err := json.Unmarshal(props, &p); err != nil {
+		return "", "", fmt.Errorf("parse Create properties: %w", err)
+	}
+	if p.ServiceName == "" {
+		return "", "", fmt.Errorf("AWS::ECS::Service.ServiceName is required for Phase B tracking (REPLICA + ECS controller); auto-generated names are not supported in v1")
+	}
+	cluster = p.Cluster
+	if strings.HasPrefix(cluster, "arn:") {
+		// arn:aws:ecs:region:account:cluster/<name> → last "/" segment
+		if idx := strings.LastIndex(cluster, "/"); idx >= 0 {
+			cluster = cluster[idx+1:]
+		}
+	}
+	if cluster == "" {
+		return "", "", fmt.Errorf("AWS::ECS::Service.Cluster is required")
+	}
+	return cluster, p.ServiceName, nil
+}
+
+// parseUpdateClusterAndService extracts cluster + service from the canonical
+// NativeID an Update request carries ("<serviceArn>|<clusterShortName>").
+func parseUpdateClusterAndService(nativeID string) (cluster, service string, err error) {
+	c, s, ok := parseClusterAndServiceFromNativeID(nativeID)
+	if !ok {
+		return "", "", fmt.Errorf("malformed Update NativeID: %q", nativeID)
+	}
+	return c, s, nil
 }

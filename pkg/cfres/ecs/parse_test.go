@@ -107,3 +107,77 @@ func TestBuildCanonicalNativeID(t *testing.T) {
 		"my-cluster")
 	assert.Equal(t, "arn:aws:ecs:us-east-1:123456789012:service/my-cluster/my-svc|my-cluster", canonical)
 }
+
+func TestShapeSupportsPhaseB_DefaultShape(t *testing.T) {
+	// Empty JSON object — all fields absent = all defaults (ECS controller, REPLICA strategy)
+	assert.True(t, shapeSupportsPhaseB([]byte(`{}`)))
+}
+
+func TestShapeSupportsPhaseB_ExplicitREPLICA_ECS(t *testing.T) {
+	props := []byte(`{
+        "Cluster": "c", "ServiceName": "s",
+        "DeploymentController": {"Type": "ECS"},
+        "SchedulingStrategy": "REPLICA"
+    }`)
+	assert.True(t, shapeSupportsPhaseB(props))
+}
+
+func TestShapeSupportsPhaseB_CODE_DEPLOY(t *testing.T) {
+	props := []byte(`{"DeploymentController": {"Type": "CODE_DEPLOY"}}`)
+	assert.False(t, shapeSupportsPhaseB(props))
+}
+
+func TestShapeSupportsPhaseB_EXTERNAL(t *testing.T) {
+	props := []byte(`{"DeploymentController": {"Type": "EXTERNAL"}}`)
+	assert.False(t, shapeSupportsPhaseB(props))
+}
+
+func TestShapeSupportsPhaseB_DAEMON(t *testing.T) {
+	props := []byte(`{"SchedulingStrategy": "DAEMON"}`)
+	assert.False(t, shapeSupportsPhaseB(props))
+}
+
+func TestShapeSupportsPhaseB_EmptyProps(t *testing.T) {
+	// No properties at all → conservatively false; let the generic path handle it.
+	assert.False(t, shapeSupportsPhaseB(nil))
+	assert.False(t, shapeSupportsPhaseB([]byte{}))
+}
+
+func TestParseCreateClusterAndService_FullArn(t *testing.T) {
+	props := []byte(`{
+        "Cluster": "arn:aws:ecs:us-east-1:123456789012:cluster/my-cluster",
+        "ServiceName": "my-svc"
+    }`)
+	cluster, service, err := parseCreateClusterAndService(props)
+	assert.NoError(t, err)
+	assert.Equal(t, "my-cluster", cluster)
+	assert.Equal(t, "my-svc", service)
+}
+
+func TestParseCreateClusterAndService_ShortName(t *testing.T) {
+	props := []byte(`{"Cluster": "my-cluster", "ServiceName": "my-svc"}`)
+	cluster, service, err := parseCreateClusterAndService(props)
+	assert.NoError(t, err)
+	assert.Equal(t, "my-cluster", cluster)
+	assert.Equal(t, "my-svc", service)
+}
+
+func TestParseCreateClusterAndService_MissingServiceName(t *testing.T) {
+	props := []byte(`{"Cluster": "my-cluster"}`)
+	_, _, err := parseCreateClusterAndService(props)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "ServiceName")
+}
+
+func TestParseUpdateClusterAndService_Canonical(t *testing.T) {
+	cluster, service, err := parseUpdateClusterAndService(
+		"arn:aws:ecs:us-east-1:123456789012:service/my-cluster/my-svc|my-cluster")
+	assert.NoError(t, err)
+	assert.Equal(t, "my-cluster", cluster)
+	assert.Equal(t, "my-svc", service)
+}
+
+func TestParseUpdateClusterAndService_Malformed(t *testing.T) {
+	_, _, err := parseUpdateClusterAndService("garbage")
+	assert.Error(t, err)
+}
