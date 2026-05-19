@@ -225,6 +225,104 @@ func TestService_Create_REPLICA_MissingServiceName_InvalidRequest(t *testing.T) 
 	assert.Contains(t, res.ProgressResult.StatusMessage, "ServiceName")
 }
 
+func TestService_Update_REPLICA_ECS_WrapsComposite(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationUpdate,
+			OperationStatus: resource.OperationStatusInProgress,
+			RequestID:       "ccapi-tU",
+			NativeID:        "",
+		},
+	}
+	ccx.On("UpdateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	canonical := "arn:aws:ecs:us-east-1:123:service/my-cluster/my-svc|my-cluster"
+	req := &resource.UpdateRequest{
+		ResourceType:    "AWS::ECS::Service",
+		NativeID:        canonical,
+		PriorProperties: []byte(`{"Cluster":"my-cluster","ServiceName":"my-svc"}`),
+	}
+	res, err := s.Update(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, "formae-ecs/update/1747526400/ccapi-tU", res.ProgressResult.RequestID)
+	assert.Equal(t, canonical, res.ProgressResult.NativeID)
+}
+
+func TestService_Update_DAEMON_Passthrough(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			OperationStatus: resource.OperationStatusInProgress,
+			RequestID:       "ccapi-tU",
+		},
+	}
+	ccx.On("UpdateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.UpdateRequest{
+		ResourceType:    "AWS::ECS::Service",
+		NativeID:        "arn:aws:ecs:us-east-1:123:service/c/s|c",
+		PriorProperties: []byte(`{"SchedulingStrategy":"DAEMON"}`),
+	}
+	res, err := s.Update(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, "ccapi-tU", res.ProgressResult.RequestID, "DAEMON passes through")
+}
+
+func TestService_Update_SyncNotFound_RewritesToGeneralServiceException(t *testing.T) {
+	// Simulates ccx.UpdateResource's preflight GetResource returning NotFound
+	// for an OOB-deleted service. NotFound is recoverable in the SDK — we must
+	// rewrite to GeneralServiceException to avoid operator retry loops.
+	ccx := &mockCCXClient{}
+	inner := &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationUpdate,
+			OperationStatus: resource.OperationStatusFailure,
+			ErrorCode:       resource.OperationErrorCodeNotFound,
+			StatusMessage:   "ResourceNotFoundException",
+		},
+	}
+	ccx.On("UpdateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.UpdateRequest{
+		ResourceType:    "AWS::ECS::Service",
+		NativeID:        "arn:aws:ecs:us-east-1:123:service/c/s|c",
+		PriorProperties: []byte(`{"Cluster":"c","ServiceName":"s"}`),
+	}
+	res, err := s.Update(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, res.ProgressResult.ErrorCode)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "deleted out-of-band")
+}
+
+func TestService_Update_SyncThrottling_Propagates(t *testing.T) {
+	ccx := &mockCCXClient{}
+	inner := &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationUpdate,
+			OperationStatus: resource.OperationStatusFailure,
+			ErrorCode:       resource.OperationErrorCodeThrottling,
+			StatusMessage:   "Rate exceeded",
+		},
+	}
+	ccx.On("UpdateResource", mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	req := &resource.UpdateRequest{
+		ResourceType:    "AWS::ECS::Service",
+		NativeID:        "arn:aws:ecs:us-east-1:123:service/c/s|c",
+		PriorProperties: []byte(`{"Cluster":"c","ServiceName":"s"}`),
+	}
+	res, err := s.Update(context.Background(), req)
+	assert.NoError(t, err)
+	// Don't over-intercept. Throttling passes through; operator's CRUD retry path handles it.
+	assert.Equal(t, resource.OperationErrorCodeThrottling, res.ProgressResult.ErrorCode)
+}
+
 func TestService_Create_SyncSuccess_RewritesToInProgress(t *testing.T) {
 	ccx := &mockCCXClient{}
 	inner := &resource.CreateResult{

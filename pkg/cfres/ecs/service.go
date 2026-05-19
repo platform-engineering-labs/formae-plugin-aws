@@ -184,7 +184,55 @@ func (s *Service) Create(ctx context.Context, req *resource.CreateRequest) (*res
 }
 
 func (s *Service) Update(ctx context.Context, req *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	panic("Service.Update: implemented in Task 11")
+	// Shape gate FIRST. PriorProperties is authoritative — DesiredProperties may
+	// omit createOnly fields (deploymentController, schedulingStrategy) in patch shape.
+	usePhaseB := shapeSupportsPhaseB(req.PriorProperties)
+
+	var cluster, service string
+	if usePhaseB {
+		c, s2, err := parseUpdateClusterAndService(req.NativeID)
+		if err != nil {
+			return &resource.UpdateResult{
+				ProgressResult: terminalFailurePR(resource.OperationUpdate, req.NativeID, "",
+					resource.OperationErrorCodeInvalidRequest, err.Error()),
+			}, nil
+		}
+		cluster, service = c, s2
+	}
+
+	cli, err := s.ccxClientFactory(s.cfg)
+	if err != nil {
+		return &resource.UpdateResult{
+			ProgressResult: classifyForEntry(err, resource.OperationUpdate, req.NativeID, "build CCAPI client"),
+		}, nil
+	}
+	res, err := cli.UpdateResource(ctx, req)
+	if err != nil {
+		return &resource.UpdateResult{
+			ProgressResult: classifyForEntry(err, resource.OperationUpdate, req.NativeID, "ccx.UpdateResource"),
+		}, nil
+	}
+
+	// Sync-preflight OOB-delete intercept: ccx.UpdateResource preflights with
+	// GetResource (pkg/ccx/client.go:171-180); ResourceNotFoundException there
+	// wraps as Failure with ErrorCode=NotFound. NotFound is in the SDK's
+	// recoverableErrorCodes table, so propagating it would loop the operator.
+	// Swap to GeneralServiceException (non-recoverable).
+	if res.ProgressResult != nil &&
+		res.ProgressResult.OperationStatus == resource.OperationStatusFailure &&
+		res.ProgressResult.ErrorCode == resource.OperationErrorCodeNotFound {
+		return &resource.UpdateResult{
+			ProgressResult: terminalFailurePR(resource.OperationUpdate, req.NativeID, "",
+				resource.OperationErrorCodeGeneralServiceException,
+				"ECS service deleted out-of-band before Update could fire (CCAPI preflight NotFound): "+
+					res.ProgressResult.StatusMessage),
+		}, nil
+	}
+
+	if usePhaseB {
+		s.wrapForUpdate(res.ProgressResult, req.NativeID, cluster, service)
+	}
+	return res, nil
 }
 
 func (s *Service) Status(ctx context.Context, req *resource.StatusRequest) (*resource.StatusResult, error) {
