@@ -9,6 +9,7 @@ package ecs
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -138,9 +139,126 @@ func TestCheckPhaseA_CCAPIError_RetryableInProgress(t *testing.T) {
 	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
 }
 
-// Silence unused imports — these types will be used by Tasks 14/15 tests.
-var _ = aws.String
-var _ = awsecs.DescribeServicesInput{}
-var _ ecstypes.LaunchType
+// Silence unused imports — these elbv2 types will be used by Task 15 tests.
 var _ = awselbv2.DescribeTargetHealthInput{}
 var _ elbv2types.TargetHealthStateEnum
+
+func TestStatusPhaseB_INACTIVEFailure_TerminalGeneralServiceException(t *testing.T) {
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Failures: []ecstypes.Failure{{Reason: aws.String("INACTIVE")}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, res.ProgressResult.ErrorCode)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "deleted out-of-band")
+}
+
+func TestStatusPhaseB_INACTIVEServiceStatus_TerminalGeneralServiceException(t *testing.T) {
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{Status: aws.String("INACTIVE")}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, res.ProgressResult.ErrorCode)
+}
+
+func TestStatusPhaseB_ServiceMissing_InProgressBounded(t *testing.T) {
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "not yet visible")
+}
+
+func TestStatusPhaseB_RolloutInProgress_InProgress(t *testing.T) {
+	now := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				RunningCount: 0,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+					CreatedAt:    &now,
+				}},
+			}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "0/1")
+}
+
+func TestStatusPhaseB_RolloutFailed_TerminalGeneralServiceException(t *testing.T) {
+	now := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				RunningCount: 0,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:             aws.String("PRIMARY"),
+					RolloutState:       ecstypes.DeploymentRolloutStateFailed,
+					RolloutStateReason: aws.String("Circuit breaker tripped"),
+					CreatedAt:          &now,
+				}},
+			}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, res.ProgressResult.ErrorCode)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "Circuit breaker")
+}
+
+func TestStatusPhaseB_PastTimeout_NotStable_Terminal(t *testing.T) {
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				RunningCount: 0,
+				DesiredCount: 1,
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, nil)
+	s.now = func() time.Time { return primaryStart.Add(25 * time.Minute) }
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, res.ProgressResult.ErrorCode)
+}
