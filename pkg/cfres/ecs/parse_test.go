@@ -70,3 +70,40 @@ func TestComposite_RoundTrip(t *testing.T) {
 	assert.Equal(t, int64(1747526400), unixStart)
 	assert.Equal(t, "tA", token)
 }
+
+func TestParseClusterAndServiceFromNativeID_Synthetic(t *testing.T) {
+	cluster, service, ok := parseClusterAndServiceFromNativeID("pending|my-cluster|my-svc")
+	assert.True(t, ok)
+	assert.Equal(t, "my-cluster", cluster)
+	assert.Equal(t, "my-svc", service)
+}
+
+func TestParseClusterAndServiceFromNativeID_Canonical(t *testing.T) {
+	cluster, service, ok := parseClusterAndServiceFromNativeID(
+		"arn:aws:ecs:us-east-1:123456789012:service/my-cluster/my-svc|my-cluster")
+	assert.True(t, ok)
+	assert.Equal(t, "my-cluster", cluster)
+	assert.Equal(t, "my-svc", service)
+}
+
+func TestParseClusterAndServiceFromNativeID_Empty(t *testing.T) {
+	_, _, ok := parseClusterAndServiceFromNativeID("")
+	assert.False(t, ok)
+}
+
+func TestParseClusterAndServiceFromNativeID_Malformed(t *testing.T) {
+	_, _, ok := parseClusterAndServiceFromNativeID("not-a-real-shape")
+	assert.False(t, ok)
+}
+
+func TestParseClusterAndServiceFromNativeID_SyntheticEmptyCluster(t *testing.T) {
+	_, _, ok := parseClusterAndServiceFromNativeID("pending||my-svc")
+	assert.False(t, ok)
+}
+
+func TestBuildCanonicalNativeID(t *testing.T) {
+	canonical := buildCanonicalNativeID(
+		"arn:aws:ecs:us-east-1:123456789012:service/my-cluster/my-svc",
+		"my-cluster")
+	assert.Equal(t, "arn:aws:ecs:us-east-1:123456789012:service/my-cluster/my-svc|my-cluster", canonical)
+}
