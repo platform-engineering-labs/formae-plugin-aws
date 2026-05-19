@@ -11,6 +11,11 @@ import "@aws/aws.pkl"
 
 import "@aws/ec2/vpc.pkl"
 import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/route.pkl"
+import "@aws/ec2/subnetroutetableassociation.pkl"
 import "@aws/ec2/securitygroup.pkl"
 import "@aws/ec2/securitygroupingress.pkl"
 import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
@@ -44,6 +49,43 @@ local testSubnetB = new subnet.Subnet {
   vpcId = testVpc.res.vpcId
   cidrBlock = "10.231.2.0/24"
   availabilityZone = "us-east-1b"
+}
+
+// Internet routing: IGW + VPCGatewayAttachment + RouteTable + default Route +
+// per-subnet associations. Must mirror the base fixture so the update path
+// is a no-op on the network plumbing.
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-ecs-svc-lb"
+}
+
+local testIgwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-igw-attachment-for-ecs-svc-lb"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = testIgw.res.internetGatewayId
+}
+
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-ecs-svc-lb"
+  vpcId = testVpc.res.vpcId
+}
+
+local testDefaultRoute = new route.Route {
+  label = "test-default-route-for-ecs-svc-lb"
+  routeTableId = testRouteTable.res.routeTableId
+  destinationCidrBlock = "0.0.0.0/0"
+  gatewayId = testIgw.res.internetGatewayId
+}
+
+local testSubnetAAssoc = new subnetroutetableassociation.SubnetRouteTableAssociation {
+  label = "test-subnet-a-rtassoc-for-ecs-svc-lb"
+  subnetId = testSubnetA.res.subnetId
+  routeTableId = testRouteTable.res.routeTableId
+}
+
+local testSubnetBAssoc = new subnetroutetableassociation.SubnetRouteTableAssociation {
+  label = "test-subnet-b-rtassoc-for-ecs-svc-lb"
+  subnetId = testSubnetB.res.subnetId
+  routeTableId = testRouteTable.res.routeTableId
 }
 
 local albSG = new securitygroup.SecurityGroup {
@@ -171,6 +213,14 @@ forma {
   testSubnetA
   testSubnetB
 
+  // Internet routing so FARGATE tasks can pull container images.
+  testIgw
+  testIgwAttachment
+  testRouteTable
+  testDefaultRoute
+  testSubnetAAssoc
+  testSubnetBAssoc
+
   albSG
   albIngress
   tasksSG
@@ -186,6 +236,10 @@ forma {
   // ECS Service -- service definition itself is identical to the base
   // fixture. The TaskDefinitionArn Resolvable picks up the new TaskDef
   // revision automatically, which triggers a new ECS deployment.
+  //
+  // assignPublicIp=ENABLED is required: there is no NAT gateway in this
+  // fixture, so tasks reach the public internet (Docker Hub / ECR Public)
+  // via the IGW + default route + public IPs on their ENIs.
   new service.Service {
     label = "plugin-sdk-test-ecs-service-with-lb"
     serviceName = "formae-sdk-svc-lb-\(testRunID)"
@@ -200,7 +254,7 @@ forma {
     launchType = "FARGATE"
     networkConfiguration = new service.NetworkConfiguration {
       awsvpcConfiguration = new service.AwsVpcConfiguration {
-        assignPublicIp = "DISABLED"
+        assignPublicIp = "ENABLED"
         subnets {
           testSubnetA.res.subnetId
           testSubnetB.res.subnetId
