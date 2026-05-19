@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
-	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -84,7 +83,7 @@ func init() {
 }
 
 func (s *Service) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
-	client, err := ccx.NewClient(s.cfg)
+	client, err := s.ccxClientFactory(s.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("loading CloudControl client: %w", err)
 	}

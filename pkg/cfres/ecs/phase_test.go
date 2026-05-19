@@ -139,10 +139,6 @@ func TestCheckPhaseA_CCAPIError_RetryableInProgress(t *testing.T) {
 	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
 }
 
-// Silence unused imports — these elbv2 types will be used by Task 15 tests.
-var _ = awselbv2.DescribeTargetHealthInput{}
-var _ elbv2types.TargetHealthStateEnum
-
 func TestStatusPhaseB_INACTIVEFailure_TerminalGeneralServiceException(t *testing.T) {
 	ecsCli := &mockECSClient{}
 	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
@@ -261,4 +257,110 @@ func TestStatusPhaseB_PastTimeout_NotStable_Terminal(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
 	assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, res.ProgressResult.ErrorCode)
+}
+
+func TestStatusPhaseB_DesiredCountZero_NoTGCheck(t *testing.T) {
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				ServiceArn:   aws.String("arn:aws:ecs:us-east-1:123:service/c/s"),
+				RunningCount: 0,
+				DesiredCount: 0,
+				LoadBalancers: []ecstypes.LoadBalancer{
+					{TargetGroupArn: aws.String("arn:tg:1")}, // attached but desired=0 → skip
+				},
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+
+	ccx := &mockCCXClient{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(
+		&resource.ReadResult{ResourceType: "AWS::ECS::Service", Properties: `{"DesiredCount":0}`}, nil)
+
+	elb := &mockELBv2Client{} // never called — assert via mock expectations
+
+	s := newServiceWithMocks(ccx, ecsCli, elb)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	elb.AssertNotCalled(t, "DescribeTargetHealth")
+}
+
+func TestStatusPhaseB_ClassicELB_SkipsTGCheck(t *testing.T) {
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				ServiceArn:   aws.String("arn:aws:ecs:us-east-1:123:service/c/s"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				LoadBalancers: []ecstypes.LoadBalancer{
+					// Classic ELB attachment — no TargetGroupArn, only LoadBalancerName.
+					{LoadBalancerName: aws.String("classic-elb-1")},
+				},
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+
+	ccx := &mockCCXClient{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(
+		&resource.ReadResult{ResourceType: "AWS::ECS::Service", Properties: `{"DesiredCount":1}`}, nil)
+
+	elb := &mockELBv2Client{}
+	s := newServiceWithMocks(ccx, ecsCli, elb)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	elb.AssertNotCalled(t, "DescribeTargetHealth")
+}
+
+func TestStatusPhaseB_TGUnhealthy_InProgress(t *testing.T) {
+	primaryStart := time.Unix(1747526400, 0)
+	ecsCli := &mockECSClient{}
+	ecsCli.On("DescribeServices", mock.Anything, mock.Anything).Return(
+		&awsecs.DescribeServicesOutput{
+			Services: []ecstypes.Service{{
+				Status:       aws.String("ACTIVE"),
+				RunningCount: 1,
+				DesiredCount: 1,
+				LoadBalancers: []ecstypes.LoadBalancer{
+					{TargetGroupArn: aws.String("arn:tg:1")},
+				},
+				Deployments: []ecstypes.Deployment{{
+					Status:       aws.String("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &primaryStart,
+				}},
+			}},
+		}, nil)
+
+	elb := &mockELBv2Client{}
+	elb.On("DescribeTargetHealth", mock.Anything, mock.Anything).Return(
+		&awselbv2.DescribeTargetHealthOutput{
+			TargetHealthDescriptions: []elbv2types.TargetHealthDescription{{
+				TargetHealth: &elbv2types.TargetHealth{State: elbv2types.TargetHealthStateEnumUnhealthy},
+			}},
+		}, nil)
+
+	s := newServiceWithMocks(&mockCCXClient{}, ecsCli, elb)
+	req := &resource.StatusRequest{RequestID: "formae-ecs/create/1747526400/tA", NativeID: "pending|c|s"}
+	res, err := s.statusPhaseB(context.Background(), req, resource.OperationCreate, 1747526400, "c", "s")
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "healthy")
 }
