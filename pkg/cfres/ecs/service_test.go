@@ -323,6 +323,41 @@ func TestService_Update_SyncThrottling_Propagates(t *testing.T) {
 	assert.Equal(t, resource.OperationErrorCodeThrottling, res.ProgressResult.ErrorCode)
 }
 
+func TestService_Status_BareToken_DelegatesToCCXStatus(t *testing.T) {
+	// Non-composite RequestID — defensive fallback for CODE_DEPLOY/EXTERNAL/DAEMON
+	// shapes or legacy replays.
+	ccx := &mockCCXClient{}
+	inner := &resource.StatusResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCreate,
+			OperationStatus: resource.OperationStatusInProgress,
+			RequestID:       "f470d40b-d23c-4d3a-9c11-uuid",
+		},
+	}
+	ccx.On("StatusResource", mock.Anything, mock.Anything, mock.Anything).Return(inner, nil)
+
+	s := newServiceWithMocks(ccx, nil, nil)
+	res, err := s.Status(context.Background(), &resource.StatusRequest{
+		RequestID:    "f470d40b-d23c-4d3a-9c11-uuid",
+		NativeID:     "",
+		ResourceType: "AWS::ECS::Service",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+}
+
+func TestService_Status_MalformedNativeID_TerminalInvalidRequest(t *testing.T) {
+	s := newServiceWithMocks(&mockCCXClient{}, nil, nil)
+	res, err := s.Status(context.Background(), &resource.StatusRequest{
+		RequestID:    "formae-ecs/create/1747526400/tA",
+		NativeID:     "garbage",
+		ResourceType: "AWS::ECS::Service",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeInvalidRequest, res.ProgressResult.ErrorCode)
+}
+
 func TestService_Create_SyncSuccess_RewritesToInProgress(t *testing.T) {
 	ccx := &mockCCXClient{}
 	inner := &resource.CreateResult{

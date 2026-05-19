@@ -236,7 +236,38 @@ func (s *Service) Update(ctx context.Context, req *resource.UpdateRequest) (*res
 }
 
 func (s *Service) Status(ctx context.Context, req *resource.StatusRequest) (*resource.StatusResult, error) {
-	panic("Service.Status: implemented in Task 12")
+	op, unixStart, ccapiToken, ok := parseComposite(req.RequestID)
+	if !ok {
+		return s.delegateRawStatus(ctx, req)
+	}
+	cluster, service, ok := parseClusterAndServiceFromNativeID(req.NativeID)
+	if !ok {
+		return &resource.StatusResult{
+			ProgressResult: terminalFailurePR(op, req.NativeID, req.RequestID,
+				resource.OperationErrorCodeInvalidRequest,
+				"malformed NativeID: "+req.NativeID),
+		}, nil
+	}
+
+	// Always poll CCAPI first; Phase B runs only after CCAPI Success.
+	phaseAResult, ccapiSuccess := s.checkPhaseA(ctx, req, op, unixStart, ccapiToken)
+	if !ccapiSuccess {
+		return phaseAResult, nil
+	}
+
+	// Phase B path.
+	return s.statusPhaseB(ctx, req, op, unixStart, cluster, service)
+}
+
+// delegateRawStatus passes a non-composite request straight through to
+// ccx.StatusResource. Used for CODE_DEPLOY/EXTERNAL/DAEMON services whose
+// Create/Update declined to wrap the RequestID, plus legacy replays.
+func (s *Service) delegateRawStatus(ctx context.Context, req *resource.StatusRequest) (*resource.StatusResult, error) {
+	cli, err := s.ccxClientFactory(s.cfg)
+	if err != nil {
+		return nil, err
+	}
+	return cli.StatusResource(ctx, req, s.Read)
 }
 
 func (s *Service) Delete(_ context.Context, _ *resource.DeleteRequest) (*resource.DeleteResult, error) {
