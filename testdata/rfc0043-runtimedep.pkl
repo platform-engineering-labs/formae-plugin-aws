@@ -1,0 +1,194 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * RFC-0043 runtimeDependency validation case.
+ *
+ * Exercises the destroy-order race the RFC is designed to fix: an ECS
+ * TaskDefinition with an EFSVolumeConfiguration referencing an EFS FileSystem,
+ * where the FileSystem also has MountTargets. Without `edgeKind = "runtimeDependency"`,
+ * the destroy DAG has no edge from TaskDef to the MountTargets — the engine
+ * may attempt to delete the FileSystem while MountTargets still hold it open,
+ * stranding both. With the RFC-0043 annotation in place, the engine inserts
+ * TaskDef → MountTarget edges into the destroy DAG so MountTargets are
+ * destroyed before the FileSystem.
+ *
+ * Intended for one-off pre-merge validation via debug-conformance.yml.
+ * Permanent regression coverage should live in the formae e2e suite once
+ * the engine and AWS plugin PRs have merged.
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/efs/filesystem.pkl"
+import "@aws/efs/mounttarget.pkl"
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-rfc0043-runtimedep-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-rfc0043"
+  cidrBlock = "10.243.0.0/16"
+  enableDnsSupport = true
+}
+
+// Two subnets in different AZs: EFS MountTargets must each be in a distinct
+// AZ within the file system. Two MountTargets are required for the race to
+// manifest — a single child does not exercise the multi-child propagation.
+local testSubnetA = new subnet.Subnet {
+  label = "test-subnet-a-for-rfc0043"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.243.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnetB = new subnet.Subnet {
+  label = "test-subnet-b-for-rfc0043"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.243.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+// Security Group dependency
+local testSg = new securitygroup.SecurityGroup {
+  label = "test-sg-for-rfc0043"
+  groupDescription = "Security group for RFC-0043 runtimeDependency test"
+  groupName = "formae-sdk-test-rfc0043-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+// FileSystem — the resource targeted by the TaskDef's runtimeDependency.
+local testFs = new filesystem.FileSystem {
+  label = "test-fs-for-rfc0043"
+  encrypted = true
+  performanceMode = "generalPurpose"
+  throughputMode = "bursting"
+}
+
+// ECS Cluster — TaskDef's containing cluster.
+local testCluster = new ecscluster.Cluster {
+  label = "test-cluster-for-rfc0043"
+  clusterName = "formae-sdk-test-rfc0043-cluster-\(testRunID)"
+  clusterSettings {
+    new {
+      name = "containerInsights"
+      value = "disabled"
+    }
+  }
+}
+
+// TaskDefinition with an EFSVolumeConfiguration referencing testFs.
+// The container mounts the volume so the EFS reference is "active" — this
+// is what gives the destroy DAG a meaningful runtime edge to the FileSystem
+// (and, with RFC-0043 propagation, to its child MountTargets).
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "plugin-sdk-test-rfc0043-taskdef"
+  family = "formae-sdk-test-rfc0043-td-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "256"
+  memory = "512"
+  // AWS returns Tags as [] when unset. The conformance harness's reverse
+  // loop flags "extra" actual fields not in expected and not marked as
+  // hasProviderDefault. Set explicitly so the harness sees Tags as
+  // "in expected" and skips the check.
+  tags = new Listing<aws.Tag> {}
+  volumes {
+    new {
+      name = "efs-volume"
+      eFSVolumeConfiguration = new {
+        filesystemId = testFs.res.fileSystemId
+      }
+    }
+  }
+  containerDefinitions {
+    new {
+      name = "test-container"
+      image = "nginx:latest"
+      essential = true
+      mountPoints {
+        new {
+          sourceVolume = "efs-volume"
+          containerPath = "/mnt/efs"
+          readOnly = false
+        }
+      }
+      environment {
+        new { name = "INITIAL_VAR"; value = "v1" }
+      }
+      // AWS returns these container fields as [] / {} when unset. Same harness
+      // reason as Tags above.
+      command = new Listing<String> {}
+      credentialSpecs = new Listing<String> {}
+      dependsOn = new Listing<taskdefinition.ContainerDependency> {}
+      dnsSearchDomains = new Listing<String> {}
+      dnsServers = new Listing<String> {}
+      dockerLabels = new Mapping<String, Any> {}
+      dockerSecurityOptions = new Listing<String> {}
+      entryPoint = new Listing<String> {}
+      environmentFiles = new Listing<taskdefinition.EnvironmentFile> {}
+      extraHosts = new Listing<taskdefinition.HostEntry> {}
+      links = new Listing<String> {}
+      portMappings = new Listing<taskdefinition.PortMapping> {}
+      resourceRequirements = new Listing<taskdefinition.ResourceRequirement> {}
+      secrets = new Listing<taskdefinition.Secret> {}
+      systemControls = new Listing<taskdefinition.SystemControl> {}
+      ulimits = new Listing<taskdefinition.Ulimit> {}
+      volumesFrom = new Listing<taskdefinition.VolumeFrom> {}
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for RFC-0043 runtimeDependency destroy ordering"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  testSubnetA
+  testSubnetB
+  testSg
+  testFs
+  testCluster
+
+  // Two MountTargets — the multi-child shape that triggers the race.
+  new mounttarget.MountTarget {
+    label = "plugin-sdk-test-rfc0043-mt-a"
+    fileSystemId = testFs.res.fileSystemId
+    subnetId = testSubnetA.res.subnetId
+    securityGroups {
+      testSg.res.groupId
+    }
+  }
+
+  new mounttarget.MountTarget {
+    label = "plugin-sdk-test-rfc0043-mt-b"
+    fileSystemId = testFs.res.fileSystemId
+    subnetId = testSubnetB.res.subnetId
+    securityGroups {
+      testSg.res.groupId
+    }
+  }
+
+  testTaskDef
+}
