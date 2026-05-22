@@ -24,6 +24,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  reuse-compliance:
+    name: REUSE License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: fsfe/reuse-action@v5
+
   checks:
     runs-on: ubuntu-latest
     steps:
