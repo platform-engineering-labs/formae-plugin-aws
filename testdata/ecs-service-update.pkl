@@ -57,7 +57,13 @@ local testTaskDef = new taskdefinition.TaskDefinition {
   containerDefinitions {
     new {
       name = "test-container"
-      image = "nginx:latest"
+      // RFC-0042: container image bump forces TaskDefinition Replace
+      // (containerDefinitions is CreateOnly). The Service references the
+      // TaskDef via a non-CreateOnly field (taskDefinition), so the planner
+      // must cascade-Update the Service rather than cascade-Replace it.
+      // Pre-fix this caused a full Service tear-down (~2-4 min outage);
+      // post-fix it's a rolling deploy.
+      image = "nginx:1.27"
       essential = true
     }
   }
