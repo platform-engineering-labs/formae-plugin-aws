@@ -31,16 +31,17 @@ open class AutoScalingConfiguration extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     autoScalingConfigurationName: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     maxConcurrency: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     maxSize: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     minSize: Int?
 
     @aws.FieldHint {
+        createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }

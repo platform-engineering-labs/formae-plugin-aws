@@ -101,7 +101,7 @@ open class ExpressGatewayService extends formae.Resource {
     @aws.FieldHint
     healthCheckPath: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     infrastructureRoleArn: String|formae.Resolvable
 
     @aws.FieldHint{hasProviderDefault = true}
@@ -120,6 +120,7 @@ open class ExpressGatewayService extends formae.Resource {
     serviceName: String?
 
     @aws.FieldHint {
+        createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }

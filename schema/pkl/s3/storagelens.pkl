@@ -115,6 +115,7 @@ open class StorageLensConfiguration extends formae.SubResource {
     awsOrg: AwsOrg?
     dataExport: DataExport?
     exclude: StorageLensBucketsAndRegions?
+    @aws.FieldHint{createOnly = true}
     id: String
     include: StorageLensBucketsAndRegions?
     isEnabled: Boolean

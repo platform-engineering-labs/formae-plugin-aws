@@ -39,12 +39,13 @@ open class ObservabilityConfiguration extends formae.Resource {
     observabilityConfigurationName: String?
 
     @aws.FieldHint {
+        createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     traceConfiguration: TraceConfiguration?
 
     local parent = this

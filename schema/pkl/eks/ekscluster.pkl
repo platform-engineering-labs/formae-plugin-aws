@@ -59,7 +59,9 @@ typealias KubernetesNetworkConfigIpFamily = "ipv4"|"ipv6"
 @aws.SubResourceHint
 open class KubernetesNetworkConfig extends formae.SubResource {
     elasticLoadBalancing: ElasticLoadBalancing?
+    @aws.FieldHint{createOnly = true}
     ipFamily: KubernetesNetworkConfigIpFamily?
+    @aws.FieldHint{createOnly = true}
     serviceIpv4Cidr: String?
     serviceIpv6Cidr: String?
 }
@@ -170,7 +172,7 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint
     computeConfig: ComputeConfig?
 
-    @aws.FieldHint{hasProviderDefault = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     encryptionConfig: Listing<EncryptionConfig>?
 
     @aws.FieldHint{writeOnly = true}
@@ -185,7 +187,7 @@ open class Cluster extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     name: String(matches(Regex(#"^[0-9A-Za-z][A-Za-z0-9\-_]*"#)))?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     outpostConfig: OutpostConfig?
 
     @aws.FieldHint

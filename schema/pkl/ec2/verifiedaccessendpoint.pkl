@@ -13,6 +13,7 @@ const type = "AWS::EC2::VerifiedAccessEndpoint"
 
 @aws.SubResourceHint
 open class LoadBalancerOptions extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     loadBalancerArn: (String|formae.Resolvable)?
     port: Int?
     protocol: String?
@@ -21,6 +22,7 @@ open class LoadBalancerOptions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class NetworkInterfaceOptions extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     networkInterfaceId: (String|formae.Resolvable)?
     port: Int?
     protocol: String?

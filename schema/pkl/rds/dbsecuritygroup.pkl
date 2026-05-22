@@ -47,7 +47,7 @@ open class DBSecurityGroup extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     eC2VpcId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     groupDescription: String
 
     @aws.FieldHint {

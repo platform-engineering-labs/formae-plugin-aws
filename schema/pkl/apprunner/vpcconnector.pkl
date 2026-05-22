@@ -28,13 +28,14 @@ open class VpcConnectorResolvable extends formae.Resolvable {
 }
 open class VpcConnector extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     securityGroups: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint{required = true}
+    @aws.FieldHint{required = true; createOnly = true}
     subnets: Listing<String|formae.Resolvable>
 
     @aws.FieldHint {
+        createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }

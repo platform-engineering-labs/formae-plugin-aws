@@ -180,6 +180,7 @@ open class Service extends formae.Resource {
     sourceConfiguration: SourceConfiguration
 
     @aws.FieldHint {
+        createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }

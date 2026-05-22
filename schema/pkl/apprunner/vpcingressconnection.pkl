@@ -39,10 +39,11 @@ open class VpcIngressConnection extends formae.Resource {
     @aws.FieldHint{required = true}
     ingressVpcConfiguration: IngressVpcConfiguration
 
-    @aws.FieldHint{required = true}
+    @aws.FieldHint{required = true; createOnly = true}
     serviceArn: String|formae.Resolvable
 
     @aws.FieldHint {
+        createOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"
     }

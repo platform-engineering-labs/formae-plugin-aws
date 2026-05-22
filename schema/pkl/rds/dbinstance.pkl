@@ -161,6 +161,7 @@ open class DBInstance extends formae.Resource {
     dbInstanceClass: String?
 
     @aws.FieldHint{
+        createOnly = true
         writeOnly = true
         outputField = "DBInstanceIdentifier"
     }
