@@ -36,6 +36,7 @@ open class CapacityProviderStrategy extends formae.SubResource {
 open class LoadBalancer extends formae.SubResource {
     containerName: String?
     containerPort: Int?
+    @aws.FieldHint { edgeKind = "attachesTo" }
     targetGroupArn: (String|formae.Resolvable)?
 }
 
