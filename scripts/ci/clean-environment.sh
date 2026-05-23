@@ -522,18 +522,44 @@ aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2
 done
 
 # --- ECS services (before clusters)
+# `delete-service --force` returns immediately but Fargate tasks take
+# 30-60s to drain and their ENIs another ~60s to deregister. Without
+# waiting, subnet/VPC cleanup downstream races with task draining and
+# leaves orphan ENIs that block VPC delete on subsequent runs.
 echo "Cleaning ECS test services..."
-aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
-        aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r svc_arn; do
-            if [[ -n "$svc_arn" ]]; then
-                echo "  Stopping ECS service: $svc_arn"
-                aws ecs update-service --cluster "$cluster_arn" --service "$svc_arn" --desired-count 0 --region "$REGION" 2>/dev/null || true
-                aws ecs delete-service --cluster "$cluster_arn" --service "$svc_arn" --force --region "$REGION" 2>/dev/null || true
-            fi
-        done
-    fi
+ECS_TEST_CLUSTERS=()
+while IFS= read -r cluster_arn; do
+    [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]] && ECS_TEST_CLUSTERS+=("$cluster_arn")
+done < <(aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n')
+
+for cluster_arn in "${ECS_TEST_CLUSTERS[@]}"; do
+    while IFS= read -r svc_arn; do
+        if [[ -n "$svc_arn" ]]; then
+            echo "  Stopping ECS service: $svc_arn"
+            aws ecs update-service --cluster "$cluster_arn" --service "$svc_arn" --desired-count 0 --region "$REGION" 2>/dev/null || true
+            aws ecs delete-service --cluster "$cluster_arn" --service "$svc_arn" --force --region "$REGION" 2>/dev/null || true
+        fi
+    done < <(aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n')
 done
+
+# Poll until ACTIVE services drain from test clusters. Budget 120s total
+# (Fargate task termination is usually <60s; ALB target deregistration
+# adds another ~30s on services with LB attachments).
+if [ ${#ECS_TEST_CLUSTERS[@]} -gt 0 ]; then
+    echo "  Waiting for ECS services to drain (max 120s)..."
+    waited=0
+    while [ $waited -lt 120 ]; do
+        active=0
+        for cluster_arn in "${ECS_TEST_CLUSTERS[@]}"; do
+            n=$(aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "length(serviceArns)" --output text 2>/dev/null || echo 0)
+            [[ -n "$n" && "$n" != "None" ]] && active=$((active + n))
+        done
+        [ "$active" = "0" ] && break
+        sleep 10
+        waited=$((waited + 10))
+    done
+    echo "  ECS services drained after ${waited}s (residual count: ${active:-?})"
+fi
 
 # --- EC2 network interfaces (before subnets/security groups)
 echo "Cleaning EC2 test network interfaces..."
@@ -653,7 +679,34 @@ aws ec2 describe-vpcs --region "$REGION" \
     --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
     if [[ -n "$vpc_id" && "$vpc_id" != "$DEFAULT_VPC" ]]; then
         echo "  Cleaning orphaned VPC: $vpc_id"
-        # Delete ENIs
+        # Detach + delete ENIs. delete-network-interface on an attached
+        # ENI (the common case for Fargate-managed ENIs lingering from a
+        # cancelled run) fails with InvalidParameterValue.InUse; force-
+        # detach first, brief sleep for AWS to propagate the detach,
+        # then delete. Poll briefly afterwards for residuals so the
+        # subnet delete below has a chance to succeed.
+        aws ec2 describe-network-interfaces --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Attachment:Attachment}" --output json 2>/dev/null | \
+            jq -c '.[]' 2>/dev/null | while read -r eni_json; do
+            eni_id=$(echo "$eni_json" | jq -r '.Id')
+            if [[ -n "$eni_id" ]]; then
+                attach_id=$(echo "$eni_json" | jq -r '.Attachment.AttachmentId // empty')
+                [[ -n "$attach_id" ]] && aws ec2 detach-network-interface --attachment-id "$attach_id" --force --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Give AWS up to 60s to actually release ENIs that were detached
+        # above (Fargate-owned ENIs in particular take time to deregister).
+        waited=0
+        while [ $waited -lt 60 ]; do
+            remaining=$(aws ec2 describe-network-interfaces --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "length(NetworkInterfaces)" --output text 2>/dev/null || echo 0)
+            [ "$remaining" = "0" ] && break
+            sleep 5
+            waited=$((waited + 5))
+        done
+        # Final pass: attempt explicit delete on whatever is left.
         aws ec2 describe-network-interfaces --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
             --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eni_id; do
