@@ -136,63 +136,6 @@ jobs:
           done
           go mod tidy
 
-      # PKL-side counterpart of the Go replace step above. The plugin's PklProject
-      # files pin formae to a published registry version (e.g. formae@0.85.0).
-      # When the AWS plugin branch carries RFC-0043 schema annotations
-      # (edgeKind, parentRefs) that only exist on the source formae ref,
-      # extraction against the registry-pinned schema fails. Rewrite the
-      # ["formae"] dependency block in each PklProject to import the local
-      # checkout's PklProject by path, then re-resolve.
-      - name: Inject formae PKL replace
-        if: inputs.formae_ref != ''
-        run: |
-          FORMAE_PKL_PROJECT=/tmp/formae/internal/schema/pkl/schema/PklProject
-          if [ ! -f "$FORMAE_PKL_PROJECT" ]; then
-            echo "::error::Expected formae PKL project at $FORMAE_PKL_PROJECT (formae checkout layout changed?)"
-            exit 1
-          fi
-          for pkl_project in schema/pkl/PklProject testdata/PklProject; do
-            if [ ! -f "$pkl_project" ]; then
-              continue
-            fi
-            echo "::group::Before patch: $pkl_project"
-            cat "$pkl_project"
-            echo "::endgroup::"
-            # The pinned block spans 3 lines:
-            #   ["formae"] {
-            #     uri = "package://.../formae@<version>"
-            #   }
-            # Replace it with a single-line path import. python3 is the
-            # ubuntu-latest standard interpreter; this avoids fragile multi-line
-            # sed and keeps the substitution idempotent.
-            python3 - "$pkl_project" "$FORMAE_PKL_PROJECT" <<'PY'
-          import re, sys, pathlib
-          path = pathlib.Path(sys.argv[1])
-          target = sys.argv[2]
-          original = path.read_text()
-          pattern = re.compile(
-              r'\["formae"\]\s*\{[^}]*uri\s*=\s*"package://[^"]+"[^}]*\}',
-              re.DOTALL,
-          )
-          replacement = f'["formae"] = import("{target}")'
-          patched, n = pattern.subn(replacement, original)
-          if n == 0:
-              raise SystemExit(f"no formae dependency block matched in {path}")
-          path.write_text(patched)
-          PY
-            echo "::group::After patch: $pkl_project"
-            cat "$pkl_project"
-            echo "::endgroup::"
-          done
-          # Re-resolve so each project's PklProject.deps.json matches the
-          # local import. `make install` resolves the schema project below;
-          # do testdata explicitly. Tolerate failures here — `make install`
-          # is the authoritative resolve step.
-          if command -v pkl >/dev/null 2>&1; then
-            (cd schema/pkl && pkl project resolve) || true
-            (cd testdata && pkl project resolve) || true
-          fi
-
       # Note: nightly's "Align plugin branch with formae Makefile" step is
       # intentionally omitted. Debug runs test the plugin code at the ref
       # the workflow was dispatched on, regardless of formae's Makefile pin.
