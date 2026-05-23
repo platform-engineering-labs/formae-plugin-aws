@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+      formae_version:
+        description: "Override the VERSION string used when building formae from source. Use this with formae_ref to validate against a pre-released PKL schema (e.g., 0.86.0 published via schema-prerelease workflow). Leave empty to default to the latest released tag."
+        required: false
+        default: ""
+        type: string
       pre_cleanup:
         description: "Run pre-cleanup before tests"
         required: false
@@ -114,8 +119,12 @@ jobs:
           git fetch --tags
           # Latest release tag becomes the build's VERSION (skips pre-releases).
           LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
-          echo "Building formae with VERSION=${LATEST_TAG}"
-          make build VERSION="${LATEST_TAG}"
+          FORMAE_BUILD_VERSION="${{ inputs.formae_version }}"
+          if [ -z "$FORMAE_BUILD_VERSION" ]; then
+              FORMAE_BUILD_VERSION="${LATEST_TAG}"
+          fi
+          echo "Building formae with VERSION=${FORMAE_BUILD_VERSION}"
+          make build VERSION="${FORMAE_BUILD_VERSION}"
 
           # formae main expects an orbital tree at the path derived from the
           # binary location (introduced in formae#bfeeb541). `make build`
