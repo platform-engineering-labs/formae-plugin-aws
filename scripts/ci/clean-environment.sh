@@ -737,6 +737,37 @@ aws ec2 describe-vpcs --region "$REGION" \
             --query "VpcEndpoints[?State!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ep_id; do
             [[ -n "$ep_id" ]] && aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$ep_id" --region "$REGION" 2>/dev/null || true
         done
+        # Detach VPN gateways attached to this VPC
+        aws ec2 describe-vpn-gateways --region "$REGION" \
+            --filters "Name=attachment.vpc-id,Values=$vpc_id" "Name=state,Values=available" \
+            --query "VpnGateways[].VpnGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vgw_id; do
+            if [[ -n "$vgw_id" ]]; then
+                aws ec2 detach-vpn-gateway --vpn-gateway-id "$vgw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+                aws ec2 delete-vpn-gateway --vpn-gateway-id "$vgw_id" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Delete VPC peering connections (requester or accepter)
+        aws ec2 describe-vpc-peering-connections --region "$REGION" \
+            --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
+            --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
+            [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
+        done
+        aws ec2 describe-vpc-peering-connections --region "$REGION" \
+            --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
+            --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
+            [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete transit gateway VPC attachments
+        aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,modifying" \
+            --query "TransitGatewayVpcAttachments[].TransitGatewayAttachmentId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_att_id; do
+            [[ -n "$tgw_att_id" ]] && aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$tgw_att_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete egress-only internet gateways attached to this VPC
+        aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
+            --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].EgressOnlyInternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eigw_id; do
+            [[ -n "$eigw_id" ]] && aws ec2 delete-egress-only-internet-gateway --egress-only-internet-gateway-id "$eigw_id" --region "$REGION" 2>/dev/null || true
+        done
         # Delete subnets
         aws ec2 describe-subnets --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
