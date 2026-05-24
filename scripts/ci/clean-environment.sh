@@ -712,11 +712,55 @@ aws ec2 describe-vpcs --region "$REGION" \
             --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eni_id; do
             [[ -n "$eni_id" ]] && aws ec2 delete-network-interface --network-interface-id "$eni_id" --region "$REGION" 2>/dev/null || true
         done
+        # Delete NAT gateways (block subnet+VPC deletes; takes ~30-90s).
+        # Initiate deletes first, then wait below.
+        nat_ids=$(aws ec2 describe-nat-gateways --region "$REGION" \
+            --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,failed" \
+            --query "NatGateways[].NatGatewayId" --output text 2>/dev/null || true)
+        for nat_id in $nat_ids; do
+            [[ -n "$nat_id" ]] && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" --region "$REGION" 2>/dev/null || true
+        done
+        if [[ -n "$nat_ids" ]]; then
+            waited=0
+            while [ $waited -lt 120 ]; do
+                remaining=$(aws ec2 describe-nat-gateways --region "$REGION" \
+                    --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,deleting" \
+                    --query "length(NatGateways)" --output text 2>/dev/null || echo 0)
+                [ "$remaining" = "0" ] && break
+                sleep 10
+                waited=$((waited + 10))
+            done
+        fi
+        # Delete VPC endpoints (block VPC delete)
+        aws ec2 describe-vpc-endpoints --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "VpcEndpoints[?State!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ep_id; do
+            [[ -n "$ep_id" ]] && aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$ep_id" --region "$REGION" 2>/dev/null || true
+        done
         # Delete subnets
         aws ec2 describe-subnets --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
             --query "Subnets[].SubnetId" --output text 2>/dev/null | tr '\t' '\n' | while read -r subnet_id; do
             [[ -n "$subnet_id" ]] && aws ec2 delete-subnet --subnet-id "$subnet_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete non-main route tables (each may have explicit associations
+        # to disassociate first; disassociating non-main ones is idempotent)
+        aws ec2 describe-route-tables --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rt_id; do
+            if [[ -n "$rt_id" ]]; then
+                aws ec2 describe-route-tables --route-table-ids "$rt_id" --region "$REGION" \
+                    --query "RouteTables[0].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r assoc_id; do
+                    [[ -n "$assoc_id" ]] && aws ec2 disassociate-route-table --association-id "$assoc_id" --region "$REGION" 2>/dev/null || true
+                done
+                aws ec2 delete-route-table --route-table-id "$rt_id" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Delete non-default network ACLs
+        aws ec2 describe-network-acls --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "NetworkAcls[?!IsDefault].NetworkAclId" --output text 2>/dev/null | tr '\t' '\n' | while read -r nacl_id; do
+            [[ -n "$nacl_id" ]] && aws ec2 delete-network-acl --network-acl-id "$nacl_id" --region "$REGION" 2>/dev/null || true
         done
         # Detach and delete internet gateways
         aws ec2 describe-internet-gateways --region "$REGION" \
@@ -733,10 +777,19 @@ aws ec2 describe-vpcs --region "$REGION" \
             --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg_id; do
             [[ -n "$sg_id" ]] && aws ec2 delete-security-group --group-id "$sg_id" --region "$REGION" 2>/dev/null || true
         done
-        # Delete VPC
-        aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+        # Delete VPC — surface the error if it still fails so we can see
+        # what's blocking. The script continues either way.
+        if ! aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>&1; then
+            echo "  WARN: delete-vpc $vpc_id failed (see error above)"
+        fi
     fi
 done
+
+# After orphan-VPC sweep, report how many non-default VPCs remain so the
+# CI run shows whether the account is near or at the VPC quota.
+remaining_vpcs=$(aws ec2 describe-vpcs --region "$REGION" \
+    --query "length(Vpcs[?IsDefault==\`false\`])" --output text 2>/dev/null || echo "?")
+echo "  Non-default VPCs remaining in $REGION: $remaining_vpcs"
 
 # ============================================================================
 # CloudWatch Resources (regional)
