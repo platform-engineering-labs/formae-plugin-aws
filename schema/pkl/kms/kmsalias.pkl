@@ -35,7 +35,7 @@ open class AliasResolvable extends formae.Resolvable {
 }
 open class Alias extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     aliasName: String(matches(Regex(#"^(alias/)[a-zA-Z0-9:/_-]+$"#)))
 
     @aws.FieldHint

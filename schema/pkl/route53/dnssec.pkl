@@ -16,6 +16,6 @@ const type = "AWS::Route53::DNSSEC"
     identifier = "Ref"
 }
 open class DNSSEC extends formae.Resource {
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     hostedZoneId: String|formae.Resolvable
 }

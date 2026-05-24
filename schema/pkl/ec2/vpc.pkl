@@ -59,7 +59,7 @@ open class VPC extends formae.Resource {
     }
     ipv4IpamPoolId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{createOnly = true; writeOnly = true}
     ipv4NetmaskLength: String?
 
     @aws.FieldHint {

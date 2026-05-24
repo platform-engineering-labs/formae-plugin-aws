@@ -262,28 +262,47 @@ typealias SpotFleetType = "maintain"|"request"
 
 @aws.SubResourceHint
 open class SpotFleetRequestConfigData extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     allocationStrategy: AllocationStrategy?
     context: String?
     excessCapacityTerminationPolicy: ExcessCapacityTerminationPolicy?
+    @aws.FieldHint{createOnly = true}
     iamFleetRole: String
+    @aws.FieldHint{createOnly = true}
     instanceInterruptionBehavior: InstanceInterruptionBehavior?
+    @aws.FieldHint{createOnly = true}
     instancePoolsToUseCount: Int?
+    @aws.FieldHint{createOnly = true}
     launchSpecifications: Listing<LaunchSpecification>?
+    @aws.FieldHint{createOnly = true}
     launchTemplateConfigs: Listing<LaunchTemplateConfig>?
+    @aws.FieldHint{createOnly = true}
     loadBalancersConfig: LoadBalancersConfig?
+    @aws.FieldHint{createOnly = true}
     onDemandAllocationStrategy: String?
+    @aws.FieldHint{createOnly = true}
     onDemandMaxTotalPrice: String?
+    @aws.FieldHint{createOnly = true}
     onDemandTargetCapacity: Int?
+    @aws.FieldHint{createOnly = true}
     replaceUnhealthyInstances: Boolean?
+    @aws.FieldHint{createOnly = true}
     spotMaintenanceStrategies: SpotMaintenanceStrategies?
+    @aws.FieldHint{createOnly = true}
     spotMaxTotalPrice: String?
+    @aws.FieldHint{createOnly = true}
     spotPrice: String?
+    @aws.FieldHint{createOnly = true}
     tagSpecifications: Listing<TagSpecification>?
     targetCapacity: Int
     targetCapacityUnitType: TargetCapacityUnitType?
+    @aws.FieldHint{createOnly = true}
     terminateInstancesWithExpiration: Boolean?
+    @aws.FieldHint{createOnly = true}
     type: SpotFleetType?
+    @aws.FieldHint{createOnly = true}
     validFrom: String?
+    @aws.FieldHint{createOnly = true}
     validUntil: String?
 }
 

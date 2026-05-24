@@ -42,6 +42,6 @@ open class Version extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     provisionedConcurrencyConfig: ProvisionedConcurrencyConfiguration?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     runtimePolicy: RuntimePolicy?
 }

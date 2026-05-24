@@ -73,22 +73,22 @@ open class Nodegroup extends formae.Resource {
         stack = parent.stack?.label
     }
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     amiType: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     capacityType: String?
 
     @aws.FieldHint{createOnly = true}
     clusterName: String|formae.Resolvable
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     diskSize: Int?
 
     @aws.FieldHint{writeOnly = true}
     forceUpdateEnabled: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     instanceTypes: Listing<String>?
 
     @aws.FieldHint
@@ -100,7 +100,7 @@ open class Nodegroup extends formae.Resource {
     @aws.FieldHint
     nodeRepairConfig: NodeRepairConfig?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     nodeRole: String|formae.Resolvable
 
     @aws.FieldHint{createOnly = true}
@@ -109,7 +109,7 @@ open class Nodegroup extends formae.Resource {
     @aws.FieldHint
     releaseVersion: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     remoteAccess: RemoteAccess?
 
     @aws.FieldHint

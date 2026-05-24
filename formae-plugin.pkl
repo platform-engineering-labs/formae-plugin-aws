@@ -11,7 +11,7 @@ summary = "AWS resource plugin (CloudControl-based)"
 description = "AWS CloudControl resource plugin for Formae"
 category = "cloud"
 license = "FSL-1.1-ALv2"
-minFormaeVersion = "0.84.0"
+minFormaeVersion = "0.86.0"
 
 output {
   renderer = new JsonRenderer {}

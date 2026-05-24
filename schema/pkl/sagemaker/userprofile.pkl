@@ -111,7 +111,9 @@ open class KernelGatewayAppSettings extends formae.SubResource {
 
 @aws.SubResourceHint
 open class RStudioServerProAppSettings extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     accessStatus: RStudioServerProAppSettingsAccessStatus?
+    @aws.FieldHint{createOnly = true}
     userGroup: RStudioServerProAppSettingsUserGroup?
 }
 
@@ -195,6 +197,7 @@ open class UserProfile extends formae.Resource {
     singleSignOnUserValue: String?
 
     @aws.FieldHint {
+        createOnly = true
         writeOnly = true
         updateMethod = "EntitySet"
         indexField = "Key"

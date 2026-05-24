@@ -17,6 +17,7 @@ typealias ManagedTerminationProtection = "DISABLED"|"ENABLED"
 
 @aws.SubResourceHint
 open class AutoScalingGroupProvider extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     autoScalingGroupArn: String|formae.Resolvable
     managedDraining: ManagedDraining?
     managedScaling: ManagedScaling?

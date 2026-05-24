@@ -183,7 +183,7 @@ open class DBCluster extends formae.Resource {
     @aws.FieldHint
     engineLifecycleSupport: String?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     engineMode: String?
 
     @aws.FieldHint

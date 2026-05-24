@@ -16,6 +16,12 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 TEST_PREFIX="plugin-sdk-test"
 FORMAE_PREFIX="formae-plugin-sdk-test"
 SDK_PREFIX="formae-sdk-test"
+# Legacy prefix for ecs-service-with-lb pre-2026-05-24, when the fixture
+# used short names like `formae-sdk-svc-lb-cluster-*` to fit ALB's 32-char
+# limit. Fixture renamed to `formae-sdk-test-*`; this entry is kept so
+# legacy account orphans (which were blocking VPC delete via their ALB
+# ENIs) still get cleaned up.
+LEGACY_LB_PREFIX="formae-sdk-svc-lb"
 
 echo "=== Cleaning AWS test resources in $REGION ==="
 echo "Looking for resources with '$TEST_PREFIX' in name or tags..."
@@ -27,7 +33,7 @@ echo ""
 
 # 1. Delete IAM instance profiles with test prefix (before roles)
 echo "Cleaning IAM test instance profiles..."
-aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, '$FORMAE_PREFIX') || contains(InstanceProfileName, '$TEST_PREFIX')].InstanceProfileName" --output text 2>/dev/null | tr '\t' '\n' | while read -r profile; do
+aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, '$FORMAE_PREFIX') || contains(InstanceProfileName, '$SDK_PREFIX') || contains(InstanceProfileName, '$TEST_PREFIX')].InstanceProfileName" --output text 2>/dev/null | tr '\t' '\n' | while read -r profile; do
     if [[ -n "$profile" ]]; then
         echo "  Deleting IAM instance profile: $profile"
         # Remove all roles from instance profile
@@ -40,7 +46,7 @@ done
 
 # 2. Delete IAM roles with test prefix
 echo "Cleaning IAM test roles..."
-aws iam list-roles --query "Roles[?contains(RoleName, '$FORMAE_PREFIX') || contains(RoleName, '$TEST_PREFIX')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read -r role; do
+aws iam list-roles --query "Roles[?contains(RoleName, '$FORMAE_PREFIX') || contains(RoleName, '$SDK_PREFIX') || contains(RoleName, '$TEST_PREFIX')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read -r role; do
     if [[ -n "$role" ]]; then
         echo "  Deleting IAM role: $role"
         # Detach managed policies
@@ -64,7 +70,7 @@ done
 
 # 3. Delete IAM users with test prefix
 echo "Cleaning IAM test users..."
-aws iam list-users --query "Users[?contains(UserName, '$FORMAE_PREFIX') || contains(UserName, '$TEST_PREFIX')].UserName" --output text 2>/dev/null | tr '\t' '\n' | while read -r user; do
+aws iam list-users --query "Users[?contains(UserName, '$FORMAE_PREFIX') || contains(UserName, '$SDK_PREFIX') || contains(UserName, '$TEST_PREFIX')].UserName" --output text 2>/dev/null | tr '\t' '\n' | while read -r user; do
     if [[ -n "$user" ]]; then
         echo "  Deleting IAM user: $user"
         # Delete login profile
@@ -91,7 +97,7 @@ done
 
 # 4. Delete IAM groups with test prefix
 echo "Cleaning IAM test groups..."
-aws iam list-groups --query "Groups[?contains(GroupName, '$FORMAE_PREFIX') || contains(GroupName, '$TEST_PREFIX')].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r group; do
+aws iam list-groups --query "Groups[?contains(GroupName, '$FORMAE_PREFIX') || contains(GroupName, '$SDK_PREFIX') || contains(GroupName, '$TEST_PREFIX')].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r group; do
     if [[ -n "$group" ]]; then
         echo "  Deleting IAM group: $group"
         # Remove users from group
@@ -161,7 +167,7 @@ done
 # 8a. Delete S3 access points with test prefix
 echo "Cleaning S3 test access points..."
 aws s3control list-access-points --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" \
-    --query "AccessPointList[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$TEST_PREFIX')].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
+    --query "AccessPointList[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
     if [[ -n "$ap" ]]; then
         echo "  Deleting S3 access point: $ap"
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -171,7 +177,7 @@ done
 
 # 8b. Delete S3 buckets with test prefix
 echo "Cleaning S3 test buckets..."
-aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
+aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
     if [[ -n "$bucket" ]]; then
         echo "  Deleting S3 bucket: $bucket"
         # Delete bucket policy first (if any)
@@ -184,7 +190,7 @@ done
 # 8c. Delete S3 Storage Lens Groups with test prefix
 echo "Cleaning S3 test Storage Lens Groups..."
 aws s3control list-storage-lens-groups --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" 2>/dev/null | \
-    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
+    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
     if [[ -n "$slg" ]]; then
         echo "  Deleting S3 Storage Lens Group: $slg"
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -219,7 +225,7 @@ aws route53 list-health-checks --query "HealthChecks[].Id" --output text 2>/dev/
     if [[ -n "$hc_id" ]]; then
         tags=$(aws route53 list-tags-for-resource --resource-type healthcheck --resource-id "$hc_id" \
             --query "ResourceTagSet.Tags[?Key=='Name'].Value" --output text 2>/dev/null || true)
-        if [[ "$tags" == *"$FORMAE_PREFIX"* || "$tags" == *"$TEST_PREFIX"* ]]; then
+        if [[ "$tags" == *"$FORMAE_PREFIX"* || "$tags" == *"$SDK_PREFIX"* || "$tags" == *"$TEST_PREFIX"* ]]; then
             echo "  Deleting Route53 health check: $hc_id"
             aws route53 delete-health-check --health-check-id "$hc_id" 2>/dev/null || true
         fi
@@ -444,9 +450,14 @@ aws rds describe-db-subnet-groups --region "$REGION" \
 done
 
 # --- ELBv2 load balancers (before target groups, subnets, VPCs)
+# Legacy LEGACY_LB_PREFIXES: pre-2026-05-24 ecs-service-with-lb fixture used
+# `formae-sdk-alb-*` / `formae-sdk-svc-lb-*` names that don't match the test
+# prefixes above (because ALB names are capped at 32 chars). Fixture renamed
+# to `formae-sdk-test-*` going forward; the legacy patterns are kept here
+# so existing account orphans get cleaned up.
 echo "Cleaning ELBv2 test load balancers..."
 aws elbv2 describe-load-balancers --region "$REGION" \
-    --query "LoadBalancers[?contains(LoadBalancerName, '$FORMAE_PREFIX') || contains(LoadBalancerName, '$SDK_PREFIX') || contains(LoadBalancerName, '$TEST_PREFIX')].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
+    --query "LoadBalancers[?contains(LoadBalancerName, '$FORMAE_PREFIX') || contains(LoadBalancerName, '$SDK_PREFIX') || contains(LoadBalancerName, '$TEST_PREFIX') || contains(LoadBalancerName, 'formae-sdk-alb')].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
     if [[ -n "$lb_arn" ]]; then
         echo "  Deleting ELBv2 load balancer: $lb_arn"
         # Delete listeners first
@@ -461,7 +472,7 @@ done
 # --- ELBv2 target groups (after load balancers)
 echo "Cleaning ELBv2 test target groups..."
 aws elbv2 describe-target-groups --region "$REGION" \
-    --query "TargetGroups[?contains(TargetGroupName, '$FORMAE_PREFIX') || contains(TargetGroupName, '$SDK_PREFIX') || contains(TargetGroupName, '$TEST_PREFIX')].TargetGroupArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r tg_arn; do
+    --query "TargetGroups[?contains(TargetGroupName, '$FORMAE_PREFIX') || contains(TargetGroupName, '$SDK_PREFIX') || contains(TargetGroupName, '$TEST_PREFIX') || contains(TargetGroupName, 'formae-sdk-tg')].TargetGroupArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r tg_arn; do
     if [[ -n "$tg_arn" ]]; then
         echo "  Deleting ELBv2 target group: $tg_arn"
         aws elbv2 delete-target-group --target-group-arn "$tg_arn" --region "$REGION" 2>/dev/null || true
@@ -506,7 +517,7 @@ done
 # `describe-services` under `.services[].taskSets[].taskSetArn`.
 echo "Cleaning ECS test task sets..."
 aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
+    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"* || "$cluster_arn" == *"$LEGACY_LB_PREFIX"*) ]]; then
         aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r svc_arn; do
             if [[ -n "$svc_arn" ]]; then
                 aws ecs describe-services --cluster "$cluster_arn" --services "$svc_arn" --region "$REGION" \
@@ -522,18 +533,44 @@ aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2
 done
 
 # --- ECS services (before clusters)
+# `delete-service --force` returns immediately but Fargate tasks take
+# 30-60s to drain and their ENIs another ~60s to deregister. Without
+# waiting, subnet/VPC cleanup downstream races with task draining and
+# leaves orphan ENIs that block VPC delete on subsequent runs.
 echo "Cleaning ECS test services..."
-aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
-        aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r svc_arn; do
-            if [[ -n "$svc_arn" ]]; then
-                echo "  Stopping ECS service: $svc_arn"
-                aws ecs update-service --cluster "$cluster_arn" --service "$svc_arn" --desired-count 0 --region "$REGION" 2>/dev/null || true
-                aws ecs delete-service --cluster "$cluster_arn" --service "$svc_arn" --force --region "$REGION" 2>/dev/null || true
-            fi
-        done
-    fi
+ECS_TEST_CLUSTERS=()
+while IFS= read -r cluster_arn; do
+    [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"* || "$cluster_arn" == *"$LEGACY_LB_PREFIX"*) ]] && ECS_TEST_CLUSTERS+=("$cluster_arn")
+done < <(aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n')
+
+for cluster_arn in "${ECS_TEST_CLUSTERS[@]}"; do
+    while IFS= read -r svc_arn; do
+        if [[ -n "$svc_arn" ]]; then
+            echo "  Stopping ECS service: $svc_arn"
+            aws ecs update-service --cluster "$cluster_arn" --service "$svc_arn" --desired-count 0 --region "$REGION" 2>/dev/null || true
+            aws ecs delete-service --cluster "$cluster_arn" --service "$svc_arn" --force --region "$REGION" 2>/dev/null || true
+        fi
+    done < <(aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n')
 done
+
+# Poll until ACTIVE services drain from test clusters. Budget 120s total
+# (Fargate task termination is usually <60s; ALB target deregistration
+# adds another ~30s on services with LB attachments).
+if [ ${#ECS_TEST_CLUSTERS[@]} -gt 0 ]; then
+    echo "  Waiting for ECS services to drain (max 120s)..."
+    waited=0
+    while [ $waited -lt 120 ]; do
+        active=0
+        for cluster_arn in "${ECS_TEST_CLUSTERS[@]}"; do
+            n=$(aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "length(serviceArns)" --output text 2>/dev/null || echo 0)
+            [[ -n "$n" && "$n" != "None" ]] && active=$((active + n))
+        done
+        [ "$active" = "0" ] && break
+        sleep 10
+        waited=$((waited + 10))
+    done
+    echo "  ECS services drained after ${waited}s (residual count: ${active:-?})"
+fi
 
 # --- EC2 network interfaces (before subnets/security groups)
 echo "Cleaning EC2 test network interfaces..."
@@ -615,7 +652,7 @@ done
 # --- EFS access points (before file systems)
 echo "Cleaning EFS test access points..."
 aws efs describe-access-points --region "$REGION" 2>/dev/null | \
-    jq -r ".AccessPoints[]? | select(.Name // \"\" | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .AccessPointId" 2>/dev/null | while read -r ap_id; do
+    jq -r ".AccessPoints[]? | select(.Name // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .AccessPointId" 2>/dev/null | while read -r ap_id; do
     if [[ -n "$ap_id" ]]; then
         echo "  Deleting EFS access point: $ap_id"
         aws efs delete-access-point --access-point-id "$ap_id" --region "$REGION" 2>/dev/null || true
@@ -653,17 +690,138 @@ aws ec2 describe-vpcs --region "$REGION" \
     --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
     if [[ -n "$vpc_id" && "$vpc_id" != "$DEFAULT_VPC" ]]; then
         echo "  Cleaning orphaned VPC: $vpc_id"
-        # Delete ENIs
+        # Delete any ALBs/NLBs attached to this VPC. The tagged-prefix
+        # cleanup at line ~450 catches most by name, but VPC-ID lookup
+        # also catches ALBs whose names don't match any known prefix
+        # (e.g., legacy fixture names). Initiated here, listeners first.
+        aws elbv2 describe-load-balancers --region "$REGION" \
+            --query "LoadBalancers[?VpcId=='$vpc_id'].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
+            if [[ -n "$lb_arn" ]]; then
+                echo "    Deleting ALB attached to $vpc_id: $lb_arn"
+                aws elbv2 describe-listeners --load-balancer-arn "$lb_arn" --region "$REGION" \
+                    --query "Listeners[].ListenerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r listener; do
+                    [[ -n "$listener" ]] && aws elbv2 delete-listener --listener-arn "$listener" --region "$REGION" 2>/dev/null || true
+                done
+                aws elbv2 delete-load-balancer --load-balancer-arn "$lb_arn" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Detach + delete ENIs. delete-network-interface on an attached
+        # ENI (the common case for Fargate-managed ENIs lingering from a
+        # cancelled run) fails with InvalidParameterValue.InUse; force-
+        # detach first, brief sleep for AWS to propagate the detach,
+        # then delete. Poll briefly afterwards for residuals so the
+        # subnet delete below has a chance to succeed.
+        # Skip ENIs owned by amazon-elb — those are released automatically
+        # by AWS once the ALB is fully gone; force-detach returns
+        # OperationNotPermitted on them.
+        aws ec2 describe-network-interfaces --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "NetworkInterfaces[?RequesterId!='amazon-elb'].{Id:NetworkInterfaceId,Attachment:Attachment}" --output json 2>/dev/null | \
+            jq -c '.[]' 2>/dev/null | while read -r eni_json; do
+            eni_id=$(echo "$eni_json" | jq -r '.Id')
+            if [[ -n "$eni_id" ]]; then
+                attach_id=$(echo "$eni_json" | jq -r '.Attachment.AttachmentId // empty')
+                [[ -n "$attach_id" ]] && aws ec2 detach-network-interface --attachment-id "$attach_id" --force --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Wait up to 5 minutes for ENIs to release. Fargate ENIs take
+        # 30-60s; ELB-owned ENIs (amazon-elb requester) released by AWS
+        # 1-5 min after the ALB is fully deleted.
+        waited=0
+        while [ $waited -lt 300 ]; do
+            remaining=$(aws ec2 describe-network-interfaces --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "length(NetworkInterfaces)" --output text 2>/dev/null || echo 0)
+            [ "$remaining" = "0" ] && break
+            sleep 10
+            waited=$((waited + 10))
+        done
+        # Final pass: attempt explicit delete on whatever is left.
         aws ec2 describe-network-interfaces --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
             --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eni_id; do
             [[ -n "$eni_id" ]] && aws ec2 delete-network-interface --network-interface-id "$eni_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete NAT gateways (block subnet+VPC deletes; takes ~30-90s).
+        # Initiate deletes first, then wait below.
+        nat_ids=$(aws ec2 describe-nat-gateways --region "$REGION" \
+            --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,failed" \
+            --query "NatGateways[].NatGatewayId" --output text 2>/dev/null || true)
+        for nat_id in $nat_ids; do
+            [[ -n "$nat_id" ]] && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" --region "$REGION" 2>/dev/null || true
+        done
+        if [[ -n "$nat_ids" ]]; then
+            waited=0
+            while [ $waited -lt 120 ]; do
+                remaining=$(aws ec2 describe-nat-gateways --region "$REGION" \
+                    --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,deleting" \
+                    --query "length(NatGateways)" --output text 2>/dev/null || echo 0)
+                [ "$remaining" = "0" ] && break
+                sleep 10
+                waited=$((waited + 10))
+            done
+        fi
+        # Delete VPC endpoints (block VPC delete)
+        aws ec2 describe-vpc-endpoints --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "VpcEndpoints[?State!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ep_id; do
+            [[ -n "$ep_id" ]] && aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$ep_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Detach VPN gateways attached to this VPC
+        aws ec2 describe-vpn-gateways --region "$REGION" \
+            --filters "Name=attachment.vpc-id,Values=$vpc_id" "Name=state,Values=available" \
+            --query "VpnGateways[].VpnGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vgw_id; do
+            if [[ -n "$vgw_id" ]]; then
+                aws ec2 detach-vpn-gateway --vpn-gateway-id "$vgw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+                aws ec2 delete-vpn-gateway --vpn-gateway-id "$vgw_id" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Delete VPC peering connections (requester or accepter)
+        aws ec2 describe-vpc-peering-connections --region "$REGION" \
+            --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
+            --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
+            [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
+        done
+        aws ec2 describe-vpc-peering-connections --region "$REGION" \
+            --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
+            --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
+            [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete transit gateway VPC attachments
+        aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,modifying" \
+            --query "TransitGatewayVpcAttachments[].TransitGatewayAttachmentId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_att_id; do
+            [[ -n "$tgw_att_id" ]] && aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$tgw_att_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete egress-only internet gateways attached to this VPC
+        aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
+            --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].EgressOnlyInternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eigw_id; do
+            [[ -n "$eigw_id" ]] && aws ec2 delete-egress-only-internet-gateway --egress-only-internet-gateway-id "$eigw_id" --region "$REGION" 2>/dev/null || true
         done
         # Delete subnets
         aws ec2 describe-subnets --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
             --query "Subnets[].SubnetId" --output text 2>/dev/null | tr '\t' '\n' | while read -r subnet_id; do
             [[ -n "$subnet_id" ]] && aws ec2 delete-subnet --subnet-id "$subnet_id" --region "$REGION" 2>/dev/null || true
+        done
+        # Delete non-main route tables (each may have explicit associations
+        # to disassociate first; disassociating non-main ones is idempotent)
+        aws ec2 describe-route-tables --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rt_id; do
+            if [[ -n "$rt_id" ]]; then
+                aws ec2 describe-route-tables --route-table-ids "$rt_id" --region "$REGION" \
+                    --query "RouteTables[0].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r assoc_id; do
+                    [[ -n "$assoc_id" ]] && aws ec2 disassociate-route-table --association-id "$assoc_id" --region "$REGION" 2>/dev/null || true
+                done
+                aws ec2 delete-route-table --route-table-id "$rt_id" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        # Delete non-default network ACLs
+        aws ec2 describe-network-acls --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "NetworkAcls[?!IsDefault].NetworkAclId" --output text 2>/dev/null | tr '\t' '\n' | while read -r nacl_id; do
+            [[ -n "$nacl_id" ]] && aws ec2 delete-network-acl --network-acl-id "$nacl_id" --region "$REGION" 2>/dev/null || true
         done
         # Detach and delete internet gateways
         aws ec2 describe-internet-gateways --region "$REGION" \
@@ -680,10 +838,84 @@ aws ec2 describe-vpcs --region "$REGION" \
             --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg_id; do
             [[ -n "$sg_id" ]] && aws ec2 delete-security-group --group-id "$sg_id" --region "$REGION" 2>/dev/null || true
         done
-        # Delete VPC
-        aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+        # Delete VPC — surface the error if it still fails so we can see
+        # what's blocking. The script continues either way.
+        if ! aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>&1; then
+            echo "  WARN: delete-vpc $vpc_id failed (see error above)"
+            echo "  Enumerating remaining dependencies on $vpc_id:"
+            echo "    ENIs:"
+            aws ec2 describe-network-interfaces --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status,Type:InterfaceType,Desc:Description,Owner:RequesterId}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Subnets:"
+            aws ec2 describe-subnets --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "Subnets[].{Id:SubnetId,Cidr:CidrBlock,Az:AvailabilityZone}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    NAT gateways:"
+            aws ec2 describe-nat-gateways --region "$REGION" \
+                --filter "Name=vpc-id,Values=$vpc_id" \
+                --query "NatGateways[].{Id:NatGatewayId,State:State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Internet gateways:"
+            aws ec2 describe-internet-gateways --region "$REGION" \
+                --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+                --query "InternetGateways[].{Id:InternetGatewayId,State:Attachments[0].State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Egress-only IGWs:"
+            aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
+                --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].{Id:EgressOnlyInternetGatewayId}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPN gateways:"
+            aws ec2 describe-vpn-gateways --region "$REGION" \
+                --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+                --query "VpnGateways[].{Id:VpnGatewayId,State:State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPC peering connections (as requester):"
+            aws ec2 describe-vpc-peering-connections --region "$REGION" \
+                --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" \
+                --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPC peering connections (as accepter):"
+            aws ec2 describe-vpc-peering-connections --region "$REGION" \
+                --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" \
+                --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    TGW VPC attachments:"
+            aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "TransitGatewayVpcAttachments[].{Id:TransitGatewayAttachmentId,State:State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPC endpoints:"
+            aws ec2 describe-vpc-endpoints --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "VpcEndpoints[].{Id:VpcEndpointId,State:State,Type:VpcEndpointType,Service:ServiceName}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Route tables:"
+            aws ec2 describe-route-tables --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "RouteTables[].{Id:RouteTableId,Main:Associations[?Main].Main|[0]}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Network ACLs:"
+            aws ec2 describe-network-acls --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "NetworkAcls[].{Id:NetworkAclId,Default:IsDefault}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Security groups:"
+            aws ec2 describe-security-groups --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "SecurityGroups[].{Id:GroupId,Name:GroupName}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+        fi
     fi
 done
+
+# After orphan-VPC sweep, report how many non-default VPCs remain so the
+# CI run shows whether the account is near or at the VPC quota.
+remaining_vpcs=$(aws ec2 describe-vpcs --region "$REGION" \
+    --query "length(Vpcs[?IsDefault==\`false\`])" --output text 2>/dev/null || echo "?")
+echo "  Non-default VPCs remaining in $REGION: $remaining_vpcs"
 
 # ============================================================================
 # CloudWatch Resources (regional)
@@ -756,7 +988,7 @@ done
 # 28a. Delete ECR public repositories with test prefix
 echo "Cleaning ECR test public repositories..."
 aws ecr-public describe-repositories --region us-east-1 \
-    --query "repositories[?contains(repositoryName, '$TEST_PREFIX') || contains(repositoryName, '$FORMAE_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
+    --query "repositories[?contains(repositoryName, '$TEST_PREFIX') || contains(repositoryName, '$SDK_PREFIX') || contains(repositoryName, '$FORMAE_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
     if [[ -n "$repo" ]]; then
         echo "  Deleting ECR public repository: $repo"
         aws ecr-public delete-repository --repository-name "$repo" --region us-east-1 --force 2>/dev/null || true
@@ -778,7 +1010,7 @@ echo "Cleaning ECR test repository creation templates..."
 aws ecr describe-repository-creation-templates --region "$REGION" \
     --query "registryId" --output text 2>/dev/null > /dev/null  # Just check if accessible
 aws ecr describe-repository-creation-templates --region "$REGION" 2>/dev/null | \
-    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$TEST_PREFIX|formae-sdk-test\")) | .prefix" 2>/dev/null | while read -r prefix; do
+    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .prefix" 2>/dev/null | while read -r prefix; do
     if [[ -n "$prefix" ]]; then
         echo "  Deleting ECR repository creation template: $prefix"
         aws ecr delete-repository-creation-template --prefix "$prefix" --region "$REGION" 2>/dev/null || true
@@ -792,7 +1024,7 @@ done
 # 29. Delete ECS clusters with test prefix
 echo "Cleaning ECS test clusters..."
 aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
+    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"* || "$cluster_arn" == *"$LEGACY_LB_PREFIX"*) ]]; then
         echo "  Deleting ECS cluster: $cluster_arn"
         aws ecs delete-cluster --cluster "$cluster_arn" --region "$REGION" 2>/dev/null || true
     fi
@@ -800,7 +1032,7 @@ done
 
 # 30. Deregister ECS task definitions with test prefix
 echo "Cleaning ECS test task definitions..."
-for ecs_family_prefix in "$FORMAE_PREFIX" "$SDK_PREFIX"; do
+for ecs_family_prefix in "$FORMAE_PREFIX" "$SDK_PREFIX" "$LEGACY_LB_PREFIX"; do
     aws ecs list-task-definition-families --region "$REGION" --family-prefix "$ecs_family_prefix" --status ACTIVE \
         --query "families[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r family; do
         if [[ -n "$family" ]]; then
@@ -956,7 +1188,7 @@ done
 # 37. Delete Lambda code signing configs with test prefix
 echo "Cleaning Lambda test code signing configs..."
 aws lambda list-code-signing-configs --region "$REGION" --max-items 100 2>/dev/null | \
-    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
+    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
     if [[ -n "$csc_arn" ]]; then
         echo "  Deleting Lambda code signing config: $csc_arn"
         aws lambda delete-code-signing-config --code-signing-config-arn "$csc_arn" --region "$REGION" 2>/dev/null || true
@@ -967,7 +1199,7 @@ done
 # Match both FORMAE_PREFIX and the SES-specific 'formae-conformance' prefix used
 # by the SES conformance fixtures.
 echo "Cleaning SES test email identities..."
-aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$TEST_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
+aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$SDK_PREFIX') || starts_with(IdentityName, '$TEST_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
     if [[ -n "$ident" ]]; then
         echo "  Deleting SES email identity: $ident"
         aws sesv2 delete-email-identity --email-identity "$ident" --region "$REGION" 2>/dev/null || true
@@ -976,7 +1208,7 @@ done
 
 # --- SES configuration sets (also implicitly removes their event destinations)
 echo "Cleaning SES test configuration sets..."
-aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
+aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$SDK_PREFIX') || starts_with(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
     if [[ -n "$cs" ]]; then
         echo "  Deleting SES configuration set: $cs"
         aws sesv2 delete-configuration-set --configuration-set-name "$cs" --region "$REGION" 2>/dev/null || true

@@ -156,6 +156,7 @@ open class RStudioServerProAppSettings extends formae.SubResource {
 
 @aws.SubResourceHint
 open class RStudioServerProDomainSettings extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     defaultResourceSpec: ResourceSpec?
     domainExecutionRoleArn: String(matches(Regex(#"^arn:aws[a-z\-]*:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+$"#)))|formae.Resolvable
     rStudioConnectUrl: (String(matches(Regex(#"^(https:|http:|www\.)\S*"#))))?

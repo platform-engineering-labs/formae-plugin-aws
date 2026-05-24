@@ -237,9 +237,11 @@ typealias TargetCapacityUnitType = "vcpu"|"memory-mib"|"units"
 
 @aws.SubResourceHint
 open class TargetCapacitySpecification extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     defaultTargetCapacityType: DefaultTargetCapacityType?
     onDemandTargetCapacity: Int?
     spotTargetCapacity: Int?
+    @aws.FieldHint{createOnly = true}
     targetCapacityUnitType: TargetCapacityUnitType?
     totalTargetCapacity: Int
 }

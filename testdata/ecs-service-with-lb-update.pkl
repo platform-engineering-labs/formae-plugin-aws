@@ -91,7 +91,7 @@ local testSubnetBAssoc = new subnetroutetableassociation.SubnetRouteTableAssocia
 local albSG = new securitygroup.SecurityGroup {
   label = "test-alb-sg-for-ecs-svc-lb"
   groupDescription = "Allow HTTP to internal ALB for ECS Service conformance test"
-  groupName = "formae-sdk-alb-sg-\(testRunID)"
+  groupName = "formae-sdk-test-alb-sg-\(testRunID)"
   vpcId = testVpc.res.vpcId
 }
 
@@ -107,7 +107,7 @@ local albIngress = new securitygroupingress.SecurityGroupIngress {
 local tasksSG = new securitygroup.SecurityGroup {
   label = "test-tasks-sg-for-ecs-svc-lb"
   groupDescription = "Allow HTTP from ALB to ECS tasks for conformance test"
-  groupName = "formae-sdk-tasks-sg-\(testRunID)"
+  groupName = "formae-sdk-test-tasks-sg-\(testRunID)"
   vpcId = testVpc.res.vpcId
 }
 
@@ -122,7 +122,7 @@ local tasksIngress = new securitygroupingress.SecurityGroupIngress {
 
 local testALB = new loadbalancer.LoadBalancer {
   label = "test-alb-for-ecs-svc"
-  name = "formae-sdk-alb-\(testRunID)"
+  name = "formae-sdk-test-alb-\(testRunID)"
   scheme = "internal"
   type = "application"
   subnets {
@@ -136,7 +136,7 @@ local testALB = new loadbalancer.LoadBalancer {
 
 local testTG = new targetgroup.TargetGroup {
   label = "test-tg-for-ecs-svc"
-  name = "formae-sdk-tg-\(testRunID)"
+  name = "formae-sdk-test-tg-\(testRunID)"
   port = 80
   protocol = "HTTP"
   targetType = "ip"
@@ -158,7 +158,7 @@ local testListener = new listener.Listener {
 
 local testCluster = new ecscluster.Cluster {
   label = "test-cluster-for-ecs-svc-lb"
-  clusterName = "formae-sdk-svc-lb-cluster-\(testRunID)"
+  clusterName = "formae-sdk-test-svc-lb-cluster-\(testRunID)"
   clusterSettings {
     new {
       name = "containerInsights"
@@ -177,7 +177,7 @@ local testCluster = new ecscluster.Cluster {
 // in-place service update with a new deployment.
 local testTaskDef = new taskdefinition.TaskDefinition {
   label = "test-taskdef-for-ecs-svc-lb"
-  family = "formae-sdk-svc-lb-taskdef-\(testRunID)"
+  family = "formae-sdk-test-svc-lb-taskdef-\(testRunID)"
   requiresCompatibilities {
     "FARGATE"
   }
@@ -245,7 +245,7 @@ forma {
   // via the IGW + default route + public IPs on their ENIs.
   new service.Service {
     label = "plugin-sdk-test-ecs-service-with-lb"
-    serviceName = "formae-sdk-svc-lb-\(testRunID)"
+    serviceName = "formae-sdk-test-svc-lb-\(testRunID)"
     cluster = testCluster.res.arn
     taskDefinition = new formae.Resolvable {
       label = testTaskDef.label

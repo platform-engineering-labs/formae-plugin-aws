@@ -44,7 +44,7 @@ open class ModelPackageGroupResolvable extends formae.Resolvable {
 }
 open class ModelPackageGroup extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     modelPackageGroupDescription: String?
 
     @aws.FieldHint{createOnly = true}

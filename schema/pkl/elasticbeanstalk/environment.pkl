@@ -21,7 +21,9 @@ open class OptionSetting extends formae.SubResource {
 
 @aws.SubResourceHint
 open class Tier extends formae.SubResource {
+    @aws.FieldHint{createOnly = true}
     name: String?
+    @aws.FieldHint{createOnly = true}
     type: String?
     version: String?
 }

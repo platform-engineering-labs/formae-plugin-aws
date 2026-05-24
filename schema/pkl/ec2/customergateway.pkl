@@ -37,6 +37,6 @@ open class CustomerGateway extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     type: String
 }
