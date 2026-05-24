@@ -114,9 +114,12 @@ jobs:
     strategy:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
-      # VPC quota in the test account is 5; keep matrix below that so
-      # parallel VPC-creating tests don't race the quota.
-      max-parallel: 3
+      # VPC quota in the test account is 5; match the quota exactly.
+      # The original max-parallel=10 worked when on_retry_command was
+      # cascading failures across the matrix (cleanup race). With the
+      # retry wrapper dropped and orphan-VPC cleanup hardened, 5 is the
+      # right cap. Will bump to 10 once the AWS quota is raised to 20+.
+      max-parallel: 5
       fail-fast: false
     permissions:
       id-token: write
