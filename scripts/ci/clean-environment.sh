@@ -812,6 +812,71 @@ aws ec2 describe-vpcs --region "$REGION" \
         # what's blocking. The script continues either way.
         if ! aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>&1; then
             echo "  WARN: delete-vpc $vpc_id failed (see error above)"
+            echo "  Enumerating remaining dependencies on $vpc_id:"
+            echo "    ENIs:"
+            aws ec2 describe-network-interfaces --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status,Type:InterfaceType,Desc:Description,Owner:RequesterId}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Subnets:"
+            aws ec2 describe-subnets --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "Subnets[].{Id:SubnetId,Cidr:CidrBlock,Az:AvailabilityZone}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    NAT gateways:"
+            aws ec2 describe-nat-gateways --region "$REGION" \
+                --filter "Name=vpc-id,Values=$vpc_id" \
+                --query "NatGateways[].{Id:NatGatewayId,State:State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Internet gateways:"
+            aws ec2 describe-internet-gateways --region "$REGION" \
+                --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+                --query "InternetGateways[].{Id:InternetGatewayId,State:Attachments[0].State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Egress-only IGWs:"
+            aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
+                --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].{Id:EgressOnlyInternetGatewayId}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPN gateways:"
+            aws ec2 describe-vpn-gateways --region "$REGION" \
+                --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+                --query "VpnGateways[].{Id:VpnGatewayId,State:State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPC peering connections (as requester):"
+            aws ec2 describe-vpc-peering-connections --region "$REGION" \
+                --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" \
+                --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPC peering connections (as accepter):"
+            aws ec2 describe-vpc-peering-connections --region "$REGION" \
+                --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" \
+                --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    TGW VPC attachments:"
+            aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "TransitGatewayVpcAttachments[].{Id:TransitGatewayAttachmentId,State:State}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    VPC endpoints:"
+            aws ec2 describe-vpc-endpoints --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "VpcEndpoints[].{Id:VpcEndpointId,State:State,Type:VpcEndpointType,Service:ServiceName}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Route tables:"
+            aws ec2 describe-route-tables --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "RouteTables[].{Id:RouteTableId,Main:Associations[?Main].Main|[0]}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Network ACLs:"
+            aws ec2 describe-network-acls --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "NetworkAcls[].{Id:NetworkAclId,Default:IsDefault}" \
+                --output table 2>&1 | sed 's/^/      /' || true
+            echo "    Security groups:"
+            aws ec2 describe-security-groups --region "$REGION" \
+                --filters "Name=vpc-id,Values=$vpc_id" \
+                --query "SecurityGroups[].{Id:GroupId,Name:GroupName}" \
+                --output table 2>&1 | sed 's/^/      /' || true
         fi
     fi
 done
