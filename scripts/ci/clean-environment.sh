@@ -33,7 +33,7 @@ echo ""
 
 # 1. Delete IAM instance profiles with test prefix (before roles)
 echo "Cleaning IAM test instance profiles..."
-aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, '$FORMAE_PREFIX') || contains(InstanceProfileName, '$TEST_PREFIX')].InstanceProfileName" --output text 2>/dev/null | tr '\t' '\n' | while read -r profile; do
+aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, '$FORMAE_PREFIX') || contains(InstanceProfileName, '$SDK_PREFIX') || contains(InstanceProfileName, '$TEST_PREFIX')].InstanceProfileName" --output text 2>/dev/null | tr '\t' '\n' | while read -r profile; do
     if [[ -n "$profile" ]]; then
         echo "  Deleting IAM instance profile: $profile"
         # Remove all roles from instance profile
@@ -46,7 +46,7 @@ done
 
 # 2. Delete IAM roles with test prefix
 echo "Cleaning IAM test roles..."
-aws iam list-roles --query "Roles[?contains(RoleName, '$FORMAE_PREFIX') || contains(RoleName, '$TEST_PREFIX')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read -r role; do
+aws iam list-roles --query "Roles[?contains(RoleName, '$FORMAE_PREFIX') || contains(RoleName, '$SDK_PREFIX') || contains(RoleName, '$TEST_PREFIX')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read -r role; do
     if [[ -n "$role" ]]; then
         echo "  Deleting IAM role: $role"
         # Detach managed policies
@@ -70,7 +70,7 @@ done
 
 # 3. Delete IAM users with test prefix
 echo "Cleaning IAM test users..."
-aws iam list-users --query "Users[?contains(UserName, '$FORMAE_PREFIX') || contains(UserName, '$TEST_PREFIX')].UserName" --output text 2>/dev/null | tr '\t' '\n' | while read -r user; do
+aws iam list-users --query "Users[?contains(UserName, '$FORMAE_PREFIX') || contains(UserName, '$SDK_PREFIX') || contains(UserName, '$TEST_PREFIX')].UserName" --output text 2>/dev/null | tr '\t' '\n' | while read -r user; do
     if [[ -n "$user" ]]; then
         echo "  Deleting IAM user: $user"
         # Delete login profile
@@ -97,7 +97,7 @@ done
 
 # 4. Delete IAM groups with test prefix
 echo "Cleaning IAM test groups..."
-aws iam list-groups --query "Groups[?contains(GroupName, '$FORMAE_PREFIX') || contains(GroupName, '$TEST_PREFIX')].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r group; do
+aws iam list-groups --query "Groups[?contains(GroupName, '$FORMAE_PREFIX') || contains(GroupName, '$SDK_PREFIX') || contains(GroupName, '$TEST_PREFIX')].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r group; do
     if [[ -n "$group" ]]; then
         echo "  Deleting IAM group: $group"
         # Remove users from group
@@ -167,7 +167,7 @@ done
 # 8a. Delete S3 access points with test prefix
 echo "Cleaning S3 test access points..."
 aws s3control list-access-points --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" \
-    --query "AccessPointList[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$TEST_PREFIX')].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
+    --query "AccessPointList[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
     if [[ -n "$ap" ]]; then
         echo "  Deleting S3 access point: $ap"
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -177,7 +177,7 @@ done
 
 # 8b. Delete S3 buckets with test prefix
 echo "Cleaning S3 test buckets..."
-aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
+aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
     if [[ -n "$bucket" ]]; then
         echo "  Deleting S3 bucket: $bucket"
         # Delete bucket policy first (if any)
@@ -190,7 +190,7 @@ done
 # 8c. Delete S3 Storage Lens Groups with test prefix
 echo "Cleaning S3 test Storage Lens Groups..."
 aws s3control list-storage-lens-groups --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" 2>/dev/null | \
-    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
+    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
     if [[ -n "$slg" ]]; then
         echo "  Deleting S3 Storage Lens Group: $slg"
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -225,7 +225,7 @@ aws route53 list-health-checks --query "HealthChecks[].Id" --output text 2>/dev/
     if [[ -n "$hc_id" ]]; then
         tags=$(aws route53 list-tags-for-resource --resource-type healthcheck --resource-id "$hc_id" \
             --query "ResourceTagSet.Tags[?Key=='Name'].Value" --output text 2>/dev/null || true)
-        if [[ "$tags" == *"$FORMAE_PREFIX"* || "$tags" == *"$TEST_PREFIX"* ]]; then
+        if [[ "$tags" == *"$FORMAE_PREFIX"* || "$tags" == *"$SDK_PREFIX"* || "$tags" == *"$TEST_PREFIX"* ]]; then
             echo "  Deleting Route53 health check: $hc_id"
             aws route53 delete-health-check --health-check-id "$hc_id" 2>/dev/null || true
         fi
@@ -652,7 +652,7 @@ done
 # --- EFS access points (before file systems)
 echo "Cleaning EFS test access points..."
 aws efs describe-access-points --region "$REGION" 2>/dev/null | \
-    jq -r ".AccessPoints[]? | select(.Name // \"\" | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .AccessPointId" 2>/dev/null | while read -r ap_id; do
+    jq -r ".AccessPoints[]? | select(.Name // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .AccessPointId" 2>/dev/null | while read -r ap_id; do
     if [[ -n "$ap_id" ]]; then
         echo "  Deleting EFS access point: $ap_id"
         aws efs delete-access-point --access-point-id "$ap_id" --region "$REGION" 2>/dev/null || true
@@ -988,7 +988,7 @@ done
 # 28a. Delete ECR public repositories with test prefix
 echo "Cleaning ECR test public repositories..."
 aws ecr-public describe-repositories --region us-east-1 \
-    --query "repositories[?contains(repositoryName, '$TEST_PREFIX') || contains(repositoryName, '$FORMAE_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
+    --query "repositories[?contains(repositoryName, '$TEST_PREFIX') || contains(repositoryName, '$SDK_PREFIX') || contains(repositoryName, '$FORMAE_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
     if [[ -n "$repo" ]]; then
         echo "  Deleting ECR public repository: $repo"
         aws ecr-public delete-repository --repository-name "$repo" --region us-east-1 --force 2>/dev/null || true
@@ -1010,7 +1010,7 @@ echo "Cleaning ECR test repository creation templates..."
 aws ecr describe-repository-creation-templates --region "$REGION" \
     --query "registryId" --output text 2>/dev/null > /dev/null  # Just check if accessible
 aws ecr describe-repository-creation-templates --region "$REGION" 2>/dev/null | \
-    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$TEST_PREFIX|formae-sdk-test\")) | .prefix" 2>/dev/null | while read -r prefix; do
+    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .prefix" 2>/dev/null | while read -r prefix; do
     if [[ -n "$prefix" ]]; then
         echo "  Deleting ECR repository creation template: $prefix"
         aws ecr delete-repository-creation-template --prefix "$prefix" --region "$REGION" 2>/dev/null || true
@@ -1188,7 +1188,7 @@ done
 # 37. Delete Lambda code signing configs with test prefix
 echo "Cleaning Lambda test code signing configs..."
 aws lambda list-code-signing-configs --region "$REGION" --max-items 100 2>/dev/null | \
-    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$TEST_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
+    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
     if [[ -n "$csc_arn" ]]; then
         echo "  Deleting Lambda code signing config: $csc_arn"
         aws lambda delete-code-signing-config --code-signing-config-arn "$csc_arn" --region "$REGION" 2>/dev/null || true
@@ -1199,7 +1199,7 @@ done
 # Match both FORMAE_PREFIX and the SES-specific 'formae-conformance' prefix used
 # by the SES conformance fixtures.
 echo "Cleaning SES test email identities..."
-aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$TEST_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
+aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$SDK_PREFIX') || starts_with(IdentityName, '$TEST_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
     if [[ -n "$ident" ]]; then
         echo "  Deleting SES email identity: $ident"
         aws sesv2 delete-email-identity --email-identity "$ident" --region "$REGION" 2>/dev/null || true
@@ -1208,7 +1208,7 @@ done
 
 # --- SES configuration sets (also implicitly removes their event destinations)
 echo "Cleaning SES test configuration sets..."
-aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
+aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$SDK_PREFIX') || starts_with(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
     if [[ -n "$cs" ]]; then
         echo "  Deleting SES configuration set: $cs"
         aws sesv2 delete-configuration-set --configuration-set-name "$cs" --region "$REGION" 2>/dev/null || true
