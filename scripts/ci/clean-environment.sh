@@ -16,6 +16,12 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 TEST_PREFIX="plugin-sdk-test"
 FORMAE_PREFIX="formae-plugin-sdk-test"
 SDK_PREFIX="formae-sdk-test"
+# Legacy prefix for ecs-service-with-lb pre-2026-05-24, when the fixture
+# used short names like `formae-sdk-svc-lb-cluster-*` to fit ALB's 32-char
+# limit. Fixture renamed to `formae-sdk-test-*`; this entry is kept so
+# legacy account orphans (which were blocking VPC delete via their ALB
+# ENIs) still get cleaned up.
+LEGACY_LB_PREFIX="formae-sdk-svc-lb"
 
 echo "=== Cleaning AWS test resources in $REGION ==="
 echo "Looking for resources with '$TEST_PREFIX' in name or tags..."
@@ -444,9 +450,14 @@ aws rds describe-db-subnet-groups --region "$REGION" \
 done
 
 # --- ELBv2 load balancers (before target groups, subnets, VPCs)
+# Legacy LEGACY_LB_PREFIXES: pre-2026-05-24 ecs-service-with-lb fixture used
+# `formae-sdk-alb-*` / `formae-sdk-svc-lb-*` names that don't match the test
+# prefixes above (because ALB names are capped at 32 chars). Fixture renamed
+# to `formae-sdk-test-*` going forward; the legacy patterns are kept here
+# so existing account orphans get cleaned up.
 echo "Cleaning ELBv2 test load balancers..."
 aws elbv2 describe-load-balancers --region "$REGION" \
-    --query "LoadBalancers[?contains(LoadBalancerName, '$FORMAE_PREFIX') || contains(LoadBalancerName, '$SDK_PREFIX') || contains(LoadBalancerName, '$TEST_PREFIX')].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
+    --query "LoadBalancers[?contains(LoadBalancerName, '$FORMAE_PREFIX') || contains(LoadBalancerName, '$SDK_PREFIX') || contains(LoadBalancerName, '$TEST_PREFIX') || contains(LoadBalancerName, 'formae-sdk-alb')].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
     if [[ -n "$lb_arn" ]]; then
         echo "  Deleting ELBv2 load balancer: $lb_arn"
         # Delete listeners first
@@ -461,7 +472,7 @@ done
 # --- ELBv2 target groups (after load balancers)
 echo "Cleaning ELBv2 test target groups..."
 aws elbv2 describe-target-groups --region "$REGION" \
-    --query "TargetGroups[?contains(TargetGroupName, '$FORMAE_PREFIX') || contains(TargetGroupName, '$SDK_PREFIX') || contains(TargetGroupName, '$TEST_PREFIX')].TargetGroupArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r tg_arn; do
+    --query "TargetGroups[?contains(TargetGroupName, '$FORMAE_PREFIX') || contains(TargetGroupName, '$SDK_PREFIX') || contains(TargetGroupName, '$TEST_PREFIX') || contains(TargetGroupName, 'formae-sdk-tg')].TargetGroupArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r tg_arn; do
     if [[ -n "$tg_arn" ]]; then
         echo "  Deleting ELBv2 target group: $tg_arn"
         aws elbv2 delete-target-group --target-group-arn "$tg_arn" --region "$REGION" 2>/dev/null || true
@@ -506,7 +517,7 @@ done
 # `describe-services` under `.services[].taskSets[].taskSetArn`.
 echo "Cleaning ECS test task sets..."
 aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
+    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"* || "$cluster_arn" == *"$LEGACY_LB_PREFIX"*) ]]; then
         aws ecs list-services --cluster "$cluster_arn" --region "$REGION" --query "serviceArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r svc_arn; do
             if [[ -n "$svc_arn" ]]; then
                 aws ecs describe-services --cluster "$cluster_arn" --services "$svc_arn" --region "$REGION" \
@@ -529,7 +540,7 @@ done
 echo "Cleaning ECS test services..."
 ECS_TEST_CLUSTERS=()
 while IFS= read -r cluster_arn; do
-    [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]] && ECS_TEST_CLUSTERS+=("$cluster_arn")
+    [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"* || "$cluster_arn" == *"$LEGACY_LB_PREFIX"*) ]] && ECS_TEST_CLUSTERS+=("$cluster_arn")
 done < <(aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n')
 
 for cluster_arn in "${ECS_TEST_CLUSTERS[@]}"; do
@@ -679,15 +690,33 @@ aws ec2 describe-vpcs --region "$REGION" \
     --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
     if [[ -n "$vpc_id" && "$vpc_id" != "$DEFAULT_VPC" ]]; then
         echo "  Cleaning orphaned VPC: $vpc_id"
+        # Delete any ALBs/NLBs attached to this VPC. The tagged-prefix
+        # cleanup at line ~450 catches most by name, but VPC-ID lookup
+        # also catches ALBs whose names don't match any known prefix
+        # (e.g., legacy fixture names). Initiated here, listeners first.
+        aws elbv2 describe-load-balancers --region "$REGION" \
+            --query "LoadBalancers[?VpcId=='$vpc_id'].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
+            if [[ -n "$lb_arn" ]]; then
+                echo "    Deleting ALB attached to $vpc_id: $lb_arn"
+                aws elbv2 describe-listeners --load-balancer-arn "$lb_arn" --region "$REGION" \
+                    --query "Listeners[].ListenerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r listener; do
+                    [[ -n "$listener" ]] && aws elbv2 delete-listener --listener-arn "$listener" --region "$REGION" 2>/dev/null || true
+                done
+                aws elbv2 delete-load-balancer --load-balancer-arn "$lb_arn" --region "$REGION" 2>/dev/null || true
+            fi
+        done
         # Detach + delete ENIs. delete-network-interface on an attached
         # ENI (the common case for Fargate-managed ENIs lingering from a
         # cancelled run) fails with InvalidParameterValue.InUse; force-
         # detach first, brief sleep for AWS to propagate the detach,
         # then delete. Poll briefly afterwards for residuals so the
         # subnet delete below has a chance to succeed.
+        # Skip ENIs owned by amazon-elb — those are released automatically
+        # by AWS once the ALB is fully gone; force-detach returns
+        # OperationNotPermitted on them.
         aws ec2 describe-network-interfaces --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Attachment:Attachment}" --output json 2>/dev/null | \
+            --query "NetworkInterfaces[?RequesterId!='amazon-elb'].{Id:NetworkInterfaceId,Attachment:Attachment}" --output json 2>/dev/null | \
             jq -c '.[]' 2>/dev/null | while read -r eni_json; do
             eni_id=$(echo "$eni_json" | jq -r '.Id')
             if [[ -n "$eni_id" ]]; then
@@ -695,16 +724,17 @@ aws ec2 describe-vpcs --region "$REGION" \
                 [[ -n "$attach_id" ]] && aws ec2 detach-network-interface --attachment-id "$attach_id" --force --region "$REGION" 2>/dev/null || true
             fi
         done
-        # Give AWS up to 60s to actually release ENIs that were detached
-        # above (Fargate-owned ENIs in particular take time to deregister).
+        # Wait up to 5 minutes for ENIs to release. Fargate ENIs take
+        # 30-60s; ELB-owned ENIs (amazon-elb requester) released by AWS
+        # 1-5 min after the ALB is fully deleted.
         waited=0
-        while [ $waited -lt 60 ]; do
+        while [ $waited -lt 300 ]; do
             remaining=$(aws ec2 describe-network-interfaces --region "$REGION" \
                 --filters "Name=vpc-id,Values=$vpc_id" \
                 --query "length(NetworkInterfaces)" --output text 2>/dev/null || echo 0)
             [ "$remaining" = "0" ] && break
-            sleep 5
-            waited=$((waited + 5))
+            sleep 10
+            waited=$((waited + 10))
         done
         # Final pass: attempt explicit delete on whatever is left.
         aws ec2 describe-network-interfaces --region "$REGION" \
@@ -994,7 +1024,7 @@ done
 # 29. Delete ECS clusters with test prefix
 echo "Cleaning ECS test clusters..."
 aws ecs list-clusters --region "$REGION" --query "clusterArns[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster_arn; do
-    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"*) ]]; then
+    if [[ -n "$cluster_arn" && ("$cluster_arn" == *"$FORMAE_PREFIX"* || "$cluster_arn" == *"$SDK_PREFIX"* || "$cluster_arn" == *"$LEGACY_LB_PREFIX"*) ]]; then
         echo "  Deleting ECS cluster: $cluster_arn"
         aws ecs delete-cluster --cluster "$cluster_arn" --region "$REGION" 2>/dev/null || true
     fi
@@ -1002,7 +1032,7 @@ done
 
 # 30. Deregister ECS task definitions with test prefix
 echo "Cleaning ECS test task definitions..."
-for ecs_family_prefix in "$FORMAE_PREFIX" "$SDK_PREFIX"; do
+for ecs_family_prefix in "$FORMAE_PREFIX" "$SDK_PREFIX" "$LEGACY_LB_PREFIX"; do
     aws ecs list-task-definition-families --region "$REGION" --family-prefix "$ecs_family_prefix" --status ACTIVE \
         --query "families[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r family; do
         if [[ -n "$family" ]]; then
