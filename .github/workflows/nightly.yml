@@ -13,6 +13,17 @@ on:
         required: false
         default: "main"
         type: string
+      formae_version:
+        description: |
+          Formae version baked into the binary via -ldflags (also propagated
+          to plugins as FORMAE_VERSION; plugins use it to resolve their PKL
+          formae schema dep). Defaults to the latest stable tag on the formae
+          branch. Set this explicitly when testing pre-release schema
+          additions (e.g. `0.86.0` while only `0.85.2` is tagged) so plugins
+          fetch the pre-published formae@<version> from S3.
+        required: false
+        default: ""
+        type: string
 
 # Workflow-level group: holds the lock for the entire run so the matrix
 # entries inside conformance-tests share one claim instead of competing.
@@ -146,10 +157,24 @@ jobs:
           git clone --branch "${BRANCH}" --depth 1 https://github.com/platform-engineering-labs/formae.git /tmp/formae
           cd /tmp/formae
           git fetch --tags
-          # Get latest release tag (sorted by semver) and pass to make
-          LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
-          echo "Building formae with VERSION=${LATEST_TAG}"
-          make build VERSION="${LATEST_TAG}"
+          # The version baked via -ldflags becomes formae.Version at runtime
+          # and is propagated to plugins as FORMAE_VERSION. Plugins use that
+          # to resolve their formae PKL dep against
+          # `package://...formae@<version>` on S3, so when the formae branch
+          # adds a schema field that the latest stable tag doesn't have
+          # (e.g. RFC-0043's `edgeKind` not in 0.85.2), the auto-detected
+          # tag would point plugins at the wrong schema. Allow callers to
+          # override via the formae_version input; default to the latest
+          # stable tag for the common case.
+          VERSION="${{ inputs.formae_version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
+            echo "No formae_version input; using latest stable tag: ${VERSION}"
+          else
+            echo "Using formae_version input: ${VERSION}"
+          fi
+          echo "Building formae with VERSION=${VERSION}"
+          make build VERSION="${VERSION}"
 
           # formae main expects an orbital tree at the path derived from the
           # binary location (introduced in formae#bfeeb541 — orbital-based
