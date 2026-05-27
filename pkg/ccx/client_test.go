@@ -672,3 +672,56 @@ func TestStripEmptyCollectionsFromMap_NestedNonEmpty(t *testing.T) {
 		t.Error("OnFailure should be stripped (empty)")
 	}
 }
+
+func TestReadResource_StripsEmptyEventInvokeDestinationConfig(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	// CloudControl injects DestinationConfig:{OnFailure:{},OnSuccess:{}} into
+	// every EventInvokeConfig read, even when the caller never set it. Those
+	// empty sub-objects carry no information (AWS requires Destination inside
+	// OnFailure/OnSuccess), and absorbing them makes formae's required-field
+	// validation spuriously fail.
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of("fn|$LATEST"),
+			Properties: ptr.Of(`{"FunctionName":"fn","MaximumRetryAttempts":2,"DestinationConfig":{"OnSuccess":{},"OnFailure":{}}}`),
+		},
+		TypeName: ptr.Of("AWS::Lambda::EventInvokeConfig"),
+	}, nil)
+
+	result, err := client.ReadResource(context.Background(), &resource.ReadRequest{
+		ResourceType: "AWS::Lambda::EventInvokeConfig",
+		NativeID:     "fn|$LATEST",
+	})
+	require.NoError(t, err)
+	require.NotContains(t, string(result.Properties), "DestinationConfig",
+		"empty provider-injected DestinationConfig must be stripped on read")
+	require.Contains(t, string(result.Properties), "MaximumRetryAttempts",
+		"real properties must be preserved")
+}
+
+func TestReadResource_PreservesRealEventInvokeDestination(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	// A genuine user-set destination must survive the strip; only the empty
+	// sibling (OnSuccess:{}) should be removed.
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of("fn|$LATEST"),
+			Properties: ptr.Of(`{"FunctionName":"fn","DestinationConfig":{"OnFailure":{"Destination":"arn:aws:sqs:us-east-1:123456789012:dlq"},"OnSuccess":{}}}`),
+		},
+		TypeName: ptr.Of("AWS::Lambda::EventInvokeConfig"),
+	}, nil)
+
+	result, err := client.ReadResource(context.Background(), &resource.ReadRequest{
+		ResourceType: "AWS::Lambda::EventInvokeConfig",
+		NativeID:     "fn|$LATEST",
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(result.Properties), "arn:aws:sqs:us-east-1:123456789012:dlq",
+		"a genuine user-set destination must be preserved")
+	require.NotContains(t, string(result.Properties), "OnSuccess",
+		"the empty OnSuccess sibling should be stripped")
+}

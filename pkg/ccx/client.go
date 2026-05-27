@@ -326,6 +326,17 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 		return nil, fmt.Errorf("failed to strip ignored fields: %w", err)
 	}
 
+	// CloudControl injects DestinationConfig:{OnFailure:{},OnSuccess:{}} into
+	// every AWS::Lambda::EventInvokeConfig read, even when the caller never set
+	// it. AWS requires Destination inside OnFailure/OnSuccess, so an empty {}
+	// carries no information; absorbing it makes formae's required-field
+	// validation spuriously reject a valid resource. Strip the empty
+	// sub-objects (and DestinationConfig if it ends up empty); genuine
+	// user-set destinations are non-empty and pass through untouched.
+	if request.ResourceType == "AWS::Lambda::EventInvokeConfig" {
+		stripEmptyCollectionsFromMap(propsMap)
+	}
+
 	transformedProps, err := json.Marshal(propsMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal transformed properties: %w", err)
