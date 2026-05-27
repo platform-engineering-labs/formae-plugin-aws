@@ -3,16 +3,16 @@
  *
  * SPDX-License-Identifier: FSL-1.1-ALv2
  *
- * RFC-0043 runtimeDependency validation case.
+ * runtimeDependency destroy-ordering validation case.
  *
- * Exercises the destroy-order race the RFC is designed to fix: an ECS
- * TaskDefinition with an EFSVolumeConfiguration referencing an EFS FileSystem,
- * where the FileSystem also has MountTargets. Without `edgeKind = "runtimeDependency"`,
- * the destroy DAG has no edge from TaskDef to the MountTargets — the engine
- * may attempt to delete the FileSystem while MountTargets still hold it open,
- * stranding both. With the RFC-0043 annotation in place, the engine inserts
- * TaskDef → MountTarget edges into the destroy DAG so MountTargets are
- * destroyed before the FileSystem.
+ * Exercises the destroy-order race the runtimeDependency edge is designed to
+ * fix: an ECS TaskDefinition with an EFSVolumeConfiguration referencing an EFS
+ * FileSystem, where the FileSystem also has MountTargets. Without
+ * `edgeKind = "runtimeDependency"`, the destroy DAG has no edge from TaskDef to
+ * the MountTargets — the engine may attempt to delete the FileSystem while
+ * MountTargets still hold it open, stranding both. With the runtimeDependency
+ * annotation in place, the engine inserts TaskDef → MountTarget edges into the
+ * destroy DAG so MountTargets are destroyed before the FileSystem.
  *
  * Intended for one-off pre-merge validation via debug-conformance.yml.
  * Permanent regression coverage should live in the formae e2e suite once
@@ -33,11 +33,11 @@ import "@aws/ecs/ecscluster.pkl"
 import "@aws/ecs/taskdefinition.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
-local stackName = "plugin-sdk-test-rfc0043-runtimedep-\(testRunID)"
+local stackName = "plugin-sdk-test-efs-mount-order-\(testRunID)"
 
 // VPC dependency
 local testVpc = new vpc.VPC {
-  label = "test-vpc-for-rfc0043"
+  label = "test-vpc-for-efs-mount-order"
   cidrBlock = "10.243.0.0/16"
   enableDnsSupport = true
 }
@@ -46,14 +46,14 @@ local testVpc = new vpc.VPC {
 // AZ within the file system. Two MountTargets are required for the race to
 // manifest — a single child does not exercise the multi-child propagation.
 local testSubnetA = new subnet.Subnet {
-  label = "test-subnet-a-for-rfc0043"
+  label = "test-subnet-a-for-efs-mount-order"
   vpcId = testVpc.res.vpcId
   cidrBlock = "10.243.1.0/24"
   availabilityZone = "us-east-1a"
 }
 
 local testSubnetB = new subnet.Subnet {
-  label = "test-subnet-b-for-rfc0043"
+  label = "test-subnet-b-for-efs-mount-order"
   vpcId = testVpc.res.vpcId
   cidrBlock = "10.243.2.0/24"
   availabilityZone = "us-east-1b"
@@ -61,15 +61,15 @@ local testSubnetB = new subnet.Subnet {
 
 // Security Group dependency
 local testSg = new securitygroup.SecurityGroup {
-  label = "test-sg-for-rfc0043"
-  groupDescription = "Security group for RFC-0043 runtimeDependency test"
-  groupName = "formae-sdk-test-rfc0043-sg-\(testRunID)"
+  label = "test-sg-for-efs-mount-order"
+  groupDescription = "Security group for the runtimeDependency destroy-order test"
+  groupName = "formae-sdk-test-efs-mt-sg-\(testRunID)"
   vpcId = testVpc.res.vpcId
 }
 
 // FileSystem — the resource targeted by the TaskDef's runtimeDependency.
 local testFs = new filesystem.FileSystem {
-  label = "test-fs-for-rfc0043"
+  label = "test-fs-for-efs-mount-order"
   encrypted = true
   performanceMode = "generalPurpose"
   throughputMode = "bursting"
@@ -77,8 +77,8 @@ local testFs = new filesystem.FileSystem {
 
 // ECS Cluster — TaskDef's containing cluster.
 local testCluster = new ecscluster.Cluster {
-  label = "test-cluster-for-rfc0043"
-  clusterName = "formae-sdk-test-rfc0043-cluster-\(testRunID)"
+  label = "test-cluster-for-efs-mount-order"
+  clusterName = "formae-sdk-test-efs-mt-cluster-\(testRunID)"
   clusterSettings {
     new {
       name = "containerInsights"
@@ -90,10 +90,10 @@ local testCluster = new ecscluster.Cluster {
 // TaskDefinition with an EFSVolumeConfiguration referencing testFs.
 // The container mounts the volume so the EFS reference is "active" — this
 // is what gives the destroy DAG a meaningful runtime edge to the FileSystem
-// (and, with RFC-0043 propagation, to its child MountTargets).
+// (and, with runtimeDependency propagation, to its child MountTargets).
 local testTaskDef = new taskdefinition.TaskDefinition {
-  label = "plugin-sdk-test-rfc0043-taskdef"
-  family = "formae-sdk-test-rfc0043-td-\(testRunID)"
+  label = "plugin-sdk-test-efs-mount-order-taskdef"
+  family = "formae-sdk-test-efs-mt-td-\(testRunID)"
   requiresCompatibilities {
     "FARGATE"
   }
@@ -154,7 +154,7 @@ local testTaskDef = new taskdefinition.TaskDefinition {
 forma {
   new formae.Stack {
     label = stackName
-    description = "Plugin SDK test for RFC-0043 runtimeDependency destroy ordering"
+    description = "Plugin SDK test for runtimeDependency destroy ordering"
   }
 
   new formae.Target {
@@ -173,7 +173,7 @@ forma {
 
   // Two MountTargets — the multi-child shape that triggers the race.
   new mounttarget.MountTarget {
-    label = "plugin-sdk-test-rfc0043-mt-a"
+    label = "plugin-sdk-test-efs-mount-order-mt-a"
     fileSystemId = testFs.res.fileSystemId
     subnetId = testSubnetA.res.subnetId
     securityGroups {
@@ -182,7 +182,7 @@ forma {
   }
 
   new mounttarget.MountTarget {
-    label = "plugin-sdk-test-rfc0043-mt-b"
+    label = "plugin-sdk-test-efs-mount-order-mt-b"
     fileSystemId = testFs.res.fileSystemId
     subnetId = testSubnetB.res.subnetId
     securityGroups {

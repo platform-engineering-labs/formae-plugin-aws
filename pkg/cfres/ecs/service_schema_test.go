@@ -8,7 +8,7 @@ package ecs
 
 // TestService_Schema_AttachesToAnnotations is a textual smoke test that verifies
 // the two targetGroupArn fields on AWS::ECS::Service carry the attachesTo edge
-// annotation (RFC-0043: @aws.FieldHint { edgeKind = "attachesTo" }) in the PKL
+// annotation (@aws.FieldHint { edgeKind = "attachesTo" }) in the PKL
 // schema source. This guards against a future refactor accidentally removing
 // the annotation and silently breaking the AttachesTo-based destroy ordering
 // that ECS load-balancer and VPC Lattice wiring depends on.

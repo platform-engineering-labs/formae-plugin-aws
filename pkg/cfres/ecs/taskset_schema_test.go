@@ -8,7 +8,7 @@ package ecs
 
 // TestTaskSet_Schema_AttachesToAnnotations is a textual smoke test that verifies
 // the targetGroupArn field on AWS::ECS::TaskSet's LoadBalancer carries the
-// attachesTo edge annotation (RFC-0043: @aws.FieldHint { edgeKind = "attachesTo" })
+// attachesTo edge annotation (@aws.FieldHint { edgeKind = "attachesTo" })
 // in the PKL schema source. TaskSet uses the same load balancer wiring as
 // AWS::ECS::Service, so it must mirror the same reachability semantics.
 // Without this annotation the AttachesTo-based destroy ordering for TaskSet
