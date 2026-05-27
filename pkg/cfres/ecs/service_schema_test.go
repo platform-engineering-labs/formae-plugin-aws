@@ -7,10 +7,11 @@
 package ecs
 
 // TestService_Schema_AttachesToAnnotations is a textual smoke test that verifies
-// the two targetGroupArn fields on AWS::ECS::Service carry @aws.FieldHint{attachesTo = true}
-// in the PKL schema source. This guards against a future refactor accidentally
-// removing the annotation and silently breaking the AttachesTo-based destroy
-// ordering that ECS load-balancer and VPC Lattice wiring depends on.
+// the two targetGroupArn fields on AWS::ECS::Service carry the attachesTo edge
+// annotation (@aws.FieldHint { edgeKind = "attachesTo" }) in the PKL
+// schema source. This guards against a future refactor accidentally removing
+// the annotation and silently breaking the AttachesTo-based destroy ordering
+// that ECS load-balancer and VPC Lattice wiring depends on.
 //
 // This is intentionally a textual test rather than a full schema-emission test:
 // running ExtractSchema in a unit test requires a live pkl CLI subprocess and
@@ -75,8 +76,8 @@ func TestService_Schema_LoadBalancer_TargetGroupArn_AttachesTo(t *testing.T) {
 				t.Fatal("targetGroupArn is the first line of LoadBalancer body — no preceding annotation line")
 			}
 			prev := strings.TrimSpace(lines[i-1])
-			if !strings.Contains(prev, "attachesTo") || !strings.Contains(prev, "true") {
-				t.Errorf("LoadBalancer.targetGroupArn: expected @aws.FieldHint{attachesTo = true} on preceding line, got %q", prev)
+			if !strings.Contains(prev, "edgeKind") || !strings.Contains(prev, "attachesTo") {
+				t.Errorf("LoadBalancer.targetGroupArn: expected @aws.FieldHint { edgeKind = \"attachesTo\" } on preceding line, got %q", prev)
 			}
 			return
 		}
@@ -102,8 +103,8 @@ func TestService_Schema_VpcLatticeConfiguration_TargetGroupArn_AttachesTo(t *tes
 				t.Fatal("targetGroupArn is the first line of VpcLatticeConfiguration body — no preceding annotation line")
 			}
 			prev := strings.TrimSpace(lines[i-1])
-			if !strings.Contains(prev, "attachesTo") || !strings.Contains(prev, "true") {
-				t.Errorf("VpcLatticeConfiguration.targetGroupArn: expected @aws.FieldHint{attachesTo = true} on preceding line, got %q", prev)
+			if !strings.Contains(prev, "edgeKind") || !strings.Contains(prev, "attachesTo") {
+				t.Errorf("VpcLatticeConfiguration.targetGroupArn: expected @aws.FieldHint { edgeKind = \"attachesTo\" } on preceding line, got %q", prev)
 			}
 			return
 		}

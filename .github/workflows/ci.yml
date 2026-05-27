@@ -62,13 +62,9 @@ jobs:
   # Integration tests run against real AWS resources (Route53, EC2, etc.)
   # These are self-contained: each test creates and cleans up its own resources.
   test-integration:
-    # Shared with formae's e2e-tests workflow, which runs aws-nuke against
-    # the same AWS account. Without this group, aws-nuke can delete
-    # hosted zones mid-test. Until the cloud-account tests are made
-    # parallel-safe, serialize across all three workflows.
-    concurrency:
-      group: cloud-e2e-tests
-      cancel-in-progress: false
+    # Isolation from formae-e2e's aws-nuke is enforced in the nuke config
+    # (region split + global allowlist), not via concurrency — GitHub
+    # concurrency groups are per-repo and cannot serialize across repos.
     needs: [checks]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

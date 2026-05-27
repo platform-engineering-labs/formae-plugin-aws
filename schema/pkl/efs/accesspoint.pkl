@@ -51,6 +51,11 @@ open class AccessPointResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "AccessPointId"
+    parent = "AWS::EFS::FileSystem"
+    parentRefs = new formae.ParentRef {
+        parentProperty = "FileSystemId"
+        childProperty = "FileSystemId"
+    }
 }
 open class AccessPoint extends formae.Resource {
 

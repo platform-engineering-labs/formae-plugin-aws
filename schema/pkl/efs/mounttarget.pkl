@@ -31,6 +31,10 @@ open class MountTargetResolvable extends formae.Resolvable {
     type = module.type
     identifier = "Id"
     parent = "AWS::EFS::FileSystem"
+    parentRefs = new formae.ParentRef {
+        parentProperty = "FileSystemId"
+        childProperty = "FileSystemId"
+    }
     listParam = new formae.ListProperty {
         parentProperty = "FileSystemId"
         listParameter = "FileSystemId"
