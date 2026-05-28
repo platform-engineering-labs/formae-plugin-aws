@@ -306,7 +306,14 @@ forma {
       new service.LoadBalancer {
         containerName = "test-container"
         containerPort = 80
-        targetGroupArn = appTg.res.targetGroupArn
+        // Route the TG ref through the ListenerRule's resolvable so formae's
+        // DAG orders Service create AFTER the rule attaches the TG to the
+        // ALB. Same pattern as the default-action variant in
+        // ecs-service-with-lb.pkl (which uses `listener.res.targetGroupArn`).
+        // Without this indirection, the Service races the rule and AWS
+        // rejects with "target group does not have an associated load
+        // balancer."
+        targetGroupArn = apiRule.res.targetGroupArn
       }
     }
     healthCheckGracePeriodSeconds = 60

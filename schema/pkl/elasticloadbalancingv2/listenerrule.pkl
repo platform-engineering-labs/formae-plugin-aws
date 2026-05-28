@@ -137,6 +137,36 @@ open class TargetGroupTuple extends formae.SubResource {
     weight: Int?
 }
 
+open class ListenerRuleResolvable extends formae.Resolvable {
+    local _self = this
+    hidden type = module.type
+
+    hidden id: ListenerRuleResolvable = (this) {
+        property = "RuleArn"
+    }
+
+    hidden arn: ListenerRuleResolvable = (this) {
+        property = "RuleArn"
+    }
+
+    hidden ruleArn: ListenerRuleResolvable = (this) {
+        property = "RuleArn"
+    }
+
+    /// ARN of the target group attached to the listener via this rule's
+    /// first forward action. Prefer this over `tg.res.targetGroupArn` when a
+    /// downstream resource (e.g. ECS::Service) needs the target group to
+    /// already be wired to the load balancer via a listener rule — AWS
+    /// rejects ECS service creation with "target group does not have an
+    /// associated load balancer" if the service is created before the rule
+    /// attaches the TG. Referencing through the rule creates the correct
+    /// create/destroy ordering (same pattern as `listener.res.targetGroupArn`
+    /// for default-action forwarding).
+    hidden targetGroupArn: ListenerRuleResolvable = (this) {
+        property = "Actions.0.TargetGroupArn"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "RuleArn"
@@ -160,4 +190,11 @@ open class ListenerRule extends formae.Resource {
 
     @aws.FieldHint
     priority: Int
+
+    hidden parent = this
+
+    hidden res: ListenerRuleResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
