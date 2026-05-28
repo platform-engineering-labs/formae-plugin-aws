@@ -121,12 +121,12 @@ jobs:
     strategy:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
-      # VPC quota in the test account is 5; match the quota exactly.
-      # The original max-parallel=10 worked when on_retry_command was
-      # cascading failures across the matrix (cleanup race). With the
-      # retry wrapper dropped and orphan-VPC cleanup hardened, 5 is the
-      # right cap. Will bump to 10 once the AWS quota is raised to 20+.
-      max-parallel: 5
+      # us-east-1 VPC quota was raised to 30, and the aws-nuke isolation
+      # (region-split into us-west-*) means all of that headroom is the
+      # conformance suite's. EIPs remain at the default 5 but only a
+      # couple of fixtures consume them, so EIP/NAT contention stays
+      # comfortable at this level.
+      max-parallel: 10
       fail-fast: false
     permissions:
       id-token: write
