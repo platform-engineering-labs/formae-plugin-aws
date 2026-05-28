@@ -17,10 +17,10 @@ on:
         description: |
           Formae version baked into the binary via -ldflags (also propagated
           to plugins as FORMAE_VERSION; plugins use it to resolve their PKL
-          formae schema dep). Defaults to the latest stable tag on the formae
-          branch. Set this explicitly when testing pre-release schema
-          additions (e.g. `0.86.0` while only `0.85.2` is tagged) so plugins
-          fetch the pre-published formae@<version> from S3.
+          formae schema dep). Defaults to the canonical X.Y.Z derived from
+          the latest tag on the formae branch — including dev tags, so a
+          newly tagged 0.86.0-dev.N is picked up automatically. Set this
+          explicitly only when overriding the auto-detected version.
         required: false
         default: ""
         type: string
@@ -154,18 +154,22 @@ jobs:
           cd /tmp/formae
           git fetch --tags
           # The version baked via -ldflags becomes formae.Version at runtime
-          # and is propagated to plugins as FORMAE_VERSION. Plugins use that
+          # and is propagated to plugins as FORMAE_VERSION. Plugins use it
           # to resolve their formae PKL dep against
-          # `package://...formae@<version>` on S3, so when the formae branch
-          # adds a schema field that the latest stable tag doesn't have
-          # (e.g. RFC-0043's `edgeKind` not in 0.85.2), the auto-detected
-          # tag would point plugins at the wrong schema. Allow callers to
-          # override via the formae_version input; default to the latest
-          # stable tag for the common case.
+          # `package://...formae@<version>` on S3, so it must match a
+          # schema that's been published. The nightly's purpose is to
+          # validate plugin main against formae main, so we pick the
+          # latest tag on main — including dev tags — since that
+          # represents the most recent published schema. The canonical
+          # X.Y.Z is stripped from any -dev.N suffix to match how
+          # formae's own release Makefile publishes schemas (a
+          # 0.86.0-dev.N release publishes schema at formae@0.86.0).
+          # An explicit formae_version input overrides this.
           VERSION="${{ inputs.formae_version }}"
           if [ -z "$VERSION" ]; then
-            VERSION=$(git tag -l "[0-9]*" --sort=-version:refname | grep -v -- '-' | head -1)
-            echo "No formae_version input; using latest stable tag: ${VERSION}"
+            LATEST_TAG=$(git tag -l "[0-9]*" --sort=-version:refname | head -1)
+            VERSION=$(echo "$LATEST_TAG" | cut -d'-' -f1)
+            echo "No formae_version input; latest tag=${LATEST_TAG}, using canonical VERSION=${VERSION}"
           else
             echo "Using formae_version input: ${VERSION}"
           fi
