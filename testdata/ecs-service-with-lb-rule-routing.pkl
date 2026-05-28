@@ -1,0 +1,318 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/route.pkl"
+import "@aws/ec2/subnetroutetableassociation.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ec2/securitygroupingress.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/elasticloadbalancingv2/targetgroup.pkl"
+import "@aws/elasticloadbalancingv2/listener.pkl"
+import "@aws/elasticloadbalancingv2/listenerrule.pkl"
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+import "@aws/ecs/service.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-svc-lb-rule-\(testRunID)"
+
+// VPC + multi-AZ Subnets for FARGATE awsvpc networking + ALB (ALB requires
+// at least two subnets in different AZs).
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-ecs-svc-lb-rule"
+  cidrBlock = "10.232.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnetA = new subnet.Subnet {
+  label = "test-subnet-a-for-ecs-svc-lb-rule"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnetB = new subnet.Subnet {
+  label = "test-subnet-b-for-ecs-svc-lb-rule"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+// Internet routing: IGW + VPCGatewayAttachment + RouteTable + default Route +
+// per-subnet associations. FARGATE tasks need a public-IP egress path to pull
+// container images from Docker Hub / ECR Public (no NAT in this fixture, so
+// the service uses assignPublicIp=ENABLED below).
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-ecs-svc-lb-rule"
+}
+
+local testIgwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-igw-attachment-for-ecs-svc-lb-rule"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = testIgw.res.internetGatewayId
+}
+
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-ecs-svc-lb-rule"
+  vpcId = testVpc.res.vpcId
+}
+
+local testDefaultRoute = new route.Route {
+  label = "test-default-route-for-ecs-svc-lb-rule"
+  routeTableId = testRouteTable.res.routeTableId
+  destinationCidrBlock = "0.0.0.0/0"
+  gatewayId = testIgw.res.internetGatewayId
+}
+
+local testSubnetAAssoc = new subnetroutetableassociation.SubnetRouteTableAssociation {
+  label = "test-subnet-a-rtassoc-for-ecs-svc-lb-rule"
+  subnetId = testSubnetA.res.subnetId
+  routeTableId = testRouteTable.res.routeTableId
+}
+
+local testSubnetBAssoc = new subnetroutetableassociation.SubnetRouteTableAssociation {
+  label = "test-subnet-b-rtassoc-for-ecs-svc-lb-rule"
+  subnetId = testSubnetB.res.subnetId
+  routeTableId = testRouteTable.res.routeTableId
+}
+
+// ALB security group + inbound :80 from anywhere.
+local albSG = new securitygroup.SecurityGroup {
+  label = "test-alb-sg-for-ecs-svc-lb-rule"
+  groupDescription = "Allow HTTP to internal ALB for ECS Service rule-routing conformance test"
+  groupName = "formae-sdk-test-alb-sg-rule-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+local albIngress = new securitygroupingress.SecurityGroupIngress {
+  label = "test-alb-sg-ingress-for-ecs-svc-lb-rule"
+  groupId = albSG.res.groupId
+  ipProtocol = "tcp"
+  fromPort = 80
+  toPort = 80
+  cidrIp = "0.0.0.0/0"
+}
+
+// Tasks security group + inbound :80 from the ALB SG.
+local tasksSG = new securitygroup.SecurityGroup {
+  label = "test-tasks-sg-for-ecs-svc-lb-rule"
+  groupDescription = "Allow HTTP from ALB to ECS tasks for rule-routing conformance test"
+  groupName = "formae-sdk-test-tasks-sg-rule-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+local tasksIngress = new securitygroupingress.SecurityGroupIngress {
+  label = "test-tasks-sg-ingress-for-ecs-svc-lb-rule"
+  groupId = tasksSG.res.groupId
+  ipProtocol = "tcp"
+  fromPort = 80
+  toPort = 80
+  sourceSecurityGroupId = albSG.res.groupId
+}
+
+// Internal ALB across the two subnets.
+local testALB = new loadbalancer.LoadBalancer {
+  label = "test-alb-for-ecs-svc-rule"
+  name = "formae-sdk-test-alb-rule-\(testRunID)"
+  scheme = "internal"
+  type = "application"
+  subnets {
+    testSubnetA.res.subnetId
+    testSubnetB.res.subnetId
+  }
+  securityGroups {
+    albSG.res.groupId
+  }
+}
+
+// Target Group (target-type=ip for FARGATE awsvpc).
+local appTg = new targetgroup.TargetGroup {
+  label = "test-tg-for-ecs-svc-rule"
+  name = "formae-sdk-test-tg-rule-\(testRunID)"
+  port = 80
+  protocol = "HTTP"
+  targetType = "ip"
+  vpcId = testVpc.res.vpcId
+}
+
+// Listener on :80 with a fixed-response 404 default action.
+// The ECS Service still registers with the TG, but the TG is only reachable
+// via the ListenerRule below — not via the default action. This means
+// composeEndpoints (v1) will classify the TG as having no HTTP(S)
+// forward-action on the default listener action, so Endpoints will be empty.
+local appListener = new listener.Listener {
+  label = "lb-rule-listener"
+  loadBalancerArn = testALB.res.loadBalancerArn
+  port = 80
+  protocol = "HTTP"
+  defaultActions = new Listing {
+    new listener.Action {
+      type = "fixed-response"
+      fixedResponseConfig = new listener.FixedResponseConfig {
+        statusCode = "404"
+        contentType = "text/plain"
+        messageBody = "Not Found"
+      }
+    }
+  }
+}
+
+// ListenerRule forwarding /api/* to the TG.
+local apiRule = new listenerrule.ListenerRule {
+  label = "lb-api-rule"
+  listenerArn = appListener.res.listenerArn
+  priority = 10
+  conditions = new Listing {
+    new listenerrule.Condition {
+      field = "path-pattern"
+      pathPatternConfig = new listenerrule.PathPatternConfig {
+        values = new Listing { "/api/*" }
+      }
+    }
+  }
+  actions = new Listing {
+    new listenerrule.Action {
+      type = "forward"
+      targetGroupArn = appTg.res.targetGroupArn
+    }
+  }
+}
+
+// ECS Cluster.
+local testCluster = new ecscluster.Cluster {
+  label = "test-cluster-for-ecs-svc-lb-rule"
+  clusterName = "formae-sdk-test-svc-lb-rule-cluster-\(testRunID)"
+  clusterSettings {
+    new {
+      name = "containerInsights"
+      value = "disabled"
+    }
+  }
+}
+
+// ECS TaskDefinition (FARGATE, awsvpc, nginx:latest on port 80).
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "test-taskdef-for-ecs-svc-lb-rule"
+  family = "formae-sdk-test-svc-lb-rule-taskdef-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "256"
+  memory = "512"
+  containerDefinitions {
+    new {
+      name = "test-container"
+      image = "nginx:latest"
+      essential = true
+      portMappings {
+        new {
+          containerPort = 80
+          protocol = "tcp"
+        }
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ECS Service with rule-routed ALB (default action is fixed-response 404)"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Network plumbing.
+  testVpc
+  testSubnetA
+  testSubnetB
+
+  // Internet routing so FARGATE tasks can pull container images.
+  testIgw
+  testIgwAttachment
+  testRouteTable
+  testDefaultRoute
+  testSubnetAAssoc
+  testSubnetBAssoc
+
+  // Security groups (declared before the ALB & service that consume them).
+  albSG
+  albIngress
+  tasksSG
+  tasksIngress
+
+  // Load balancer, target group, listener (fixed-response default action),
+  // and rule forwarding /api/* to the TG.
+  testALB
+  appTg
+  appListener
+  apiRule
+
+  // ECS plumbing.
+  testCluster
+  testTaskDef
+
+  // ECS Service under test -- registers with the TG so Phase B health gate
+  // is exercised. The listener's default action is fixed-response so
+  // composeEndpoints (v1) will leave Endpoints empty for this service.
+  //
+  // assignPublicIp=ENABLED is required: there is no NAT gateway in this
+  // fixture, so tasks reach the public internet (Docker Hub / ECR Public)
+  // via the IGW + default route + public IPs on their ENIs.
+  new service.Service {
+    label = "plugin-sdk-test-ecs-service-with-lb-rule"
+    serviceName = "formae-sdk-test-svc-lb-rule-\(testRunID)"
+    cluster = testCluster.res.arn
+    taskDefinition = new formae.Resolvable {
+      label = testTaskDef.label
+      type = "AWS::ECS::TaskDefinition"
+      property = "TaskDefinitionArn"
+    }
+    desiredCount = 1
+    schedulingStrategy = "REPLICA"
+    launchType = "FARGATE"
+    networkConfiguration = new service.NetworkConfiguration {
+      awsvpcConfiguration = new service.AwsVpcConfiguration {
+        assignPublicIp = "ENABLED"
+        subnets {
+          testSubnetA.res.subnetId
+          testSubnetB.res.subnetId
+        }
+        securityGroups {
+          tasksSG.res.groupId
+        }
+      }
+    }
+    loadBalancers {
+      new service.LoadBalancer {
+        containerName = "test-container"
+        containerPort = 80
+        targetGroupArn = appTg.res.targetGroupArn
+      }
+    }
+    healthCheckGracePeriodSeconds = 60
+    deploymentConfiguration = new service.DeploymentConfiguration {
+      maximumPercent = 200
+      minimumHealthyPercent = 100
+    }
+  }
+}

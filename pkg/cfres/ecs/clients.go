@@ -30,9 +30,13 @@ type ecsClient interface {
 	DescribeServices(ctx context.Context, params *awsecs.DescribeServicesInput, optFns ...func(*awsecs.Options)) (*awsecs.DescribeServicesOutput, error)
 }
 
-// elbv2Client is the surface of the AWS ELBv2 SDK used by the Service provisioner for target-health checks.
+// elbv2Client is the surface of the AWS ELBv2 SDK used by the Service provisioner
+// for target-health checks and endpoint composition.
 type elbv2Client interface {
 	DescribeTargetHealth(ctx context.Context, params *awselbv2.DescribeTargetHealthInput, optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeTargetHealthOutput, error)
+	DescribeTargetGroups(ctx context.Context, params *awselbv2.DescribeTargetGroupsInput, optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeTargetGroupsOutput, error)
+	DescribeLoadBalancers(ctx context.Context, params *awselbv2.DescribeLoadBalancersInput, optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeLoadBalancersOutput, error)
+	DescribeListeners(ctx context.Context, params *awselbv2.DescribeListenersInput, optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeListenersOutput, error)
 }
 
 func defaultCCXClientFactory(cfg *config.Config) (ccxClient, error) {

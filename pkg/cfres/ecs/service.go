@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -112,32 +113,78 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 		return nil, fmt.Errorf("parsing Service properties: %w", err)
 	}
 
-	cluster, _ := props["Cluster"].(string)
-	if cluster == "" || strings.HasPrefix(cluster, "arn:") {
-		return result, nil
+	// Cluster ARN re-inflation (legacy behavior).
+	if cluster, ok := props["Cluster"].(string); ok && cluster != "" && !strings.HasPrefix(cluster, "arn:") {
+		serviceArn, _ := props["ServiceArn"].(string)
+		partition, region, account, parsed := parseEcsArn(serviceArn)
+		if !parsed {
+			slog.Debug("AWS::ECS::Service Read: skipping Cluster ARN re-inflation, ServiceArn unparseable",
+				"cluster", cluster, "serviceArn", serviceArn, "nativeID", request.NativeID)
+		} else {
+			props["Cluster"] = fmt.Sprintf("arn:%s:ecs:%s:%s:cluster/%s", partition, region, account, cluster)
+		}
 	}
 
-	// Derive region + account from ServiceArn (format:
-	// arn:<partition>:ecs:<region>:<account>:service/<cluster>/<service>).
-	// If ServiceArn is missing or malformed we can't safely reconstruct the
-	// ARN — leave the short name in place and log enough to find it later.
-	serviceArn, _ := props["ServiceArn"].(string)
-	partition, region, account, ok := parseEcsArn(serviceArn)
-	if !ok {
-		slog.Debug("AWS::ECS::Service Read: skipping Cluster ARN re-inflation, ServiceArn unparseable",
-			"cluster", cluster, "serviceArn", serviceArn, "nativeID", request.NativeID)
-		return result, nil
+	// Endpoint composition: derive `Endpoints` from `LoadBalancers[]`.
+	if s.elbv2ClientFactory != nil {
+		lbs := decodeLoadBalancersFromProps(props)
+		elb, err := s.elbv2ClientFactory(s.cfg)
+		if err != nil {
+			return nil, fmt.Errorf("building ELBv2 client for endpoint composition: %w", err)
+		}
+		composed := composeEndpoints(ctx, lbs, elb, slog.Default())
+		if composed.TransientError != nil {
+			// Surface as a recoverable plugin error so ResolveCache and the
+			// sync loop retry the Plugin Read. Do not return partial
+			// Endpoints data — preserve last-known-good in persisted state.
+			return &resource.ReadResult{
+				ResourceType: result.ResourceType,
+				ErrorCode:    resource.OperationErrorCodeThrottling,
+			}, nil
+		}
+		props["Endpoints"] = composed.Endpoints
 	}
-	props["Cluster"] = fmt.Sprintf("arn:%s:ecs:%s:%s:cluster/%s", partition, region, account, cluster)
 
 	out, err := json.Marshal(props)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling re-inflated Service properties: %w", err)
+		return nil, fmt.Errorf("marshaling Service properties: %w", err)
 	}
 	return &resource.ReadResult{
 		ResourceType: result.ResourceType,
 		Properties:   string(out),
 	}, nil
+}
+
+// decodeLoadBalancersFromProps converts the JSON-shaped LoadBalancers field
+// from the CCAPI Read response into the ECS SDK LoadBalancer type for use
+// with composeEndpoints. Returns nil if the field is missing or malformed.
+func decodeLoadBalancersFromProps(props map[string]any) []ecstypes.LoadBalancer {
+	raw, ok := props["LoadBalancers"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]ecstypes.LoadBalancer, 0, len(raw))
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		entry := ecstypes.LoadBalancer{}
+		if v, ok := m["ContainerName"].(string); ok && v != "" {
+			vc := v
+			entry.ContainerName = &vc
+		}
+		if v, ok := m["ContainerPort"].(float64); ok {
+			vi := int32(v)
+			entry.ContainerPort = &vi
+		}
+		if v, ok := m["TargetGroupArn"].(string); ok && v != "" {
+			vc := v
+			entry.TargetGroupArn = &vc
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // parseEcsArn splits any ECS ARN (cluster, service, task-set, ...) into its
