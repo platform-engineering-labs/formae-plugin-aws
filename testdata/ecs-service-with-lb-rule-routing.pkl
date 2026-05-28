@@ -126,7 +126,11 @@ local tasksIngress = new securitygroupingress.SecurityGroupIngress {
 // Internal ALB across the two subnets.
 local testALB = new loadbalancer.LoadBalancer {
   label = "test-alb-for-ecs-svc-rule"
-  name = "formae-sdk-test-alb-rule-\(testRunID)"
+  // AWS ALB name max length is 32 characters. Prefix "formae-sdk-test-alb-r-"
+  // (22 chars) + 8-char run UUID = 30 chars. Keep this trimmed; longer
+  // suffixes like "alb-rule-" push past the limit and CCAPI rejects with
+  // ValidationException in ~20s.
+  name = "formae-sdk-test-alb-r-\(testRunID)"
   scheme = "internal"
   type = "application"
   subnets {
