@@ -199,6 +199,40 @@ open class VpcLatticeConfiguration extends formae.SubResource {
     targetGroupArn: String|formae.Resolvable
 }
 
+/// Resolvable accessor for AWS::ECS::Service. Use via `service.res.<property>`.
+open class ServiceResolvable extends formae.Resolvable {
+    local _self = this
+
+    hidden type = module.type
+
+    hidden id: ServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
+
+    hidden arn: ServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
+
+    hidden serviceArn: ServiceResolvable = (this) {
+        property = "ServiceArn"
+    }
+
+    /// LB-attached endpoints discovered from this service's `loadBalancers[]`.
+    /// Use at() to access individual endpoints by `containerName:containerPort`:
+    ///   service.res.endpoints.at("grafana:3000")
+    /// Resolves only after the Service reaches Success (deployment stable +
+    /// TG health + endpoint composition). For services without LB attachments
+    /// or with unsupported topologies (listener rules, NLB-only, multi-listener
+    /// ambiguity), specific keys may be absent — consumers fast-fail with
+    /// FailedToResolveValue. See the design doc for the full taxonomy.
+    hidden endpoints: formae.MappingResolvable = new formae.MappingResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = "Endpoints"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
@@ -297,4 +331,19 @@ open class Service extends formae.Resource {
     // CC is expected to return [] on Read here too. Annotated defensively.
     @aws.FieldHint{hasProviderDefault = true}
     vpcLatticeConfigurations: Listing<VpcLatticeConfiguration>?
+
+    /// LB-attached endpoints discovered from this service's load balancer
+    /// registrations, keyed by "containerName:containerPort"
+    /// (e.g. "grafana:3000"). Values are reachable URLs composed from the
+    /// fronting ALB's DNSName, listener protocol, and listener port. Computed
+    /// by formae-plugin-aws — do not set manually.
+    @aws.FieldHint{hasProviderDefault = true}
+    endpoints: Mapping<String, String>?
+
+    hidden parent = this
+
+    hidden res: ServiceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

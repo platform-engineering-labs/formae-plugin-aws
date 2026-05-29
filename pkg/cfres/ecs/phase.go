@@ -7,6 +7,7 @@ package ecs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -219,9 +220,24 @@ func (s *Service) finalSuccess(ctx context.Context, req *resource.StatusRequest,
 			return s.inProgressOrTimeout(op, req, unixStart,
 				"deployment stable; waiting for healthy targets: "+msg), nil
 		}
+
+		// Endpoint composition gate. Transient AWS errors here block Phase B
+		// Success on the next polling tick rather than fanning out to
+		// consumer fast-fail. Permanent failures (rule-routed, NLB-only,
+		// AccessDenied, etc.) populate missing keys in the map; consumers
+		// requesting those keys fast-fail with a clear diagnostic.
+		composed := composeEndpoints(ctx, svc.LoadBalancers, elbCli, slog.Default())
+		if composed.TransientError != nil {
+			return s.inProgressOrTimeout(op, req, unixStart,
+				"deployment stable; waiting for endpoint composition: "+composed.TransientError.Error()), nil
+		}
+		// composed.Endpoints is intentionally not threaded through here —
+		// the subsequent Read invocation re-derives the same map via
+		// readWithClient, and that becomes the authoritative copy. If we
+		// passed composed.Endpoints into the ProgressResult directly we'd
+		// risk inconsistency with the persisted state on the next sync Read.
 	}
 
-	// Build canonical NativeID.
 	canonical := buildCanonicalNativeID(aws.ToString(svc.ServiceArn),
 		deriveClusterShortName(req.NativeID, svc))
 	readResult, readErr := s.Read(ctx, &resource.ReadRequest{

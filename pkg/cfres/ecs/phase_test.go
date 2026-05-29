@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
 func TestCheckPhaseA_InProgress(t *testing.T) {
@@ -559,4 +560,233 @@ func TestStatusPhaseB_UpdateNoNewDeployment_PastGrace_NoopUpdate_Success(t *test
 	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus,
 		"no-op Update past grace with stable existing primary should report Success")
 	assert.Equal(t, resource.OperationUpdate, res.ProgressResult.Operation)
+}
+
+func TestStatusPhaseB_TransientComposeError_ReturnsInProgress(t *testing.T) {
+	ctx := context.Background()
+	mockECS := &mockECSClient{}
+	mockELB := &mockELBv2Client{}
+
+	tgArn := "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/tg/abc"
+
+	// Service is stable + TG healthy — passes existing Phase B gates.
+	now := time.Now()
+	mockECS.On("DescribeServices", ctx, mock.Anything).Return(&awsecs.DescribeServicesOutput{
+		Services: []ecstypes.Service{{
+			ServiceArn:   ptr("arn:aws:ecs:us-east-1:123:service/cluster1/svc1"),
+			ClusterArn:   ptr("arn:aws:ecs:us-east-1:123:cluster/cluster1"),
+			Status:       ptr("ACTIVE"),
+			DesiredCount: 1,
+			RunningCount: 1,
+			Deployments: []ecstypes.Deployment{
+				{
+					Status:       ptr("PRIMARY"),
+					RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+					CreatedAt:    &now,
+				},
+			},
+			LoadBalancers: []ecstypes.LoadBalancer{
+				{ContainerName: ptr("app"), ContainerPort: ptr(int32(443)), TargetGroupArn: ptr(tgArn)},
+			},
+		}},
+	}, nil)
+
+	// TG health passes.
+	mockELB.On("DescribeTargetHealth", ctx, mock.Anything).Return(&awselbv2.DescribeTargetHealthOutput{
+		TargetHealthDescriptions: []elbv2types.TargetHealthDescription{
+			{TargetHealth: &elbv2types.TargetHealth{State: elbv2types.TargetHealthStateEnumHealthy}},
+		},
+	}, nil)
+
+	// composeEndpoints' DescribeTargetGroups all 3 retries throttle.
+	mockELB.On("DescribeTargetGroups", ctx, mock.Anything).
+		Return((*awselbv2.DescribeTargetGroupsOutput)(nil), awsAPIErr("Throttling", "rate exceeded")).Times(3)
+
+	svc := &Service{
+		cfg:                nil,
+		ecsClientFactory:   func(_ *config.Config) (ecsClient, error) { return mockECS, nil },
+		elbv2ClientFactory: func(_ *config.Config) (elbv2Client, error) { return mockELB, nil },
+		now:                time.Now,
+		operationTimeout:   20 * time.Minute,
+		finalReadGrace:     2 * time.Minute,
+	}
+
+	result, _ := svc.statusPhaseB(ctx, &resource.StatusRequest{
+		NativeID:     "cluster1|svc1",
+		ResourceType: "AWS::ECS::Service",
+		RequestID:    "formae-ecs/create/1234567890/ccapi-tok",
+	}, resource.OperationCreate, time.Now().Unix(), "cluster1", "svc1")
+
+	assert.NotNil(t, result.ProgressResult)
+	assert.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"expected InProgress when composeEndpoints reports TransientError")
+}
+
+func TestStatusPhaseB_HappyPath_PopulatesEndpointsViaRead(t *testing.T) {
+	ctx := context.Background()
+	mockCCX := &mockCCXClient{}
+	mockECS := &mockECSClient{}
+	mockELB := &mockELBv2Client{}
+
+	tgArn := "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/tg/abc"
+	albArn := "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/a/1"
+	serviceArn := "arn:aws:ecs:us-east-1:123:service/cluster1/svc1"
+
+	mockECS.On("DescribeServices", ctx, mock.Anything).Return(&awsecs.DescribeServicesOutput{
+		Services: []ecstypes.Service{{
+			ServiceArn:   ptr(serviceArn),
+			ClusterArn:   ptr("arn:aws:ecs:us-east-1:123:cluster/cluster1"),
+			Status:       ptr("ACTIVE"),
+			DesiredCount: 1,
+			RunningCount: 1,
+			Deployments: []ecstypes.Deployment{{
+				Status:       ptr("PRIMARY"),
+				RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+			}},
+			LoadBalancers: []ecstypes.LoadBalancer{
+				{ContainerName: ptr("app"), ContainerPort: ptr(int32(443)), TargetGroupArn: ptr(tgArn)},
+			},
+		}},
+	}, nil)
+
+	mockELB.On("DescribeTargetHealth", ctx, mock.Anything).Return(&awselbv2.DescribeTargetHealthOutput{
+		TargetHealthDescriptions: []elbv2types.TargetHealthDescription{
+			{TargetHealth: &elbv2types.TargetHealth{State: elbv2types.TargetHealthStateEnumHealthy}},
+		},
+	}, nil)
+	mockELB.On("DescribeTargetGroups", ctx, mock.Anything).Return(&awselbv2.DescribeTargetGroupsOutput{
+		TargetGroups: []elbv2types.TargetGroup{{TargetGroupArn: ptr(tgArn), LoadBalancerArns: []string{albArn}}},
+	}, nil)
+	mockELB.On("DescribeLoadBalancers", ctx, mock.Anything).Return(&awselbv2.DescribeLoadBalancersOutput{
+		LoadBalancers: []elbv2types.LoadBalancer{
+			{LoadBalancerArn: ptr(albArn), DNSName: ptr("dns-1"), Type: elbv2types.LoadBalancerTypeEnumApplication},
+		},
+	}, nil)
+	mockELB.On("DescribeListeners", ctx, mock.Anything).Return(&awselbv2.DescribeListenersOutput{
+		Listeners: []elbv2types.Listener{{
+			ListenerArn:    ptr("l1"),
+			Port:           ptr(int32(443)),
+			Protocol:       elbv2types.ProtocolEnumHttps,
+			DefaultActions: []elbv2types.Action{{Type: elbv2types.ActionTypeEnumForward, TargetGroupArn: ptr(tgArn)}},
+		}},
+	}, nil)
+
+	// CCAPI Read returns the persisted service properties; the readWithClient
+	// post-processor (which uses elbv2ClientFactory) injects the Endpoints map.
+	mockCCX.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::ECS::Service",
+		Properties: `{
+			"ServiceArn": "` + serviceArn + `",
+			"Cluster": "arn:aws:ecs:us-east-1:123:cluster/cluster1",
+			"LoadBalancers": [{"ContainerName":"app","ContainerPort":443,"TargetGroupArn":"` + tgArn + `"}]
+		}`,
+	}, nil)
+
+	svc := &Service{
+		cfg:                nil,
+		ccxClientFactory:   func(_ *config.Config) (ccxClient, error) { return mockCCX, nil },
+		ecsClientFactory:   func(_ *config.Config) (ecsClient, error) { return mockECS, nil },
+		elbv2ClientFactory: func(_ *config.Config) (elbv2Client, error) { return mockELB, nil },
+		now:                time.Now,
+		operationTimeout:   20 * time.Minute,
+		finalReadGrace:     2 * time.Minute,
+	}
+
+	result, _ := svc.statusPhaseB(ctx, &resource.StatusRequest{
+		NativeID:     "cluster1|svc1",
+		ResourceType: "AWS::ECS::Service",
+		RequestID:    "formae-ecs/create/1234567890/ccapi-tok",
+	}, resource.OperationCreate, time.Now().Unix(), "cluster1", "svc1")
+
+	assert.NotNil(t, result.ProgressResult)
+	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	assert.Contains(t, string(result.ProgressResult.ResourceProperties), `"Endpoints":{"app:443":"https://dns-1:443"}`)
+}
+
+func TestStatusPhaseB_TransientClearsAcrossPolls(t *testing.T) {
+	ctx := context.Background()
+	mockCCX := &mockCCXClient{}
+	mockECS := &mockECSClient{}
+	mockELB := &mockELBv2Client{}
+
+	tgArn := "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/tg/abc"
+	albArn := "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/a/1"
+
+	mockECS.On("DescribeServices", ctx, mock.Anything).Return(&awsecs.DescribeServicesOutput{
+		Services: []ecstypes.Service{{
+			ServiceArn:   ptr("arn:aws:ecs:us-east-1:123:service/cluster1/svc1"),
+			ClusterArn:   ptr("arn:aws:ecs:us-east-1:123:cluster/cluster1"),
+			Status:       ptr("ACTIVE"),
+			DesiredCount: 1,
+			RunningCount: 1,
+			Deployments: []ecstypes.Deployment{{
+				Status:       ptr("PRIMARY"),
+				RolloutState: ecstypes.DeploymentRolloutStateCompleted,
+			}},
+			LoadBalancers: []ecstypes.LoadBalancer{
+				{ContainerName: ptr("app"), ContainerPort: ptr(int32(443)), TargetGroupArn: ptr(tgArn)},
+			},
+		}},
+	}, nil)
+	mockELB.On("DescribeTargetHealth", ctx, mock.Anything).Return(&awselbv2.DescribeTargetHealthOutput{
+		TargetHealthDescriptions: []elbv2types.TargetHealthDescription{
+			{TargetHealth: &elbv2types.TargetHealth{State: elbv2types.TargetHealthStateEnumHealthy}},
+		},
+	}, nil)
+
+	// First poll: DescribeTargetGroups throttles all 3 retries.
+	mockELB.On("DescribeTargetGroups", ctx, mock.Anything).
+		Return((*awselbv2.DescribeTargetGroupsOutput)(nil), awsAPIErr("Throttling", "rate exceeded")).Times(3)
+
+	// Second poll: success for both the endpoint-composition gate and the subsequent
+	// Read (readWithClient also calls composeEndpoints internally), so register twice.
+	mockELB.On("DescribeTargetGroups", ctx, mock.Anything).Return(&awselbv2.DescribeTargetGroupsOutput{
+		TargetGroups: []elbv2types.TargetGroup{{TargetGroupArn: ptr(tgArn), LoadBalancerArns: []string{albArn}}},
+	}, nil).Times(2)
+	mockELB.On("DescribeLoadBalancers", ctx, mock.Anything).Return(&awselbv2.DescribeLoadBalancersOutput{
+		LoadBalancers: []elbv2types.LoadBalancer{
+			{LoadBalancerArn: ptr(albArn), DNSName: ptr("dns-1"), Type: elbv2types.LoadBalancerTypeEnumApplication},
+		},
+	}, nil)
+	mockELB.On("DescribeListeners", ctx, mock.Anything).Return(&awselbv2.DescribeListenersOutput{
+		Listeners: []elbv2types.Listener{{
+			ListenerArn:    ptr("l1"),
+			Port:           ptr(int32(443)),
+			Protocol:       elbv2types.ProtocolEnumHttps,
+			DefaultActions: []elbv2types.Action{{Type: elbv2types.ActionTypeEnumForward, TargetGroupArn: ptr(tgArn)}},
+		}},
+	}, nil)
+	mockCCX.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::ECS::Service",
+		Properties: `{
+			"ServiceArn": "arn:aws:ecs:us-east-1:123:service/cluster1/svc1",
+			"Cluster": "arn:aws:ecs:us-east-1:123:cluster/cluster1",
+			"LoadBalancers": [{"ContainerName":"app","ContainerPort":443,"TargetGroupArn":"` + tgArn + `"}]
+		}`,
+	}, nil)
+
+	svc := &Service{
+		cfg:                nil,
+		ccxClientFactory:   func(_ *config.Config) (ccxClient, error) { return mockCCX, nil },
+		ecsClientFactory:   func(_ *config.Config) (ecsClient, error) { return mockECS, nil },
+		elbv2ClientFactory: func(_ *config.Config) (elbv2Client, error) { return mockELB, nil },
+		now:                time.Now,
+		operationTimeout:   20 * time.Minute,
+		finalReadGrace:     2 * time.Minute,
+	}
+
+	// Poll 1: transient → InProgress.
+	r1, _ := svc.statusPhaseB(ctx, &resource.StatusRequest{
+		NativeID: "cluster1|svc1", ResourceType: "AWS::ECS::Service",
+		RequestID: "formae-ecs/create/1234567890/ccapi-tok",
+	}, resource.OperationCreate, time.Now().Unix(), "cluster1", "svc1")
+	assert.Equal(t, resource.OperationStatusInProgress, r1.ProgressResult.OperationStatus)
+
+	// Poll 2: composeEndpoints succeeds → Success.
+	r2, _ := svc.statusPhaseB(ctx, &resource.StatusRequest{
+		NativeID: "cluster1|svc1", ResourceType: "AWS::ECS::Service",
+		RequestID: "formae-ecs/create/1234567890/ccapi-tok",
+	}, resource.OperationCreate, time.Now().Unix(), "cluster1", "svc1")
+	assert.Equal(t, resource.OperationStatusSuccess, r2.ProgressResult.OperationStatus)
+	assert.Contains(t, string(r2.ProgressResult.ResourceProperties), `"Endpoints":{"app:443":"https://dns-1:443"}`)
 }

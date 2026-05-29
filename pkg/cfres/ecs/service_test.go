@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	awselbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -381,4 +383,129 @@ func TestService_Create_SyncSuccess_RewritesToInProgress(t *testing.T) {
 	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
 	assert.Nil(t, res.ProgressResult.ResourceProperties)
 	assert.Equal(t, "formae-ecs/create/1747526400/ccapi-tA", res.ProgressResult.RequestID)
+}
+
+func TestRead_PopulatesEndpoints_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	mockCCX := &mockCCXReadClient{}
+	mockELB := &mockELBv2Client{}
+
+	tgArn := "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/tg/abc"
+	albArn := "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/a/1"
+
+	mockCCX.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::ECS::Service",
+		Properties: `{
+			"ServiceArn": "arn:aws:ecs:us-east-1:123:service/clusterA/svc1",
+			"Cluster": "clusterA",
+			"LoadBalancers": [
+				{"ContainerName":"app","ContainerPort":443,"TargetGroupArn":"` + tgArn + `"}
+			]
+		}`,
+	}, nil)
+
+	mockELB.On("DescribeTargetGroups", ctx, &awselbv2.DescribeTargetGroupsInput{TargetGroupArns: []string{tgArn}}).
+		Return(&awselbv2.DescribeTargetGroupsOutput{
+			TargetGroups: []elbv2types.TargetGroup{{TargetGroupArn: ptr(tgArn), LoadBalancerArns: []string{albArn}}},
+		}, nil)
+	mockELB.On("DescribeLoadBalancers", ctx, &awselbv2.DescribeLoadBalancersInput{LoadBalancerArns: []string{albArn}}).
+		Return(&awselbv2.DescribeLoadBalancersOutput{
+			LoadBalancers: []elbv2types.LoadBalancer{
+				{LoadBalancerArn: ptr(albArn), DNSName: ptr("dns-1"), Type: elbv2types.LoadBalancerTypeEnumApplication},
+			},
+		}, nil)
+	mockELB.On("DescribeListeners", ctx, &awselbv2.DescribeListenersInput{LoadBalancerArn: ptr(albArn)}).
+		Return(&awselbv2.DescribeListenersOutput{
+			Listeners: []elbv2types.Listener{{
+				ListenerArn:    ptr("l1"),
+				Port:           ptr(int32(443)),
+				Protocol:       elbv2types.ProtocolEnumHttps,
+				DefaultActions: []elbv2types.Action{{Type: elbv2types.ActionTypeEnumForward, TargetGroupArn: ptr(tgArn)}},
+			}},
+		}, nil)
+
+	svc := &Service{
+		cfg:                nil,
+		elbv2ClientFactory: func(_ *config.Config) (elbv2Client, error) { return mockELB, nil },
+		now:                time.Now,
+	}
+
+	out, err := svc.readWithClient(ctx, mockCCX, &resource.ReadRequest{
+		NativeID:     "clusterA|svc1",
+		ResourceType: "AWS::ECS::Service",
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, out)
+	assert.Contains(t, out.Properties, `"Endpoints":{"app:443":"https://dns-1:443"}`)
+}
+
+func TestRead_TransientError_ReturnsRecoverablePluginError(t *testing.T) {
+	ctx := context.Background()
+	mockCCX := &mockCCXReadClient{}
+	mockELB := &mockELBv2Client{}
+
+	tgArn := "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/tg/abc"
+
+	mockCCX.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::ECS::Service",
+		Properties: `{
+			"ServiceArn": "arn:aws:ecs:us-east-1:123:service/clusterA/svc1",
+			"Cluster": "arn:aws:ecs:us-east-1:123:cluster/clusterA",
+			"LoadBalancers": [
+				{"ContainerName":"app","ContainerPort":443,"TargetGroupArn":"` + tgArn + `"}
+			]
+		}`,
+	}, nil)
+
+	// All 3 retries throttle.
+	mockELB.On("DescribeTargetGroups", ctx, mock.Anything).
+		Return((*awselbv2.DescribeTargetGroupsOutput)(nil), awsAPIErr("Throttling", "rate exceeded")).Times(3)
+
+	svc := &Service{
+		cfg:                nil,
+		elbv2ClientFactory: func(_ *config.Config) (elbv2Client, error) { return mockELB, nil },
+		now:                time.Now,
+	}
+
+	out, err := svc.readWithClient(ctx, mockCCX, &resource.ReadRequest{
+		NativeID:     "clusterA|svc1",
+		ResourceType: "AWS::ECS::Service",
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, out)
+	// Recoverable plugin error code surfaced; no Endpoints in the response.
+	assert.Equal(t, resource.OperationErrorCodeThrottling, out.ErrorCode)
+	assert.Empty(t, out.Properties)
+}
+
+func TestRead_EmptyLoadBalancers_EmitsEmptyEndpoints(t *testing.T) {
+	ctx := context.Background()
+	mockCCX := &mockCCXReadClient{}
+	mockELB := &mockELBv2Client{}
+
+	mockCCX.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::ECS::Service",
+		Properties: `{
+			"ServiceArn": "arn:aws:ecs:us-east-1:123:service/clusterA/svc1",
+			"Cluster": "arn:aws:ecs:us-east-1:123:cluster/clusterA",
+			"LoadBalancers": []
+		}`,
+	}, nil)
+
+	// composeEndpoints should make ZERO API calls for empty LBs.
+
+	svc := &Service{
+		cfg:                nil,
+		elbv2ClientFactory: func(_ *config.Config) (elbv2Client, error) { return mockELB, nil },
+		now:                time.Now,
+	}
+
+	out, err := svc.readWithClient(ctx, mockCCX, &resource.ReadRequest{
+		NativeID:     "clusterA|svc1",
+		ResourceType: "AWS::ECS::Service",
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, out)
+	assert.Contains(t, out.Properties, `"Endpoints":{}`)
+	mockELB.AssertExpectations(t)
 }

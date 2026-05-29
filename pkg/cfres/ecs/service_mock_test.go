@@ -72,3 +72,24 @@ func (m *mockELBv2Client) DescribeTargetHealth(ctx context.Context, params *awse
 	out, _ := args.Get(0).(*awselbv2.DescribeTargetHealthOutput)
 	return out, args.Error(1)
 }
+
+func (m *mockELBv2Client) DescribeTargetGroups(ctx context.Context, params *awselbv2.DescribeTargetGroupsInput,
+	optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeTargetGroupsOutput, error) {
+	args := m.Called(ctx, params)
+	out, _ := args.Get(0).(*awselbv2.DescribeTargetGroupsOutput)
+	return out, args.Error(1)
+}
+
+func (m *mockELBv2Client) DescribeLoadBalancers(ctx context.Context, params *awselbv2.DescribeLoadBalancersInput,
+	optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeLoadBalancersOutput, error) {
+	args := m.Called(ctx, params)
+	out, _ := args.Get(0).(*awselbv2.DescribeLoadBalancersOutput)
+	return out, args.Error(1)
+}
+
+func (m *mockELBv2Client) DescribeListeners(ctx context.Context, params *awselbv2.DescribeListenersInput,
+	optFns ...func(*awselbv2.Options)) (*awselbv2.DescribeListenersOutput, error) {
+	args := m.Called(ctx, params)
+	out, _ := args.Get(0).(*awselbv2.DescribeListenersOutput)
+	return out, args.Error(1)
+}

@@ -86,8 +86,13 @@ open class LoadBalancer extends formae.Resource {
     @aws.FieldHint
     minimumLoadBalancerCapacity: Dynamic?
 
+    /// Load balancer name. AWS hard limit: 1-32 characters, alphanumerics
+    /// and hyphens only (the alphanumeric/hyphen restriction is not enforced
+    /// here yet; only the length cap is). Catching length violations at Pkl
+    /// eval time gives users an immediate, actionable error instead of a
+    /// CCAPI ValidationException ~20s into apply.
     @aws.FieldHint{createOnly = true}
-    name: String?
+    name: String(length <= 32)?
 
     @aws.FieldHint{createOnly = true}
     scheme: String?
