@@ -148,7 +148,7 @@ jobs:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
       # Mirrors nightly.yml — see the comment there on quota headroom.
-      max-parallel: 10
+      max-parallel: 5
       fail-fast: false
     permissions:
       id-token: write

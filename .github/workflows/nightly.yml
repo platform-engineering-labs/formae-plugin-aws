@@ -121,12 +121,11 @@ jobs:
     strategy:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
-      # us-east-1 VPC quota was raised to 30, and the aws-nuke isolation
-      # (region-split into us-west-*) means all of that headroom is the
-      # conformance suite's. EIPs remain at the default 5 but only a
-      # couple of fixtures consume them, so EIP/NAT contention stays
-      # comfortable at this level.
-      max-parallel: 10
+      # us-east-1 VPC quota is 30 in the test account. At max-parallel=10,
+      # concurrent VPC-heavy fixtures plus orphans from in-flight failures
+      # exhaust the quota and cascade-fail discovery tests. Hold at 5
+      # until a quota bump above 30 is granted; revisit then.
+      max-parallel: 5
       fail-fast: false
     permissions:
       id-token: write
