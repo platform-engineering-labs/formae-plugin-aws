@@ -221,7 +221,9 @@ open class LaunchTemplateData extends formae.SubResource {
     placement: Placement?
     privateDnsNameOptions: PrivateDnsNameOptions?
     ramDiskId: (String|formae.Resolvable)?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroupIds: Listing<String|formae.Resolvable>?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroups: Listing<String|formae.Resolvable>?
     tagSpecifications: Listing<TagSpecification>?
     userData: String?

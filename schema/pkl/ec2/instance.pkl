@@ -263,7 +263,7 @@ open class Instance extends formae.Resource {
     @aws.FieldHint
     ramdiskId: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroupIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}

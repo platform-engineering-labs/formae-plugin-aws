@@ -26,7 +26,7 @@ open class InstanceConnectEndpoint extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     preserveClientIp: (Boolean|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{edgeKind = "runtimeDependency"; createOnly = true}
     securityGroupIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}

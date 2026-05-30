@@ -49,7 +49,7 @@ open class VPCEndpoint extends formae.Resource {
     @aws.FieldHint { hasProviderDefault = true }
     routeTableIds: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint { hasProviderDefault = true }
+    @aws.FieldHint { edgeKind = "runtimeDependency"; hasProviderDefault = true }
     securityGroupIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{createOnly = true}

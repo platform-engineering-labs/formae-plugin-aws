@@ -24,7 +24,7 @@ typealias SchedulingStrategy = "DAEMON"|"REPLICA"
 @aws.SubResourceHint
 open class AwsVpcConfiguration extends formae.SubResource {
     assignPublicIp: AwsVpcConfigurationAssignPublicIp?
-    @aws.FieldHint{hasProviderDefault = true}
+    @aws.FieldHint{edgeKind = "runtimeDependency"; hasProviderDefault = true}
     securityGroups: Listing<String|formae.Resolvable>?
     subnets: Listing<String|formae.Resolvable>?
 }

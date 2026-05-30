@@ -59,6 +59,7 @@ open class ScalingTarget extends formae.SubResource {
 
 @aws.SubResourceHint
 open class NetworkConfiguration extends formae.SubResource {
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroups: Listing<String|formae.Resolvable>?
     subnets: Listing<String|formae.Resolvable>?
 }

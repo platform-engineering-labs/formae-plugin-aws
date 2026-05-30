@@ -20,7 +20,7 @@ open class AWSVpcConfiguration extends formae.SubResource {
     // caller doesn't specify one, so without this hint an unchanged
     // TaskSet reapply produces a phantom diff on the CreateOnly
     // NetworkConfiguration and forces a full replacement.
-    @aws.FieldHint{hasProviderDefault = true}
+    @aws.FieldHint{edgeKind = "runtimeDependency"; hasProviderDefault = true}
     securityGroups: Listing<String|formae.Resolvable>?
     subnets: Listing<String|formae.Resolvable>
 }

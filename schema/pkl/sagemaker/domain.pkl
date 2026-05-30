@@ -77,6 +77,7 @@ open class DefaultSpaceSettings extends formae.SubResource {
     jupyterLabAppSettings: JupyterLabAppSettings?
     jupyterServerAppSettings: JupyterServerAppSettings?
     kernelGatewayAppSettings: KernelGatewayAppSettings?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroups: (Listing<String|formae.Resolvable>)?
     spaceStorageSettings: SpaceStorageSettings?
 }
@@ -98,6 +99,7 @@ open class DomainSettings extends formae.SubResource {
     dockerSettings: DockerSettings?
     executionRoleIdentityConfig: ExecutionRoleIdentityConfig?
     rStudioServerProDomainSettings: RStudioServerProDomainSettings?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroupIds: (Listing<String|formae.Resolvable>)?
 }
 
@@ -197,6 +199,7 @@ open class DefaultUserSettings extends formae.SubResource {
     kernelGatewayAppSettings: KernelGatewayAppSettings?
     rSessionAppSettings: RSessionAppSettings?
     rStudioServerProAppSettings: RStudioServerProAppSettings?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroups: (Listing<String|formae.Resolvable>)?
     sharingSettings: SharingSettings?
     spaceStorageSettings: SpaceStorageSettings?

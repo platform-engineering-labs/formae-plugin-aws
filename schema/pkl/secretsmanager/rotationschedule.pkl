@@ -22,6 +22,7 @@ open class HostedRotationLambda extends formae.SubResource {
     runtime: String?
     superuserSecretArn: (String|formae.Resolvable)?
     superuserSecretKmsKeyArn: (String|formae.Resolvable)?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     vpcSecurityGroupIds: (String|formae.Resolvable)?
     vpcSubnetIds: (String|formae.Resolvable)?
 }

@@ -78,6 +78,7 @@ open class LaunchTemplateSpecification extends formae.SubResource {
 
 @aws.SubResourceHint
 open class SecurityGroupIdentifier extends formae.SubResource {
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     groupId: String|formae.Resolvable
 }
 
