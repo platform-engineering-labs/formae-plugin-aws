@@ -14,6 +14,15 @@ const type = "AWS::EC2::SecurityGroupEgress"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
+    parent = "AWS::EC2::SecurityGroup"
+    parentRefs = new formae.ParentRef {
+        parentProperty = "GroupId"
+        childProperty = "GroupId"
+    }
+    listParam = new formae.ListProperty {
+        parentProperty = "GroupId"
+        listParameter = "GroupId"
+    }
 }
 open class SecurityGroupEgress extends formae.Resource {
     @aws.FieldHint{createOnly = true}
