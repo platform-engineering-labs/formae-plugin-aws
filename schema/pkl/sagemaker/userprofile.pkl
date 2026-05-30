@@ -149,6 +149,7 @@ open class UserSettings extends formae.SubResource {
     jupyterServerAppSettings: JupyterServerAppSettings?
     kernelGatewayAppSettings: KernelGatewayAppSettings?
     rStudioServerProAppSettings: RStudioServerProAppSettings?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroups: Listing<String|formae.Resolvable>?
     sharingSettings: SharingSettings?
     spaceStorageSettings: DefaultSpaceStorageSettings?

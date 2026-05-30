@@ -102,6 +102,7 @@ open class TracingConfig extends formae.SubResource {
 @aws.SubResourceHint
 open class VPCConfig extends formae.SubResource {
     ipv6AllowedForDualStack: Boolean?
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroupIds: Listing<String|formae.Resolvable>?
     subnetIds: Listing<String|formae.Resolvable>?
 }

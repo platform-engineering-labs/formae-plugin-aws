@@ -374,6 +374,7 @@ open class DBInstance extends formae.Resource {
     useLatestRestorableTime: Boolean?
 
     @aws.FieldHint{
+        edgeKind = "runtimeDependency"
         outputField = "VPCSecurityGroups"
         hasProviderDefault = true
     }

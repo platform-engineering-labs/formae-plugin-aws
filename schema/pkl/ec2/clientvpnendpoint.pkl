@@ -89,7 +89,7 @@ open class ClientVpnEndpoint extends formae.Resource {
     @aws.FieldHint
     dnsServers: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroupIds: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint

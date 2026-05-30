@@ -93,7 +93,7 @@ open class DBProxy extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
-    @aws.FieldHint
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     vpcSecurityGroupIds: (Listing<String|formae.Resolvable>)?
 
     @aws.FieldHint{createOnly = true}

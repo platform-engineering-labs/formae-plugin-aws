@@ -52,7 +52,7 @@ open class MountTarget extends formae.Resource {
     }
     ipAddress: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { edgeKind = "runtimeDependency" }
     securityGroups: Listing<String|formae.Resolvable>
 
     @aws.FieldHint{createOnly = true}

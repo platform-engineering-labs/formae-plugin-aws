@@ -97,7 +97,7 @@ open class LoadBalancer extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     scheme: String?
 
-    @aws.FieldHint{hasProviderDefault = true}
+    @aws.FieldHint{edgeKind = "runtimeDependency"; hasProviderDefault = true}
     securityGroups: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{hasProviderDefault = true}

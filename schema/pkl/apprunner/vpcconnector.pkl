@@ -28,7 +28,7 @@ open class VpcConnectorResolvable extends formae.Resolvable {
 }
 open class VpcConnector extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{edgeKind = "runtimeDependency"; createOnly = true}
     securityGroups: Listing<String|formae.Resolvable>?
 
     @aws.FieldHint{required = true; createOnly = true}
