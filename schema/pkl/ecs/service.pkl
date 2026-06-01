@@ -32,7 +32,7 @@ open class AwsVpcConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class CapacityProviderStrategy extends formae.SubResource {
     base: Int?
-    capacityProvider: String?
+    capacityProvider: (String|formae.Resolvable)?
     weight: Int?
 }
 
@@ -80,7 +80,7 @@ open class TagSpecification extends formae.SubResource {
 
 @aws.SubResourceHint
 open class LoadBalancer extends formae.SubResource {
-    containerName: String?
+    containerName: (String|formae.Resolvable)?
     containerPort: Int?
     loadBalancerName: (String|formae.Resolvable)?
     @aws.FieldHint { edgeKind = "attachesTo" }
@@ -123,7 +123,7 @@ open class ServiceSecret extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ClientAlias extends formae.SubResource {
-    dnsName: String?
+    dnsName: (String|formae.Resolvable)?
     port: Int
 }
 
@@ -131,14 +131,14 @@ open class ClientAlias extends formae.SubResource {
 open class ServiceConnectConfiguration extends formae.SubResource {
     enabled: Boolean
     logConfiguration: LogConfiguration?
-    namespace: String?
+    namespace: (String|formae.Resolvable)?
     services: Listing<ServiceConnectService>?
 }
 
 @aws.SubResourceHint
 open class ServiceConnectService extends formae.SubResource {
     clientAliases: Listing<ClientAlias>?
-    discoveryName: String?
+    discoveryName: (String|formae.Resolvable)?
     ingressPortOverride: Int?
     portName: String
     timeout: TimeoutConfiguration?
@@ -153,7 +153,7 @@ open class ServiceConnectTlsCertificateAuthority extends formae.SubResource {
 @aws.SubResourceHint
 open class TLSConfiguration extends formae.SubResource {
     issuerCertificateAuthority: ServiceConnectTlsCertificateAuthority
-    kmsKey: String?
+    kmsKey: (String|formae.Resolvable)?
     roleArn: (String|formae.Resolvable)?
 }
 @aws.SubResourceHint
@@ -173,7 +173,7 @@ open class ManagedEBSVolumeConfiguration extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ServiceRegistry extends formae.SubResource {
-    containerName: String?
+    containerName: (String|formae.Resolvable)?
     containerPort: Int?
     port: Int?
     registryArn: (String|formae.Resolvable)?
@@ -299,7 +299,7 @@ open class Service extends formae.Resource {
         createOnly = true
         hasProviderDefault = true
     }
-    role: String?
+    role: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     schedulingStrategy: SchedulingStrategy?

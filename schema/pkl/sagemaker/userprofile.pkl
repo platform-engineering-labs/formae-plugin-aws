@@ -195,7 +195,7 @@ open class UserProfile extends formae.Resource {
     singleSignOnUserIdentifier: (String(matches(Regex(#"UserName"#))))?
 
     @aws.FieldHint{createOnly = true}
-    singleSignOnUserValue: String?
+    singleSignOnUserValue: (String|formae.Resolvable)?
 
     @aws.FieldHint {
         createOnly = true

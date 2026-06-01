@@ -23,7 +23,7 @@ open class CustomerGateway extends formae.Resource {
     bgpAsnExtended: Number?
 
     @aws.FieldHint{createOnly = true}
-    certificateArn: (String(matches(Regex(#"^arn:(aws[a-zA-Z-]*)?:acm:[a-z]{2}((-gov)|(-iso([a-z]{1})?))?-[a-z]+-\d{1}:\d{12}:certificate\/[a-zA-Z0-9-_]+$"#))))?
+    certificateArn: (String(matches(Regex(#"^arn:(aws[a-zA-Z-]*)?:acm:[a-z]{2}((-gov)|(-iso([a-z]{1})?))?-[a-z]+-\d{1}:\d{12}:certificate\/[a-zA-Z0-9-_]+$"#)))|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     deviceName: String?

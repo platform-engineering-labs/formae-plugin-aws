@@ -148,7 +148,7 @@ open class TargetTrackingScalingPolicyConfiguration extends formae.SubResource {
 
 @aws.SubResourceHint
 open class TimeToLiveSpecification extends formae.SubResource {
-    attributeName: String?
+    attributeName: (String|formae.Resolvable)?
     enabled: Boolean
 }
 

@@ -31,5 +31,5 @@ open class OIDCProvider extends formae.Resource {
     thumbprintList: Listing<String>?
 
     @aws.FieldHint{createOnly = true}
-    url: String?
+    url: (String|formae.Resolvable)?
 }

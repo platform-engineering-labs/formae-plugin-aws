@@ -32,10 +32,10 @@ open class PathFilter extends formae.SubResource {
 open class NetworkInsightsPath extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    destination: String?
+    destination: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
-    destinationIp: String?
+    destinationIp: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     destinationPort: Int?
@@ -53,7 +53,7 @@ open class NetworkInsightsPath extends formae.Resource {
     source: String
 
     @aws.FieldHint{createOnly = true}
-    sourceIp: String?
+    sourceIp: (String|formae.Resolvable)?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"

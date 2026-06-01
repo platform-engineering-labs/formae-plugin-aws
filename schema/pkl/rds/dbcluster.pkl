@@ -156,7 +156,7 @@ open class DBCluster extends formae.Resource {
     deletionProtection: Boolean?
 
     @aws.FieldHint
-    domain: String?
+    domain: (String|formae.Resolvable)?
 
     @aws.FieldHint
     domainIAMRoleName: (String|formae.Resolvable)?

@@ -29,7 +29,7 @@ open class OptionConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class OptionSetting extends formae.SubResource {
     name: String?
-    value: String?
+    value: (String|formae.Resolvable)?
 }
 @aws.ResourceHint {
     type = module.type

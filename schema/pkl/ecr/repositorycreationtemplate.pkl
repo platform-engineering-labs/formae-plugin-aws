@@ -14,7 +14,7 @@ const type = "AWS::ECR::RepositoryCreationTemplate"
 @aws.SubResourceHint
 open class EncryptionConfiguration extends formae.SubResource {
     encryptionType: String
-    kmsKey: String?
+    kmsKey: (String|formae.Resolvable)?
 }
 
 typealias ImageTagMutability = "MUTABLE"|"IMMUTABLE"

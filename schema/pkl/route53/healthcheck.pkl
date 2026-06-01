@@ -45,7 +45,7 @@ open class HealthCheckConfig extends formae.SubResource {
     healthThreshold: Int?
 
     @aws.FieldHint{ outputField = "IPAddress" }
-    ipAddress: String?
+    ipAddress: (String|formae.Resolvable)?
 
     @aws.FieldHint
     insufficientDataHealthStatus: InsufficientDataHealthStatusType?

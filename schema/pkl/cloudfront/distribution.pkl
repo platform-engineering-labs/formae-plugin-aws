@@ -142,7 +142,7 @@ open class ForwardedValues extends formae.SubResource {
 @aws.SubResourceHint
 open class FunctionAssociation extends formae.SubResource {
     eventType: EventType?
-    functionARN: String?
+    functionARN: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -160,7 +160,7 @@ open class GrpcConfig extends formae.SubResource {
 open class LambdaFunctionAssociation extends formae.SubResource {
     eventType: EventType?
     includeBody: Boolean?
-    lambdaFunctionARN: String?
+    lambdaFunctionARN: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -179,12 +179,12 @@ open class CustomOrigin extends formae.SubResource {
 open class S3Origin extends formae.SubResource {
     @aws.FieldHint{outputField = "DNSName"}
     dnsName: String|formae.Resolvable
-    originAccessIdentity: String?
+    originAccessIdentity: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
 open class Logging extends formae.SubResource {
-    bucket: String?
+    bucket: (String|formae.Resolvable)?
     includeCookies: Boolean?
     prefix: String?
 }
@@ -254,7 +254,7 @@ open class Restrictions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class S3OriginConfig extends formae.SubResource {
-    originAccessIdentity: String?
+    originAccessIdentity: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint

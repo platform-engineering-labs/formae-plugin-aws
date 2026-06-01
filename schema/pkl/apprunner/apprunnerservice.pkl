@@ -121,7 +121,7 @@ open class InstanceConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class KeyValuePair extends formae.SubResource {
     name: String?
-    value: String?
+    value: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint

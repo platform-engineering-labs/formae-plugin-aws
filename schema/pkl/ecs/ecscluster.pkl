@@ -14,7 +14,7 @@ const type = "AWS::ECS::Cluster"
 @aws.SubResourceHint
 open class CapacityProviderStrategy extends formae.SubResource {
     base: Int?
-    capacityProvider: String?
+    capacityProvider: (String|formae.Resolvable)?
     weight: Int?
 }
 
@@ -27,7 +27,7 @@ open class ClusterClusterConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class ClusterClusterSettings extends formae.SubResource {
     name: String?
-    value: String?
+    value: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -54,7 +54,7 @@ open class ManagedStorageConfiguration extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ServiceConnectDefaults extends formae.SubResource {
-    namespace: String?
+    namespace: (String|formae.Resolvable)?
 }
 
 open class ClusterResolvable extends formae.Resolvable {

@@ -16,7 +16,7 @@ open class OptionSetting extends formae.SubResource {
     namespace: String
     optionName: String
     resourceName: String?
-    value: String?
+    value: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -50,7 +50,7 @@ open class Environment extends formae.Resource {
     environmentName: String?
 
     @aws.FieldHint
-    operationsRole: String?
+    operationsRole: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
     optionSettings: Listing<OptionSetting>?
@@ -74,5 +74,5 @@ open class Environment extends formae.Resource {
     tier: Tier?
 
     @aws.FieldHint
-    versionLabel: String?
+    versionLabel: (String|formae.Resolvable)?
 }

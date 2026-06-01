@@ -105,7 +105,7 @@ open class ResourcePolicy extends formae.SubResource {
 @aws.SubResourceHint
 open class TableS3BucketSource extends formae.SubResource {
     s3Bucket: String
-    s3BucketOwner: String?
+    s3BucketOwner: (String|formae.Resolvable)?
     s3KeyPrefix: String?
 }
 
@@ -127,7 +127,7 @@ open class StreamSpecification extends formae.SubResource {
 
 @aws.SubResourceHint
 open class TimeToLiveSpecification extends formae.SubResource {
-    attributeName: String?
+    attributeName: (String|formae.Resolvable)?
     enabled: Boolean
 }
 

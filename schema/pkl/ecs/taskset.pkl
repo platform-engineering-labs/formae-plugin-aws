@@ -28,13 +28,13 @@ open class AWSVpcConfiguration extends formae.SubResource {
 @aws.SubResourceHint
 open class CapacityProviderStrategy extends formae.SubResource {
     base: Int?
-    capacityProvider: String?
+    capacityProvider: (String|formae.Resolvable)?
     weight: Int?
 }
 
 @aws.SubResourceHint
 open class LoadBalancer extends formae.SubResource {
-    containerName: String?
+    containerName: (String|formae.Resolvable)?
     containerPort: Int?
     @aws.FieldHint { edgeKind = "attachesTo" }
     targetGroupArn: (String|formae.Resolvable)?
@@ -55,7 +55,7 @@ open class Scale extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ServiceRegistry extends formae.SubResource {
-    containerName: String?
+    containerName: (String|formae.Resolvable)?
     containerPort: Int?
     port: Int?
     registryArn: (String|formae.Resolvable)?

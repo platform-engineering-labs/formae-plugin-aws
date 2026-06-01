@@ -22,10 +22,10 @@ open class EndpointConfiguration extends formae.SubResource {
 
 @aws.SubResourceHint
 open class BodyS3Location extends formae.SubResource {
-    bucket: String?
+    bucket: (String|formae.Resolvable)?
     eTag: String?
-    key: String?
-    version: String?
+    key: (String|formae.Resolvable)?
+    version: (String|formae.Resolvable)?
 }
 
 open class RestApiResolvable extends formae.Resolvable {
@@ -72,7 +72,7 @@ open class RestApi extends formae.Resource {
         createOnly = true
         writeOnly = true
     }
-    cloneFrom: String?
+    cloneFrom: (String|formae.Resolvable)?
 
     @aws.FieldHint
     description: String?

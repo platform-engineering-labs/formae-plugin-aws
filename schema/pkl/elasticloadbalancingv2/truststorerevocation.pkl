@@ -14,9 +14,9 @@ const type = "AWS::ElasticLoadBalancingV2::TrustStoreRevocation"
 @aws.SubResourceHint
 open class RevocationContent extends formae.SubResource {
     revocationType: String?
-    s3Bucket: String?
-    s3Key: String?
-    s3ObjectVersion: String?
+    s3Bucket: (String|formae.Resolvable)?
+    s3Key: (String|formae.Resolvable)?
+    s3ObjectVersion: (String|formae.Resolvable)?
 }
 
 @aws.ResourceHint {

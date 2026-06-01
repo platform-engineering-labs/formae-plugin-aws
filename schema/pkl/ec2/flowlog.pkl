@@ -24,7 +24,7 @@ typealias FlowLogTrafficType = "ACCEPT"|"ALL"|"REJECT"
 open class FlowLog extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
-    deliverCrossAccountRole: String?
+    deliverCrossAccountRole: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     deliverLogsPermissionArn: (String|formae.Resolvable)?
@@ -33,7 +33,7 @@ open class FlowLog extends formae.Resource {
     destinationOptions: Dynamic?
 
     @aws.FieldHint{createOnly = true}
-    logDestination: String?
+    logDestination: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     logDestinationType: FlowLogLogDestinationType?
