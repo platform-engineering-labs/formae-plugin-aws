@@ -1,0 +1,247 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+// Repro fixture: ECS Service with multiple containers that ignore SIGTERM,
+// each riding the maximum Fargate stopTimeout (120s). The intent is to force
+// a long Service Delete drain that gives CloudControl API enough time to hit
+// its internal handler timeout. When that fires, CCAPI returns a ProgressEvent
+// with OperationStatus=FAILED and (hypothesised) ErrorCode=ServiceTimeout.
+//
+// On success the conformance run captures the real ErrorCode + StatusMessage,
+// which decides whether to ship a ServiceTimeout→InProgress remap in
+// pkg/ccx/client.go (mirroring the existing NotStabilized remap).
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/route.pkl"
+import "@aws/ec2/subnetroutetableassociation.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+import "@aws/ecs/service.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-svc-slow-drain-\(testRunID)"
+
+// Minimal networking for FARGATE image pull via public IP (no NAT, no ALB —
+// we don't need inbound; we just need outbound so the task can pull alpine).
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-ecs-svc-slow-drain"
+  cidrBlock = "10.232.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-ecs-svc-slow-drain"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-ecs-svc-slow-drain"
+}
+
+local testIgwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-igw-attachment-for-ecs-svc-slow-drain"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = testIgw.res.internetGatewayId
+}
+
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-ecs-svc-slow-drain"
+  vpcId = testVpc.res.vpcId
+}
+
+local testDefaultRoute = new route.Route {
+  label = "test-default-route-for-ecs-svc-slow-drain"
+  routeTableId = testRouteTable.res.routeTableId
+  destinationCidrBlock = "0.0.0.0/0"
+  gatewayId = testIgw.res.internetGatewayId
+}
+
+local testSubnetAssoc = new subnetroutetableassociation.SubnetRouteTableAssociation {
+  label = "test-subnet-rtassoc-for-ecs-svc-slow-drain"
+  subnetId = testSubnet.res.subnetId
+  routeTableId = testRouteTable.res.routeTableId
+}
+
+// Tasks SG: no ingress (no one connects to these tasks). Fargate egress is
+// default-allow so the image pull works without an explicit rule.
+local tasksSG = new securitygroup.SecurityGroup {
+  label = "test-tasks-sg-for-ecs-svc-slow-drain"
+  groupDescription = "ECS tasks SG for slow-drain conformance test; no ingress"
+  groupName = "formae-sdk-test-slow-drain-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+local testCluster = new ecscluster.Cluster {
+  label = "test-cluster-for-ecs-svc-slow-drain"
+  clusterName = "formae-sdk-test-svc-slow-drain-cluster-\(testRunID)"
+  clusterSettings {
+    new {
+      name = "containerInsights"
+      value = "disabled"
+    }
+  }
+}
+
+// 10 essential containers per task, each ignoring SIGTERM and riding the
+// full 120s stopTimeout (Fargate max). 'trap "" TERM INT' makes the shell
+// discard those signals so the container survives until ECS escalates to
+// SIGKILL after the timeout elapses. All containers are essential, so the
+// task stays Running until they're all killed.
+//
+// Combined with desiredCount=3 below, this gives 30 stubborn essentials and
+// 3 ENIs to deprovision, maximising the chance of hitting CCAPI's internal
+// Delete handler timeout within a single conformance run.
+//
+// cpu/memory sized for 10 small alpine containers (~20MB RSS each). Fargate
+// task-level totals: 1 vCPU + 2 GB.
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "test-taskdef-for-ecs-svc-slow-drain"
+  family = "formae-sdk-test-svc-slow-drain-taskdef-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "1024"
+  memory = "2048"
+  containerDefinitions {
+    new {
+      name = "stubborn-1"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-2"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-3"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-4"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-5"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-6"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-7"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-8"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-9"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+    new {
+      name = "stubborn-10"
+      image = "alpine:3"
+      essential = true
+      command { "sh"; "-c"; "trap '' TERM INT; tail -f /dev/null" }
+      stopTimeout = 120
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "ECS Service Delete repro: multi-container slow drain"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  testSubnet
+  testIgw
+  testIgwAttachment
+  testRouteTable
+  testDefaultRoute
+  testSubnetAssoc
+  tasksSG
+  testCluster
+  testTaskDef
+
+  new service.Service {
+    label = "plugin-sdk-test-ecs-service-slow-drain"
+    serviceName = "formae-sdk-test-svc-slow-drain-\(testRunID)"
+    cluster = testCluster.res.arn
+    taskDefinition = new formae.Resolvable {
+      label = testTaskDef.label
+      type = "AWS::ECS::TaskDefinition"
+      property = "TaskDefinitionArn"
+    }
+    desiredCount = 3
+    schedulingStrategy = "REPLICA"
+    launchType = "FARGATE"
+    networkConfiguration = new service.NetworkConfiguration {
+      awsvpcConfiguration = new service.AwsVpcConfiguration {
+        assignPublicIp = "ENABLED"
+        subnets {
+          testSubnet.res.subnetId
+        }
+        securityGroups {
+          tasksSG.res.groupId
+        }
+      }
+    }
+    deploymentConfiguration = new service.DeploymentConfiguration {
+      maximumPercent = 200
+      minimumHealthyPercent = 100
+    }
+  }
+}
