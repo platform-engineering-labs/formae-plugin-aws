@@ -14,22 +14,22 @@ const type = "AWS::EC2::VerifiedAccessTrustProvider"
 
 @aws.SubResourceHint
 open class DeviceOptions extends formae.SubResource {
-    publicSigningKeyUrl: String?
-    tenantId: String?
+    publicSigningKeyUrl: (String|formae.Resolvable)?
+    tenantId: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
 open class OidcOptions extends formae.SubResource {
-    authorizationEndpoint: String?
-    clientId: String?
+    authorizationEndpoint: (String|formae.Resolvable)?
+    clientId: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
-    clientSecret: String?
+    clientSecret: (String|formae.Resolvable)?
 
-    issuer: String?
+    issuer: (String|formae.Resolvable)?
     scope: String?
-    tokenEndpoint: String?
-    userInfoEndpoint: String?
+    tokenEndpoint: (String|formae.Resolvable)?
+    userInfoEndpoint: (String|formae.Resolvable)?
 }
 @aws.ResourceHint {
     type = module.type

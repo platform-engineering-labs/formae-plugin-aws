@@ -22,7 +22,7 @@ open class AccessGrantsLocation extends formae.Resource {
     iamRoleArn: (String|formae.Resolvable)?
 
     @aws.FieldHint
-    locationScope: String?
+    locationScope: (String|formae.Resolvable)?
 
     @aws.FieldHint {
         createOnly = true

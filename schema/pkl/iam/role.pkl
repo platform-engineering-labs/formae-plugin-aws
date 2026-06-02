@@ -59,7 +59,7 @@ open class Role extends formae.Resource {
     path: String?
 
     @aws.FieldHint
-    permissionsBoundary: String?
+    permissionsBoundary: (String|formae.Resolvable)?
 
     @aws.FieldHint
     policies: Listing<RolePolicy>?

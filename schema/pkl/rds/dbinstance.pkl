@@ -142,7 +142,7 @@ open class DBInstance extends formae.Resource {
     copyTagsToSnapshot: Boolean?
 
     @aws.FieldHint{createOnly = true}
-    customIAMInstanceProfile: String?
+    customIAMInstanceProfile: (String|formae.Resolvable)?
 
     @aws.FieldHint{
         createOnly = true
@@ -211,7 +211,7 @@ open class DBInstance extends formae.Resource {
     deletionProtection: Boolean?
 
     @aws.FieldHint
-    domain: String?
+    domain: (String|formae.Resolvable)?
 
     @aws.FieldHint
     domainAuthSecretArn: (String|formae.Resolvable)?

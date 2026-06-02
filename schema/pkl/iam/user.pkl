@@ -57,7 +57,7 @@ open class User extends formae.Resource {
     path: String?
 
     @aws.FieldHint
-    permissionsBoundary: String?
+    permissionsBoundary: (String|formae.Resolvable)?
 
     @aws.FieldHint
     policies: Listing<UserPolicy>?

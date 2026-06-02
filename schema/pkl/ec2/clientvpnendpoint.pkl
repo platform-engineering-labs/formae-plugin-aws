@@ -38,8 +38,8 @@ open class ClientLoginBannerOptions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ConnectionLogOptions extends formae.SubResource {
-    cloudwatchLogGroup: String?
-    cloudwatchLogStream: String?
+    cloudwatchLogGroup: (String|formae.Resolvable)?
+    cloudwatchLogStream: (String|formae.Resolvable)?
     enabled: Boolean
 }
 

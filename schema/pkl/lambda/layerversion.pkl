@@ -15,7 +15,7 @@ const type = "AWS::Lambda::LayerVersion"
 open class Content extends formae.SubResource {
     s3Bucket: String|formae.Resolvable
     s3Key: String|formae.Resolvable
-    s3ObjectVersion: String?
+    s3ObjectVersion: (String|formae.Resolvable)?
 }
 
 @aws.ResourceHint {

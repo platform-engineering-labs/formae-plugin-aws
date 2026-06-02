@@ -51,7 +51,7 @@ open class EIP extends formae.Resource {
     networkBorderGroup: String?
 
     @aws.FieldHint { hasProviderDefault = true }
-    publicIpv4Pool: String?
+    publicIpv4Pool: (String|formae.Resolvable)?
 
     @aws.FieldHint {
         updateMethod = "EntitySet"

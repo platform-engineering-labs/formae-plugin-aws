@@ -16,7 +16,7 @@ open class ConfigurationOptionSetting extends formae.SubResource {
     namespace: String
     optionName: String
     resourceName: String?
-    value: String?
+    value: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint

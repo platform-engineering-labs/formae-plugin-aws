@@ -126,8 +126,8 @@ open class HibernationOptions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class IamInstanceProfile extends formae.SubResource {
-    arn: String?
-    name: String?
+    arn: (String|formae.Resolvable)?
+    name: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint

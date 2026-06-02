@@ -334,7 +334,7 @@ typealias ReplicationDestinationStorageClass = "DEEP_ARCHIVE"|"GLACIER"|"GLACIER
 open class ReplicationDestination extends formae.SubResource {
     accessControlTranslation: AccessControlTranslation?
 
-    account: String?
+    account: (String|formae.Resolvable)?
 
     bucket: String
 

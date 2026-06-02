@@ -95,7 +95,7 @@ open class SuppressionOptions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class TrackingOptions extends formae.SubResource {
-    customRedirectDomain: String?
+    customRedirectDomain: (String|formae.Resolvable)?
     httpsPolicy: HttpsPolicy = "REQUIRE"
 }
 

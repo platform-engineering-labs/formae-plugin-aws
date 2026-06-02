@@ -21,7 +21,7 @@ open class EIPAssociation extends formae.Resource {
     allocationId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
-    eIP: String?
+    eIP: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     instanceId: (String|formae.Resolvable)?
@@ -30,5 +30,5 @@ open class EIPAssociation extends formae.Resource {
     networkInterfaceId: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
-    privateIpAddress: String?
+    privateIpAddress: (String|formae.Resolvable)?
 }

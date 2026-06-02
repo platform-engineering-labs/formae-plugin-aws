@@ -13,8 +13,8 @@ const type = "AWS::EKS::Nodegroup"
 
 @aws.SubResourceHint
 open class LaunchTemplate extends formae.SubResource {
-    id: String?
-    name: String?
+    id: (String|formae.Resolvable)?
+    name: (String|formae.Resolvable)?
     version: String?
 }
 

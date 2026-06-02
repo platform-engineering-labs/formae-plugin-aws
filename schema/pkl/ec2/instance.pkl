@@ -204,7 +204,7 @@ open class Instance extends formae.Resource {
     hostResourceGroupArn: (String|formae.Resolvable)?
 
     @aws.FieldHint
-    iamInstanceProfile: String?
+    iamInstanceProfile: (String|formae.Resolvable)?
 
     @aws.FieldHint{createOnly = true}
     imageId: (String|formae.Resolvable)?

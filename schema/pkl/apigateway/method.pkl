@@ -29,7 +29,7 @@ open class Integration extends formae.SubResource {
     connectionId: (String|formae.Resolvable)?
     connectionType: IntegrationConnectionType?
     contentHandling: IntegrationContentHandling?
-    credentials: String?
+    credentials: (String|formae.Resolvable)?
     integrationHttpMethod: String?
     integrationResponses: Listing<MethodIntegrationResponse>?
     @aws.FieldHint { hasProviderDefault = true }
@@ -46,7 +46,7 @@ open class Integration extends formae.SubResource {
     lambdaFunctionArn: (String|formae.Resolvable)?
 
     // For non-Lambda integrations
-    uri: String?
+    uri: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint

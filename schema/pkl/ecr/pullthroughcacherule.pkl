@@ -33,5 +33,5 @@ open class PullThroughCacheRule extends formae.Resource {
     upstreamRegistry: String?
 
     @aws.FieldHint{createOnly = true}
-    upstreamRegistryUrl: String?
+    upstreamRegistryUrl: (String|formae.Resolvable)?
 }
