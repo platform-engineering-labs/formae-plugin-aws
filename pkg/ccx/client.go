@@ -405,6 +405,21 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		}, nil
 	}
 
+	// All remap rules above have had their chance. If we still have a Failure at
+	// this point it is reaching the caller as-is and will be surfaced as a real
+	// failure / retry trigger. Dump the full ProgressEvent so future investigations
+	// (notably the ECS Service Delete drain timeout) have the actual ErrorCode and
+	// StatusMessage from prod runs without needing to reproduce them.
+	if operationStatus == resource.OperationStatusFailure {
+		slog.Warn("StatusResource: CCAPI ProgressEvent reports Failure",
+			"operation", string(result.ProgressEvent.Operation),
+			"errorCode", string(result.ProgressEvent.ErrorCode),
+			"statusMessage", aws.ToString(result.ProgressEvent.StatusMessage),
+			"typeName", aws.ToString(result.ProgressEvent.TypeName),
+			"requestToken", aws.ToString(result.ProgressEvent.RequestToken),
+			"identifier", identifier)
+	}
+
 	statusResult := &resource.StatusResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       operation,
