@@ -333,7 +333,11 @@ open class TaskDefinition extends formae.Resource {
         stack = parent.stack?.label
     }
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{
+        createOnly = true
+        updateMethod = "EntitySet"
+        indexField = "name"
+    }
     containerDefinitions: Listing<ContainerDefinition>?
 
     @aws.FieldHint{createOnly = true}
