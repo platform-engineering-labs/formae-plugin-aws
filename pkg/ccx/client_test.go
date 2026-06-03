@@ -7,9 +7,11 @@
 package ccx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -724,4 +726,125 @@ func TestReadResource_PreservesRealEventInvokeDestination(t *testing.T) {
 		"a genuine user-set destination must be preserved")
 	require.NotContains(t, string(result.Properties), "OnSuccess",
 		"the empty OnSuccess sibling should be stripped")
+}
+
+// captureSlog redirects slog.Default to write WARN+ records into the returned
+// buffer and restores the previous default at test cleanup. Returned buffer
+// contains the rendered text output.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// When a Status poll comes back FAILED and none of the remap rules apply, the
+// final ProgressEvent must be warn-logged with the fields needed to decide
+// whether the error code should be remapped in a future patch (Operation,
+// ErrorCode, StatusMessage, TypeName, RequestToken, Identifier). Without this
+// diagnostic we can't tell ServiceTimeout from GeneralServiceException from
+// ServiceInternalError when the next problem destroy hits prod.
+func TestStatusResource_FailedProgress_LogsDiagnosticDetails(t *testing.T) {
+	buf := captureSlog(t)
+
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationDelete,
+				OperationStatus: cctypes.OperationStatusFailed,
+				ErrorCode:       cctypes.HandlerErrorCodeServiceTimeout,
+				StatusMessage:   ptr.Of("Resource DELETE operation timed out"),
+				TypeName:        ptr.Of("AWS::ECS::Service"),
+				RequestToken:    ptr.Of("req-token-svc-timeout"),
+				Identifier:      ptr.Of("formae-cluster/formae-service"),
+			},
+		}, nil,
+	)
+
+	_, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-token-svc-timeout"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			t.Fatalf("readFunc must not be called on a FAILED status")
+			return nil, nil
+		},
+	)
+	require.NoError(t, err)
+
+	out := buf.String()
+	require.Contains(t, out, `level=WARN`, "must log at WARN level for prod surfacing")
+	require.Contains(t, out, "ServiceTimeout", "must include ErrorCode — the smoking gun for future remap decisions")
+	require.Contains(t, out, "Resource DELETE operation timed out", "must include StatusMessage")
+	require.Contains(t, out, "AWS::ECS::Service", "must include TypeName")
+	require.Contains(t, out, "DELETE", "must include Operation")
+	require.Contains(t, out, "req-token-svc-timeout", "must include RequestToken for CloudTrail correlation")
+	require.Contains(t, out, "formae-cluster/formae-service", "must include Identifier so we can find the resource")
+}
+
+// InProgress events fire on every Status poll during a long-running op (often
+// many per minute). They MUST NOT trigger the diagnostic log or we'd drown
+// real failure signals.
+func TestStatusResource_InProgress_DoesNotLog(t *testing.T) {
+	buf := captureSlog(t)
+
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationCreate,
+				OperationStatus: cctypes.OperationStatusInProgress,
+				TypeName:        ptr.Of("AWS::S3::Bucket"),
+				RequestToken:    ptr.Of("req-in-progress"),
+			},
+		}, nil,
+	)
+
+	_, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-in-progress"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			return nil, nil
+		},
+	)
+	require.NoError(t, err)
+	require.Empty(t, buf.String(), "must not log for InProgress polls — they fire many times per op")
+}
+
+// NotStabilized is FAILED at the CCAPI layer but our code remaps it to
+// InProgress (see ccx/client.go NotStabilized→InProgress). The diagnostic log
+// must fire AFTER all remaps so remapped-to-InProgress cases stay silent.
+func TestStatusResource_NotStabilizedRemap_DoesNotLog(t *testing.T) {
+	buf := captureSlog(t)
+
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				Operation:       cctypes.OperationUpdate,
+				OperationStatus: cctypes.OperationStatusFailed,
+				ErrorCode:       cctypes.HandlerErrorCodeNotStabilized,
+				StatusMessage:   ptr.Of("Resource is still stabilizing"),
+				TypeName:        ptr.Of("AWS::DynamoDB::Table"),
+			},
+		}, nil,
+	)
+
+	_, err := client.StatusResource(
+		context.Background(),
+		&resource.StatusRequest{RequestID: "req-not-stabilized"},
+		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			return nil, nil
+		},
+	)
+	require.NoError(t, err)
+	require.Empty(t, buf.String(), "NotStabilized remaps to InProgress and must not warn-log")
 }
