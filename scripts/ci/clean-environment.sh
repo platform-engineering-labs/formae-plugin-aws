@@ -686,230 +686,266 @@ done
 # Name tags, so any VPC without a Name tag is safe to clean up.
 echo "Cleaning orphaned untagged VPCs..."
 DEFAULT_VPC=$(aws ec2 describe-vpcs --region "$REGION" --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text 2>/dev/null)
-aws ec2 describe-vpcs --region "$REGION" \
-    --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
-    if [[ -n "$vpc_id" && "$vpc_id" != "$DEFAULT_VPC" ]]; then
-        echo "  Cleaning orphaned VPC: $vpc_id"
-        # Delete any ALBs/NLBs attached to this VPC. The tagged-prefix
-        # cleanup at line ~450 catches most by name, but VPC-ID lookup
-        # also catches ALBs whose names don't match any known prefix
-        # (e.g., legacy fixture names). Initiated here, listeners first.
-        aws elbv2 describe-load-balancers --region "$REGION" \
-            --query "LoadBalancers[?VpcId=='$vpc_id'].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
-            if [[ -n "$lb_arn" ]]; then
-                echo "    Deleting ALB attached to $vpc_id: $lb_arn"
-                aws elbv2 describe-listeners --load-balancer-arn "$lb_arn" --region "$REGION" \
-                    --query "Listeners[].ListenerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r listener; do
-                    [[ -n "$listener" ]] && aws elbv2 delete-listener --listener-arn "$listener" --region "$REGION" 2>/dev/null || true
-                done
-                aws elbv2 delete-load-balancer --load-balancer-arn "$lb_arn" --region "$REGION" 2>/dev/null || true
-            fi
-        done
-        # Detach + delete ENIs. delete-network-interface on an attached
-        # ENI (the common case for Fargate-managed ENIs lingering from a
-        # cancelled run) fails with InvalidParameterValue.InUse; force-
-        # detach first, brief sleep for AWS to propagate the detach,
-        # then delete. Poll briefly afterwards for residuals so the
-        # subnet delete below has a chance to succeed.
-        # Skip ENIs owned by amazon-elb — those are released automatically
-        # by AWS once the ALB is fully gone; force-detach returns
-        # OperationNotPermitted on them.
-        aws ec2 describe-network-interfaces --region "$REGION" \
+
+# clean_orphan_vpc: delete all dependencies of a single untagged VPC, then
+# delete the VPC itself. Called via xargs -P so multiple VPCs are processed
+# concurrently. All variables it needs (REGION, DEFAULT_VPC) must be exported
+# by the caller — see the export block below.
+clean_orphan_vpc() {
+    local vpc_id="$1"
+    [[ -z "$vpc_id" || "$vpc_id" == "$DEFAULT_VPC" ]] && return 0
+
+    echo "  Cleaning orphaned VPC: $vpc_id"
+    # Delete any ALBs/NLBs attached to this VPC. The tagged-prefix
+    # cleanup at line ~450 catches most by name, but VPC-ID lookup
+    # also catches ALBs whose names don't match any known prefix
+    # (e.g., legacy fixture names). Initiated here, listeners first.
+    aws elbv2 describe-load-balancers --region "$REGION" \
+        --query "LoadBalancers[?VpcId=='$vpc_id'].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
+        if [[ -n "$lb_arn" ]]; then
+            echo "    Deleting ALB attached to $vpc_id: $lb_arn"
+            aws elbv2 describe-listeners --load-balancer-arn "$lb_arn" --region "$REGION" \
+                --query "Listeners[].ListenerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r listener; do
+                [[ -n "$listener" ]] && aws elbv2 delete-listener --listener-arn "$listener" --region "$REGION" 2>/dev/null || true
+            done
+            aws elbv2 delete-load-balancer --load-balancer-arn "$lb_arn" --region "$REGION" 2>/dev/null || true
+        fi
+    done
+    # Release EFS mount targets before attempting ENI force-detach.
+    # EFS creates ENIs with interface-type=efs owned by an internal AWS
+    # owner ID. These ENIs cannot be force-detached via the EC2 API
+    # (returns OperationNotPermitted). They must be released through the
+    # EFS API: deleting the mount target causes the EFS service to
+    # terminate its own ENI within ~30-60s. The ENI wait loop below then
+    # catches those released ENIs naturally without any extra wait code.
+    aws ec2 describe-network-interfaces --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" "Name=interface-type,Values=efs" \
+        --query "NetworkInterfaces[].Description" --output text 2>/dev/null | \
+        grep -oE 'fsmt-[a-f0-9]+' | sort -u | while read -r mt_id; do
+        [[ -n "$mt_id" ]] && {
+            echo "    Deleting EFS mount target $mt_id (releases EFS-owned ENI in VPC $vpc_id)"
+            aws efs delete-mount-target --mount-target-id "$mt_id" --region "$REGION" 2>/dev/null || true
+        }
+    done
+    # Detach + delete ENIs. delete-network-interface on an attached
+    # ENI (the common case for Fargate-managed ENIs lingering from a
+    # cancelled run) fails with InvalidParameterValue.InUse; force-
+    # detach first, brief sleep for AWS to propagate the detach,
+    # then delete. Poll briefly afterwards for residuals so the
+    # subnet delete below has a chance to succeed.
+    # Skip ENIs owned by amazon-elb — those are released automatically
+    # by AWS once the ALB is fully gone; force-detach returns
+    # OperationNotPermitted on them.
+    aws ec2 describe-network-interfaces --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "NetworkInterfaces[?RequesterId!='amazon-elb'].{Id:NetworkInterfaceId,Attachment:Attachment}" --output json 2>/dev/null | \
+        jq -c '.[]' 2>/dev/null | while read -r eni_json; do
+        eni_id=$(echo "$eni_json" | jq -r '.Id')
+        if [[ -n "$eni_id" ]]; then
+            attach_id=$(echo "$eni_json" | jq -r '.Attachment.AttachmentId // empty')
+            [[ -n "$attach_id" ]] && aws ec2 detach-network-interface --attachment-id "$attach_id" --force --region "$REGION" 2>/dev/null || true
+        fi
+    done
+    # Wait up to 5 minutes for ENIs to release. Fargate ENIs take
+    # 30-60s; ELB-owned ENIs (amazon-elb requester) released by AWS
+    # 1-5 min after the ALB is fully deleted; EFS-owned ENIs released
+    # ~30-60s after delete-mount-target (see above).
+    waited=0
+    while [ $waited -lt 300 ]; do
+        remaining=$(aws ec2 describe-network-interfaces --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "NetworkInterfaces[?RequesterId!='amazon-elb'].{Id:NetworkInterfaceId,Attachment:Attachment}" --output json 2>/dev/null | \
-            jq -c '.[]' 2>/dev/null | while read -r eni_json; do
-            eni_id=$(echo "$eni_json" | jq -r '.Id')
-            if [[ -n "$eni_id" ]]; then
-                attach_id=$(echo "$eni_json" | jq -r '.Attachment.AttachmentId // empty')
-                [[ -n "$attach_id" ]] && aws ec2 detach-network-interface --attachment-id "$attach_id" --force --region "$REGION" 2>/dev/null || true
-            fi
-        done
-        # Wait up to 5 minutes for ENIs to release. Fargate ENIs take
-        # 30-60s; ELB-owned ENIs (amazon-elb requester) released by AWS
-        # 1-5 min after the ALB is fully deleted.
+            --query "length(NetworkInterfaces)" --output text 2>/dev/null || echo 0)
+        [ "$remaining" = "0" ] && break
+        sleep 10
+        waited=$((waited + 10))
+    done
+    # Final pass: attempt explicit delete on whatever is left.
+    aws ec2 describe-network-interfaces --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eni_id; do
+        [[ -n "$eni_id" ]] && aws ec2 delete-network-interface --network-interface-id "$eni_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Delete NAT gateways (block subnet+VPC deletes; takes ~30-90s).
+    # Initiate deletes first, then wait below.
+    nat_ids=$(aws ec2 describe-nat-gateways --region "$REGION" \
+        --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,failed" \
+        --query "NatGateways[].NatGatewayId" --output text 2>/dev/null || true)
+    for nat_id in $nat_ids; do
+        [[ -n "$nat_id" ]] && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" --region "$REGION" 2>/dev/null || true
+    done
+    if [[ -n "$nat_ids" ]]; then
         waited=0
-        while [ $waited -lt 300 ]; do
-            remaining=$(aws ec2 describe-network-interfaces --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "length(NetworkInterfaces)" --output text 2>/dev/null || echo 0)
+        while [ $waited -lt 120 ]; do
+            remaining=$(aws ec2 describe-nat-gateways --region "$REGION" \
+                --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,deleting" \
+                --query "length(NatGateways)" --output text 2>/dev/null || echo 0)
             [ "$remaining" = "0" ] && break
             sleep 10
             waited=$((waited + 10))
         done
-        # Final pass: attempt explicit delete on whatever is left.
+    fi
+    # Delete VPC endpoints (block VPC delete)
+    aws ec2 describe-vpc-endpoints --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "VpcEndpoints[?State!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ep_id; do
+        [[ -n "$ep_id" ]] && aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$ep_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Detach VPN gateways attached to this VPC
+    aws ec2 describe-vpn-gateways --region "$REGION" \
+        --filters "Name=attachment.vpc-id,Values=$vpc_id" "Name=state,Values=available" \
+        --query "VpnGateways[].VpnGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vgw_id; do
+        if [[ -n "$vgw_id" ]]; then
+            aws ec2 detach-vpn-gateway --vpn-gateway-id "$vgw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+            aws ec2 delete-vpn-gateway --vpn-gateway-id "$vgw_id" --region "$REGION" 2>/dev/null || true
+        fi
+    done
+    # Delete VPC peering connections (requester or accepter)
+    aws ec2 describe-vpc-peering-connections --region "$REGION" \
+        --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
+        --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
+        [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
+    done
+    aws ec2 describe-vpc-peering-connections --region "$REGION" \
+        --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
+        --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
+        [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Delete transit gateway VPC attachments
+    aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,modifying" \
+        --query "TransitGatewayVpcAttachments[].TransitGatewayAttachmentId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_att_id; do
+        [[ -n "$tgw_att_id" ]] && aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$tgw_att_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Delete egress-only internet gateways attached to this VPC
+    aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
+        --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].EgressOnlyInternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eigw_id; do
+        [[ -n "$eigw_id" ]] && aws ec2 delete-egress-only-internet-gateway --egress-only-internet-gateway-id "$eigw_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Delete subnets
+    aws ec2 describe-subnets --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "Subnets[].SubnetId" --output text 2>/dev/null | tr '\t' '\n' | while read -r subnet_id; do
+        [[ -n "$subnet_id" ]] && aws ec2 delete-subnet --subnet-id "$subnet_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Delete non-main route tables (each may have explicit associations
+    # to disassociate first; disassociating non-main ones is idempotent)
+    aws ec2 describe-route-tables --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rt_id; do
+        if [[ -n "$rt_id" ]]; then
+            aws ec2 describe-route-tables --route-table-ids "$rt_id" --region "$REGION" \
+                --query "RouteTables[0].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r assoc_id; do
+                [[ -n "$assoc_id" ]] && aws ec2 disassociate-route-table --association-id "$assoc_id" --region "$REGION" 2>/dev/null || true
+            done
+            aws ec2 delete-route-table --route-table-id "$rt_id" --region "$REGION" 2>/dev/null || true
+        fi
+    done
+    # Delete non-default network ACLs
+    aws ec2 describe-network-acls --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "NetworkAcls[?!IsDefault].NetworkAclId" --output text 2>/dev/null | tr '\t' '\n' | while read -r nacl_id; do
+        [[ -n "$nacl_id" ]] && aws ec2 delete-network-acl --network-acl-id "$nacl_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Detach and delete internet gateways
+    aws ec2 describe-internet-gateways --region "$REGION" \
+        --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+        --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r igw_id; do
+        if [[ -n "$igw_id" ]]; then
+            aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+            aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null || true
+        fi
+    done
+    # Delete non-default security groups
+    aws ec2 describe-security-groups --region "$REGION" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg_id; do
+        [[ -n "$sg_id" ]] && aws ec2 delete-security-group --group-id "$sg_id" --region "$REGION" 2>/dev/null || true
+    done
+    # Delete VPC — surface the error if it still fails so we can see
+    # what's blocking. The script continues either way.
+    if ! aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>&1; then
+        echo "  WARN: delete-vpc $vpc_id failed (see error above)"
+        echo "  Enumerating remaining dependencies on $vpc_id:"
+        echo "    ENIs:"
         aws ec2 describe-network-interfaces --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eni_id; do
-            [[ -n "$eni_id" ]] && aws ec2 delete-network-interface --network-interface-id "$eni_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Delete NAT gateways (block subnet+VPC deletes; takes ~30-90s).
-        # Initiate deletes first, then wait below.
-        nat_ids=$(aws ec2 describe-nat-gateways --region "$REGION" \
-            --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,failed" \
-            --query "NatGateways[].NatGatewayId" --output text 2>/dev/null || true)
-        for nat_id in $nat_ids; do
-            [[ -n "$nat_id" ]] && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" --region "$REGION" 2>/dev/null || true
-        done
-        if [[ -n "$nat_ids" ]]; then
-            waited=0
-            while [ $waited -lt 120 ]; do
-                remaining=$(aws ec2 describe-nat-gateways --region "$REGION" \
-                    --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,deleting" \
-                    --query "length(NatGateways)" --output text 2>/dev/null || echo 0)
-                [ "$remaining" = "0" ] && break
-                sleep 10
-                waited=$((waited + 10))
-            done
-        fi
-        # Delete VPC endpoints (block VPC delete)
-        aws ec2 describe-vpc-endpoints --region "$REGION" \
-            --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "VpcEndpoints[?State!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ep_id; do
-            [[ -n "$ep_id" ]] && aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$ep_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Detach VPN gateways attached to this VPC
-        aws ec2 describe-vpn-gateways --region "$REGION" \
-            --filters "Name=attachment.vpc-id,Values=$vpc_id" "Name=state,Values=available" \
-            --query "VpnGateways[].VpnGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vgw_id; do
-            if [[ -n "$vgw_id" ]]; then
-                aws ec2 detach-vpn-gateway --vpn-gateway-id "$vgw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
-                aws ec2 delete-vpn-gateway --vpn-gateway-id "$vgw_id" --region "$REGION" 2>/dev/null || true
-            fi
-        done
-        # Delete VPC peering connections (requester or accepter)
-        aws ec2 describe-vpc-peering-connections --region "$REGION" \
-            --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
-            --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
-            [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
-        done
-        aws ec2 describe-vpc-peering-connections --region "$REGION" \
-            --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" "Name=status-code,Values=active,pending-acceptance,provisioning" \
-            --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pcx_id; do
-            [[ -n "$pcx_id" ]] && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Delete transit gateway VPC attachments
-        aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
-            --filters "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available,pending,modifying" \
-            --query "TransitGatewayVpcAttachments[].TransitGatewayAttachmentId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_att_id; do
-            [[ -n "$tgw_att_id" ]] && aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$tgw_att_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Delete egress-only internet gateways attached to this VPC
-        aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
-            --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].EgressOnlyInternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r eigw_id; do
-            [[ -n "$eigw_id" ]] && aws ec2 delete-egress-only-internet-gateway --egress-only-internet-gateway-id "$eigw_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Delete subnets
+            --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status,Type:InterfaceType,Desc:Description,Owner:RequesterId}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    Subnets:"
         aws ec2 describe-subnets --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "Subnets[].SubnetId" --output text 2>/dev/null | tr '\t' '\n' | while read -r subnet_id; do
-            [[ -n "$subnet_id" ]] && aws ec2 delete-subnet --subnet-id "$subnet_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Delete non-main route tables (each may have explicit associations
-        # to disassociate first; disassociating non-main ones is idempotent)
-        aws ec2 describe-route-tables --region "$REGION" \
-            --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rt_id; do
-            if [[ -n "$rt_id" ]]; then
-                aws ec2 describe-route-tables --route-table-ids "$rt_id" --region "$REGION" \
-                    --query "RouteTables[0].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r assoc_id; do
-                    [[ -n "$assoc_id" ]] && aws ec2 disassociate-route-table --association-id "$assoc_id" --region "$REGION" 2>/dev/null || true
-                done
-                aws ec2 delete-route-table --route-table-id "$rt_id" --region "$REGION" 2>/dev/null || true
-            fi
-        done
-        # Delete non-default network ACLs
-        aws ec2 describe-network-acls --region "$REGION" \
-            --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "NetworkAcls[?!IsDefault].NetworkAclId" --output text 2>/dev/null | tr '\t' '\n' | while read -r nacl_id; do
-            [[ -n "$nacl_id" ]] && aws ec2 delete-network-acl --network-acl-id "$nacl_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Detach and delete internet gateways
+            --query "Subnets[].{Id:SubnetId,Cidr:CidrBlock,Az:AvailabilityZone}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    NAT gateways:"
+        aws ec2 describe-nat-gateways --region "$REGION" \
+            --filter "Name=vpc-id,Values=$vpc_id" \
+            --query "NatGateways[].{Id:NatGatewayId,State:State}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    Internet gateways:"
         aws ec2 describe-internet-gateways --region "$REGION" \
             --filters "Name=attachment.vpc-id,Values=$vpc_id" \
-            --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r igw_id; do
-            if [[ -n "$igw_id" ]]; then
-                aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
-                aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null || true
-            fi
-        done
-        # Delete non-default security groups
+            --query "InternetGateways[].{Id:InternetGatewayId,State:Attachments[0].State}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    Egress-only IGWs:"
+        aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
+            --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].{Id:EgressOnlyInternetGatewayId}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    VPN gateways:"
+        aws ec2 describe-vpn-gateways --region "$REGION" \
+            --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+            --query "VpnGateways[].{Id:VpnGatewayId,State:State}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    VPC peering connections (as requester):"
+        aws ec2 describe-vpc-peering-connections --region "$REGION" \
+            --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" \
+            --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    VPC peering connections (as accepter):"
+        aws ec2 describe-vpc-peering-connections --region "$REGION" \
+            --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" \
+            --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    TGW VPC attachments:"
+        aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "TransitGatewayVpcAttachments[].{Id:TransitGatewayAttachmentId,State:State}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    VPC endpoints:"
+        aws ec2 describe-vpc-endpoints --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "VpcEndpoints[].{Id:VpcEndpointId,State:State,Type:VpcEndpointType,Service:ServiceName}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    Route tables:"
+        aws ec2 describe-route-tables --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "RouteTables[].{Id:RouteTableId,Main:Associations[?Main].Main|[0]}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    Network ACLs:"
+        aws ec2 describe-network-acls --region "$REGION" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query "NetworkAcls[].{Id:NetworkAclId,Default:IsDefault}" \
+            --output table 2>&1 | sed 's/^/      /' || true
+        echo "    Security groups:"
         aws ec2 describe-security-groups --region "$REGION" \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg_id; do
-            [[ -n "$sg_id" ]] && aws ec2 delete-security-group --group-id "$sg_id" --region "$REGION" 2>/dev/null || true
-        done
-        # Delete VPC — surface the error if it still fails so we can see
-        # what's blocking. The script continues either way.
-        if ! aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>&1; then
-            echo "  WARN: delete-vpc $vpc_id failed (see error above)"
-            echo "  Enumerating remaining dependencies on $vpc_id:"
-            echo "    ENIs:"
-            aws ec2 describe-network-interfaces --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status,Type:InterfaceType,Desc:Description,Owner:RequesterId}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    Subnets:"
-            aws ec2 describe-subnets --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "Subnets[].{Id:SubnetId,Cidr:CidrBlock,Az:AvailabilityZone}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    NAT gateways:"
-            aws ec2 describe-nat-gateways --region "$REGION" \
-                --filter "Name=vpc-id,Values=$vpc_id" \
-                --query "NatGateways[].{Id:NatGatewayId,State:State}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    Internet gateways:"
-            aws ec2 describe-internet-gateways --region "$REGION" \
-                --filters "Name=attachment.vpc-id,Values=$vpc_id" \
-                --query "InternetGateways[].{Id:InternetGatewayId,State:Attachments[0].State}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    Egress-only IGWs:"
-            aws ec2 describe-egress-only-internet-gateways --region "$REGION" \
-                --query "EgressOnlyInternetGateways[?Attachments[?VpcId=='$vpc_id']].{Id:EgressOnlyInternetGatewayId}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    VPN gateways:"
-            aws ec2 describe-vpn-gateways --region "$REGION" \
-                --filters "Name=attachment.vpc-id,Values=$vpc_id" \
-                --query "VpnGateways[].{Id:VpnGatewayId,State:State}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    VPC peering connections (as requester):"
-            aws ec2 describe-vpc-peering-connections --region "$REGION" \
-                --filters "Name=requester-vpc-info.vpc-id,Values=$vpc_id" \
-                --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    VPC peering connections (as accepter):"
-            aws ec2 describe-vpc-peering-connections --region "$REGION" \
-                --filters "Name=accepter-vpc-info.vpc-id,Values=$vpc_id" \
-                --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    TGW VPC attachments:"
-            aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "TransitGatewayVpcAttachments[].{Id:TransitGatewayAttachmentId,State:State}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    VPC endpoints:"
-            aws ec2 describe-vpc-endpoints --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "VpcEndpoints[].{Id:VpcEndpointId,State:State,Type:VpcEndpointType,Service:ServiceName}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    Route tables:"
-            aws ec2 describe-route-tables --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "RouteTables[].{Id:RouteTableId,Main:Associations[?Main].Main|[0]}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    Network ACLs:"
-            aws ec2 describe-network-acls --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "NetworkAcls[].{Id:NetworkAclId,Default:IsDefault}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-            echo "    Security groups:"
-            aws ec2 describe-security-groups --region "$REGION" \
-                --filters "Name=vpc-id,Values=$vpc_id" \
-                --query "SecurityGroups[].{Id:GroupId,Name:GroupName}" \
-                --output table 2>&1 | sed 's/^/      /' || true
-        fi
+            --query "SecurityGroups[].{Id:GroupId,Name:GroupName}" \
+            --output table 2>&1 | sed 's/^/      /' || true
     fi
-done
+}
+
+# Export variables and the function so xargs subshells can see them.
+export -f clean_orphan_vpc
+export REGION DEFAULT_VPC
+
+# Process orphan VPCs in parallel (up to 8 at a time). Each VPC can block
+# for up to 5 min on ENI release + 2 min on NAT GW deletion; running them
+# serially meant 8-10 orphans took 50+ minutes. With -P 8 that collapses
+# to roughly one VPC's worth of wait time. Output from concurrent VPCs will
+# interleave, but each VPC logs its own ID so the output remains readable.
+aws ec2 describe-vpcs --region "$REGION" \
+    --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | \
+    grep -v "^$DEFAULT_VPC$" | grep -v "^$" | \
+    xargs -n 1 -P 8 -I {} bash -c 'clean_orphan_vpc "$@"' _ {}
 
 # After orphan-VPC sweep, report how many non-default VPCs remain so the
 # CI run shows whether the account is near or at the VPC quota.
