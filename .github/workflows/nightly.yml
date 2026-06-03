@@ -121,11 +121,11 @@ jobs:
     strategy:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
-      # us-east-1 VPC quota is 30 in the test account. At max-parallel=10,
-      # concurrent VPC-heavy fixtures plus orphans from in-flight failures
-      # exhaust the quota and cascade-fail discovery tests. Hold at 5
-      # until a quota bump above 30 is granted; revisit then.
-      max-parallel: 5
+      # us-east-1 VPC quota raised to 60 (2026-06-02). Bump back to 12 to claw
+      # back nightly throughput with headroom for orphans (the EFS-mount-target
+      # cleanup fix in scripts/ci/clean-environment.sh keeps orphan accumulation
+      # in check). Push higher once a few nightlies prove the new ceiling holds.
+      max-parallel: 12
       fail-fast: false
     permissions:
       id-token: write
