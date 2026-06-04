@@ -41,6 +41,7 @@ open class OriginAccessControlResolvable extends formae.Resolvable {
 }
 open class OriginAccessControl extends formae.Resource {
 
+    @aws.FieldHint
     originAccessControlConfig: OriginAccessControlConfig
 
     local parent = this

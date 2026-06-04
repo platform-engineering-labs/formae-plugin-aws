@@ -73,6 +73,7 @@ open class CachePolicyResolvable extends formae.Resolvable {
 }
 open class CachePolicy extends formae.Resource {
 
+    @aws.FieldHint
     cachePolicyConfig: CachePolicyConfig
 
     local parent = this

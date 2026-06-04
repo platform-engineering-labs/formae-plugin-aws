@@ -62,6 +62,7 @@ open class OriginRequestPolicyResolvable extends formae.Resolvable {
 }
 open class OriginRequestPolicy extends formae.Resource {
 
+    @aws.FieldHint
     originRequestPolicyConfig: OriginRequestPolicyConfig
 
     local parent = this

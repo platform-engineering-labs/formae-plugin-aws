@@ -172,6 +172,7 @@ open class ResponseHeadersPolicyResolvable extends formae.Resolvable {
 }
 open class ResponseHeadersPolicy extends formae.Resource {
 
+    @aws.FieldHint
     responseHeadersPolicyConfig: ResponseHeadersPolicyConfig
 
     local parent = this

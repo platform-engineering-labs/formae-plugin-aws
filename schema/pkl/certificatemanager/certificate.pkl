@@ -81,6 +81,7 @@ open class Certificate extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     certificateAuthorityArn: (String|formae.Resolvable)?
 
+    @aws.FieldHint
     certificateTransparencyLoggingPreference: CertTransparencyPreferenceType?
 
     @aws.FieldHint { createOnly = true }
@@ -89,6 +90,7 @@ open class Certificate extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     validationMethod: CertValidationMethodType?
 
+    @aws.FieldHint
     certificateExport: String?
 
     @aws.FieldHint {

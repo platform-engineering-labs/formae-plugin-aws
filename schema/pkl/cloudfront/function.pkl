@@ -56,8 +56,10 @@ open class Function extends formae.Resource {
     @aws.FieldHint { writeOnly = true }
     autoPublish: Boolean?
 
+    @aws.FieldHint
     functionCode: String
 
+    @aws.FieldHint
     functionConfig: FunctionConfig
 
     @aws.FieldHint {
