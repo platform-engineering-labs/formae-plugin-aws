@@ -945,7 +945,7 @@ export REGION DEFAULT_VPC
 aws ec2 describe-vpcs --region "$REGION" \
     --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | \
     grep -v "^$DEFAULT_VPC$" | grep -v "^$" | \
-    xargs -n 1 -P 8 -I {} bash -c 'clean_orphan_vpc "$@"' _ {}
+    xargs -P 8 -I {} bash -c 'clean_orphan_vpc "$@"' _ {} || true
 
 # After orphan-VPC sweep, report how many non-default VPCs remain so the
 # CI run shows whether the account is near or at the VPC quota.
