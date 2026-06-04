@@ -1,0 +1,52 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudfront.originaccesscontrol
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudFront::OriginAccessControl"
+
+typealias OACOriginType = "s3"|"mediastore"|"lambda"|"mediapackagev2"
+typealias OACSigningBehaviorType = "always"|"never"|"no-override"
+typealias OACSigningProtocolType = "sigv4"
+
+
+@aws.SubResourceHint
+open class OriginAccessControlConfig extends formae.SubResource {
+    name: String
+    description: String?
+    originAccessControlOriginType: OACOriginType
+    signingBehavior: OACSigningBehaviorType
+    signingProtocol: OACSigningProtocolType
+}
+
+
+open class OriginAccessControlResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: OriginAccessControlResolvable = (this) {
+        property = "Id"
+    }
+}
+
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Id"
+}
+open class OriginAccessControl extends formae.Resource {
+
+    originAccessControlConfig: OriginAccessControlConfig
+
+    local parent = this
+
+    hidden res: OriginAccessControlResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
