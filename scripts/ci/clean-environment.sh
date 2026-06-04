@@ -1263,23 +1263,26 @@ aws cloudfront list-functions --region "$REGION" \
     [[ -z "$fn_name" || "$fn_name" == "None" ]] && continue
     echo "  Deleting CloudFront Function: $fn_name"
     etag=$(aws cloudfront describe-function --name "$fn_name" --stage DEVELOPMENT \
-        --query 'ETag' --output text 2>/dev/null)
+        --query 'ETag' --output text 2>/dev/null) || etag=""
     [[ -z "$etag" || "$etag" == "None" ]] && continue
     aws cloudfront delete-function --name "$fn_name" --if-match "$etag" 2>/dev/null || true
 done
 
 # CloudFront KeyValueStores
 echo "Cleaning CloudFront KeyValueStores..."
+# Note: --name takes the bare KeyValueStore Name (e.g. "my-kvs"), NOT the ARN.
+# The AWS CLI docs misleadingly describe --name as the ARN, but the API rejects
+# ARN values with EntityNotFound (exit code 254). Extract the Name field from
+# list-key-value-stores and pass that to describe/delete.
 aws cloudfront list-key-value-stores --region "$REGION" \
-    --query "KeyValueStoreList.Items[?starts_with(Name, 'formae-plugin-sdk-test-')].ARN" \
-    --output text 2>/dev/null | tr '\t' '\n' | while read -r kvs_arn; do
-    [[ -z "$kvs_arn" || "$kvs_arn" == "None" ]] && continue
-    echo "  Deleting CloudFront KeyValueStore: $kvs_arn"
-    # describe/delete take --name (the ARN is the value, but the CLI flag is --name)
-    etag=$(aws cloudfront describe-key-value-store --name "$kvs_arn" \
-        --query 'ETag' --output text 2>/dev/null)
+    --query "KeyValueStoreList.Items[?starts_with(Name, 'formae-plugin-sdk-test-')].Name" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r kvs_name; do
+    [[ -z "$kvs_name" || "$kvs_name" == "None" ]] && continue
+    echo "  Deleting CloudFront KeyValueStore: $kvs_name"
+    etag=$(aws cloudfront describe-key-value-store --name "$kvs_name" \
+        --query 'ETag' --output text 2>/dev/null) || etag=""
     [[ -z "$etag" || "$etag" == "None" ]] && continue
-    aws cloudfront delete-key-value-store --name "$kvs_arn" --if-match "$etag" 2>/dev/null || true
+    aws cloudfront delete-key-value-store --name "$kvs_name" --if-match "$etag" 2>/dev/null || true
 done
 
 # CloudFront Cache Policies
@@ -1290,7 +1293,7 @@ aws cloudfront list-cache-policies --type custom --region "$REGION" \
     [[ -z "$pol_id" || "$pol_id" == "None" ]] && continue
     echo "  Deleting CloudFront CachePolicy: $pol_id"
     etag=$(aws cloudfront get-cache-policy --id "$pol_id" \
-        --query 'ETag' --output text 2>/dev/null)
+        --query 'ETag' --output text 2>/dev/null) || etag=""
     [[ -z "$etag" || "$etag" == "None" ]] && continue
     aws cloudfront delete-cache-policy --id "$pol_id" --if-match "$etag" 2>/dev/null || true
 done
@@ -1303,7 +1306,7 @@ aws cloudfront list-origin-request-policies --type custom --region "$REGION" \
     [[ -z "$pol_id" || "$pol_id" == "None" ]] && continue
     echo "  Deleting CloudFront OriginRequestPolicy: $pol_id"
     etag=$(aws cloudfront get-origin-request-policy --id "$pol_id" \
-        --query 'ETag' --output text 2>/dev/null)
+        --query 'ETag' --output text 2>/dev/null) || etag=""
     [[ -z "$etag" || "$etag" == "None" ]] && continue
     aws cloudfront delete-origin-request-policy --id "$pol_id" --if-match "$etag" 2>/dev/null || true
 done
@@ -1316,7 +1319,7 @@ aws cloudfront list-response-headers-policies --type custom --region "$REGION" \
     [[ -z "$pol_id" || "$pol_id" == "None" ]] && continue
     echo "  Deleting CloudFront ResponseHeadersPolicy: $pol_id"
     etag=$(aws cloudfront get-response-headers-policy --id "$pol_id" \
-        --query 'ETag' --output text 2>/dev/null)
+        --query 'ETag' --output text 2>/dev/null) || etag=""
     [[ -z "$etag" || "$etag" == "None" ]] && continue
     aws cloudfront delete-response-headers-policy --id "$pol_id" --if-match "$etag" 2>/dev/null || true
 done
@@ -1329,7 +1332,7 @@ aws cloudfront list-origin-access-controls --region "$REGION" \
     [[ -z "$oac_id" || "$oac_id" == "None" ]] && continue
     echo "  Deleting CloudFront OriginAccessControl: $oac_id"
     etag=$(aws cloudfront get-origin-access-control --id "$oac_id" \
-        --query 'ETag' --output text 2>/dev/null)
+        --query 'ETag' --output text 2>/dev/null) || etag=""
     [[ -z "$etag" || "$etag" == "None" ]] && continue
     aws cloudfront delete-origin-access-control --id "$oac_id" --if-match "$etag" 2>/dev/null || true
 done
