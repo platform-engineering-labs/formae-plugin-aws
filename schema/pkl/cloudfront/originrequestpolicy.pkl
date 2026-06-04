@@ -1,0 +1,73 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudfront.originrequestpolicy
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudFront::OriginRequestPolicy"
+
+typealias OriginRequestPolicyHeaderBehaviorType = "none"|"whitelist"|"allViewer"|"allViewerAndWhitelistCloudFront"|"allExcept"
+typealias OriginRequestPolicyCookieBehaviorType = "none"|"whitelist"|"all"|"allExcept"
+typealias OriginRequestPolicyQueryStringBehaviorType = "none"|"whitelist"|"all"|"allExcept"
+
+
+@aws.SubResourceHint
+open class OriginRequestPolicyHeadersConfig extends formae.SubResource {
+    headerBehavior: OriginRequestPolicyHeaderBehaviorType
+    headers: Listing<String>?
+}
+
+
+@aws.SubResourceHint
+open class OriginRequestPolicyCookiesConfig extends formae.SubResource {
+    cookieBehavior: OriginRequestPolicyCookieBehaviorType
+    cookies: Listing<String>?
+}
+
+
+@aws.SubResourceHint
+open class OriginRequestPolicyQueryStringsConfig extends formae.SubResource {
+    queryStringBehavior: OriginRequestPolicyQueryStringBehaviorType
+    queryStrings: Listing<String>?
+}
+
+
+@aws.SubResourceHint
+open class OriginRequestPolicyConfig extends formae.SubResource {
+    name: String
+    comment: String?
+    headersConfig: OriginRequestPolicyHeadersConfig
+    cookiesConfig: OriginRequestPolicyCookiesConfig
+    queryStringsConfig: OriginRequestPolicyQueryStringsConfig
+}
+
+
+open class OriginRequestPolicyResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: OriginRequestPolicyResolvable = (this) {
+        property = "Id"
+    }
+}
+
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Id"
+}
+open class OriginRequestPolicy extends formae.Resource {
+
+    originRequestPolicyConfig: OriginRequestPolicyConfig
+
+    local parent = this
+
+    hidden res: OriginRequestPolicyResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
