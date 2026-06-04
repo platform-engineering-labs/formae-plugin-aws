@@ -22,7 +22,7 @@ BINARY := $(PLUGIN_NAME)
 PLUGIN_BASE_DIR := $(HOME)/.pel/formae/plugins
 INSTALL_DIR := $(PLUGIN_BASE_DIR)/$(PLUGIN_NAME)/v$(PLUGIN_VERSION)
 
-.PHONY: all build test test-unit test-integration lint verify-schema clean install help setup-credentials clean-environment conformance-test conformance-test-crud conformance-test-discovery conformance-test-crud-run conformance-test-discovery-run
+.PHONY: all build test test-unit test-integration lint verify-schema verify-examples clean install help setup-credentials clean-environment conformance-test conformance-test-crud conformance-test-discovery conformance-test-crud-run conformance-test-discovery-run
 
 all: build
 
@@ -65,6 +65,20 @@ lint:
 ## Checks that schema files are well-formed and follow formae conventions.
 verify-schema:
 	$(GO) run github.com/platform-engineering-labs/formae/pkg/plugin/testutil/cmd/verify-schema --namespace $(PLUGIN_NAMESPACE) ./schema/pkl
+
+## verify-examples: Validate that every CloudFront/ACM example .pkl file evaluates cleanly
+## Catches Resolvable shape regressions and cross-resource type-mismatches
+## without requiring deploy.
+verify-examples:
+	@if [ ! -f examples/PklProject.deps.json ]; then \
+		echo "Resolving examples/PklProject dependencies..."; \
+		(cd examples && pkl project resolve); \
+	fi
+	@for f in $$(find examples/cloudfront-* -name '*.pkl' 2>/dev/null); do \
+		echo "Evaluating $$f..."; \
+		FORMAE_TEST_RUN_ID=verify pkl eval --project-dir examples "$$f" >/dev/null || exit 1; \
+	done
+	@echo "All examples evaluated cleanly."
 
 ## clean: Remove build artifacts
 clean:

@@ -1,0 +1,155 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Deployable mini-stack exercising every new resource in this PR plus
+ * Distribution, using the default *.cloudfront.net hostname (no custom
+ * domain, no ACM cert). Apply against the dev account once before
+ * merging this PR. Validates destroy-ordering for the runtimeDependency
+ * edges that the per-resource conformance fixtures don't exercise.
+ *
+ * Apply: formae apply examples/cloudfront-edge-minimal/main.pkl
+ * Destroy: formae destroy examples/cloudfront-edge-minimal/main.pkl
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/cloudfront/keyvaluestore.pkl"
+import "@aws/cloudfront/function.pkl" as cffn
+import "@aws/cloudfront/cachepolicy.pkl"
+import "@aws/cloudfront/originrequestpolicy.pkl"
+import "@aws/cloudfront/responseheaderspolicy.pkl"
+import "@aws/cloudfront/originaccesscontrol.pkl"
+import "@aws/cloudfront/distribution.pkl"
+import "@aws/s3/bucket.pkl"
+
+// Pre-merge integration target — use a fixed label suffix so dev
+// repeatedly applies don't collide. Override via FORMAE_TEST_RUN_ID
+// when running in CI.
+local runID = read?("env:FORMAE_TEST_RUN_ID") ?? "dev"
+
+local originBucket = new bucket.Bucket {
+  label = "cf-edge-origin"
+  bucketName = "formae-plugin-sdk-test-cf-origin-\(runID)"
+}
+
+local kvs = new keyvaluestore.KeyValueStore {
+  label = "cf-edge-kvs"
+  name = "formae-plugin-sdk-test-cf-kvs-\(runID)"
+  comment = "Edge-minimal demo KVS"
+}
+
+local fn = new cffn.Function {
+  label = "cf-edge-fn"
+  name = "formae-plugin-sdk-test-cf-fn-\(runID)"
+  autoPublish = true
+  functionCode = """
+    function handler(event) {
+      event.response = event.response || { statusCode: 200, statusDescription: 'OK' };
+      return event.response;
+    }
+    """
+  functionConfig = new cffn.FunctionConfig {
+    runtime = "cloudfront-js-2.0"
+    comment = "Edge-minimal demo Function"
+    keyValueStoreAssociations = new Listing<cffn.KeyValueStoreAssociation> {
+      new { keyValueStoreARN = kvs.res.arn }
+    }
+  }
+}
+
+local cp = new cachepolicy.CachePolicy {
+  label = "cf-edge-cp"
+  cachePolicyConfig = new cachepolicy.CachePolicyConfig {
+    name = "formae-plugin-sdk-test-cf-cp-\(runID)"
+    defaultTTL = 86400
+    maxTTL = 31536000
+    minTTL = 1
+    parametersInCacheKeyAndForwardedToOrigin = new cachepolicy.ParametersInCacheKeyAndForwardedToOrigin {
+      enableAcceptEncodingGzip = true
+      headersConfig = new cachepolicy.CachePolicyHeadersConfig { headerBehavior = "none" }
+      cookiesConfig = new cachepolicy.CachePolicyCookiesConfig { cookieBehavior = "none" }
+      queryStringsConfig = new cachepolicy.CachePolicyQueryStringsConfig { queryStringBehavior = "none" }
+    }
+  }
+}
+
+local orp = new originrequestpolicy.OriginRequestPolicy {
+  label = "cf-edge-orp"
+  originRequestPolicyConfig = new originrequestpolicy.OriginRequestPolicyConfig {
+    name = "formae-plugin-sdk-test-cf-orp-\(runID)"
+    headersConfig = new originrequestpolicy.OriginRequestPolicyHeadersConfig { headerBehavior = "none" }
+    cookiesConfig = new originrequestpolicy.OriginRequestPolicyCookiesConfig { cookieBehavior = "none" }
+    queryStringsConfig = new originrequestpolicy.OriginRequestPolicyQueryStringsConfig { queryStringBehavior = "none" }
+  }
+}
+
+local rhp = new responseheaderspolicy.ResponseHeadersPolicy {
+  label = "cf-edge-rhp"
+  responseHeadersPolicyConfig = new responseheaderspolicy.ResponseHeadersPolicyConfig {
+    name = "formae-plugin-sdk-test-cf-rhp-\(runID)"
+  }
+}
+
+local oac = new originaccesscontrol.OriginAccessControl {
+  label = "cf-edge-oac"
+  originAccessControlConfig = new originaccesscontrol.OriginAccessControlConfig {
+    name = "formae-plugin-sdk-test-cf-oac-\(runID)"
+    originAccessControlOriginType = "s3"
+    signingBehavior = "always"
+    signingProtocol = "sigv4"
+  }
+}
+
+local dist = new distribution.Distribution {
+  label = "cf-edge-distribution"
+  distributionConfig = new distribution.DistributionConfig {
+    enabled = true
+    comment = "Edge-minimal demo Distribution"
+    origins = new Listing<distribution.Origin> {
+      new {
+        id = "s3-origin"
+        domainName = originBucket.res.regionalDomainName
+        originAccessControlId = oac.res.id
+        s3OriginConfig = new distribution.S3OriginConfig {}
+      }
+    }
+    defaultCacheBehavior = new distribution.DefaultCacheBehavior {
+      targetOriginId = "s3-origin"
+      viewerProtocolPolicy = "redirect-to-https"
+      cachePolicyId = cp.res.id
+      originRequestPolicyId = orp.res.id
+      responseHeadersPolicyId = rhp.res.id
+      functionAssociations = new Listing<distribution.FunctionAssociation> {
+        new { eventType = "viewer-request"; functionARN = fn.res.arn }
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = "cloudfront-edge-minimal-\(runID)"
+    description = "Pre-merge integration target for CloudFront/ACM resources PR"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  originBucket
+  kvs
+  fn
+  cp
+  orp
+  rhp
+  oac
+  dist
+}
