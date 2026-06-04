@@ -1,0 +1,87 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudfront.cachepolicy
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudFront::CachePolicy"
+
+typealias CachePolicyHeaderBehaviorType = "none"|"whitelist"
+typealias CachePolicyCookieBehaviorType = "none"|"whitelist"|"allExcept"|"all"
+typealias CachePolicyQueryStringBehaviorType = "none"|"whitelist"|"allExcept"|"all"
+
+
+@aws.SubResourceHint
+open class CachePolicyHeadersConfig extends formae.SubResource {
+    headerBehavior: CachePolicyHeaderBehaviorType
+    headers: Listing<String>?
+}
+
+
+@aws.SubResourceHint
+open class CachePolicyCookiesConfig extends formae.SubResource {
+    cookieBehavior: CachePolicyCookieBehaviorType
+    cookies: Listing<String>?
+}
+
+
+@aws.SubResourceHint
+open class CachePolicyQueryStringsConfig extends formae.SubResource {
+    queryStringBehavior: CachePolicyQueryStringBehaviorType
+    queryStrings: Listing<String>?
+}
+
+
+@aws.SubResourceHint
+open class ParametersInCacheKeyAndForwardedToOrigin extends formae.SubResource {
+    enableAcceptEncodingGzip: Boolean
+
+    @aws.FieldHint { hasProviderDefault = true }
+    enableAcceptEncodingBrotli: Boolean?
+    headersConfig: CachePolicyHeadersConfig
+    cookiesConfig: CachePolicyCookiesConfig
+    queryStringsConfig: CachePolicyQueryStringsConfig
+}
+
+
+@aws.SubResourceHint
+open class CachePolicyConfig extends formae.SubResource {
+    name: String
+    comment: String?
+    defaultTTL: Number
+    maxTTL: Number
+    minTTL: Number
+    parametersInCacheKeyAndForwardedToOrigin: ParametersInCacheKeyAndForwardedToOrigin
+}
+
+
+open class CachePolicyResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: CachePolicyResolvable = (this) {
+        property = "Id"
+    }
+}
+
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Id"
+}
+open class CachePolicy extends formae.Resource {
+
+    @aws.FieldHint
+    cachePolicyConfig: CachePolicyConfig
+
+    local parent = this
+
+    hidden res: CachePolicyResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

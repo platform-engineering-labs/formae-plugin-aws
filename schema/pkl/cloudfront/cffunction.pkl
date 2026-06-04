@@ -1,0 +1,77 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudfront.cffunction
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudFront::Function"
+
+typealias FunctionRuntimeType = "cloudfront-js-1.0"|"cloudfront-js-2.0"
+
+
+@aws.SubResourceHint
+open class KeyValueStoreAssociation extends formae.SubResource {
+    @aws.FieldHint{outputField = "KeyValueStoreARN"; edgeKind = "runtimeDependency"}
+    keyValueStoreARN: String|formae.Resolvable
+}
+
+
+@aws.SubResourceHint
+open class FunctionConfig extends formae.SubResource {
+    comment: String
+
+    runtime: FunctionRuntimeType
+
+    keyValueStoreAssociations: Listing<KeyValueStoreAssociation>?
+}
+
+
+open class FunctionResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: FunctionResolvable = (this) {
+        property = "FunctionARN"
+    }
+
+    hidden stage: FunctionResolvable = (this) {
+        property = "Stage"
+    }
+}
+
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "FunctionARN"
+}
+open class Function extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    name: String
+
+    @aws.FieldHint { writeOnly = true }
+    autoPublish: Boolean?
+
+    @aws.FieldHint
+    functionCode: String
+
+    @aws.FieldHint
+    functionConfig: FunctionConfig
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: FunctionResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

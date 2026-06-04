@@ -1,0 +1,66 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudfront.keyvaluestore
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudFront::KeyValueStore"
+
+
+@aws.SubResourceHint
+open class ImportSource extends formae.SubResource {
+    sourceArn: String|formae.Resolvable
+    sourceType: String
+}
+
+
+open class KeyValueStoreResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: KeyValueStoreResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden id: KeyValueStoreResolvable = (this) {
+        property = "Id"
+    }
+
+    hidden status: KeyValueStoreResolvable = (this) {
+        property = "Status"
+    }
+}
+
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Name"
+}
+open class KeyValueStore extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    name: String
+
+    @aws.FieldHint
+    comment: String?
+
+    @aws.FieldHint { writeOnly = true }
+    importSource: ImportSource?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: KeyValueStoreResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

@@ -1,0 +1,489 @@
+// © 2025 Platform Engineering Labs Inc.
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
+package certificatemanager
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sort"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/acm"
+	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
+
+	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
+)
+
+// ----- fake ACM client -----
+
+type fakeACMClient struct {
+	requestCertificateInput  *acm.RequestCertificateInput
+	requestCertificateOut    *acm.RequestCertificateOutput
+	requestCertificateErr    error
+	describeCertificateOut   *acm.DescribeCertificateOutput
+	describeCertificateErr   error
+	deleteCertificateInput   *acm.DeleteCertificateInput
+	deleteCertificateErr     error
+	addTagsInput             *acm.AddTagsToCertificateInput
+	removeTagsInput          *acm.RemoveTagsFromCertificateInput
+	listTagsOut              *acm.ListTagsForCertificateOutput
+	listCertificatesOut      *acm.ListCertificatesOutput
+	listCertificatesErr      error
+	updateOptionsInput       *acm.UpdateCertificateOptionsInput
+}
+
+func (f *fakeACMClient) RequestCertificate(_ context.Context, in *acm.RequestCertificateInput, _ ...func(*acm.Options)) (*acm.RequestCertificateOutput, error) {
+	f.requestCertificateInput = in
+	if f.requestCertificateErr != nil {
+		return nil, f.requestCertificateErr
+	}
+	return f.requestCertificateOut, nil
+}
+
+func (f *fakeACMClient) DescribeCertificate(_ context.Context, _ *acm.DescribeCertificateInput, _ ...func(*acm.Options)) (*acm.DescribeCertificateOutput, error) {
+	return f.describeCertificateOut, f.describeCertificateErr
+}
+
+func (f *fakeACMClient) DeleteCertificate(_ context.Context, in *acm.DeleteCertificateInput, _ ...func(*acm.Options)) (*acm.DeleteCertificateOutput, error) {
+	f.deleteCertificateInput = in
+	return &acm.DeleteCertificateOutput{}, f.deleteCertificateErr
+}
+
+func (f *fakeACMClient) AddTagsToCertificate(_ context.Context, in *acm.AddTagsToCertificateInput, _ ...func(*acm.Options)) (*acm.AddTagsToCertificateOutput, error) {
+	f.addTagsInput = in
+	return &acm.AddTagsToCertificateOutput{}, nil
+}
+
+func (f *fakeACMClient) RemoveTagsFromCertificate(_ context.Context, in *acm.RemoveTagsFromCertificateInput, _ ...func(*acm.Options)) (*acm.RemoveTagsFromCertificateOutput, error) {
+	f.removeTagsInput = in
+	return &acm.RemoveTagsFromCertificateOutput{}, nil
+}
+
+func (f *fakeACMClient) ListTagsForCertificate(_ context.Context, _ *acm.ListTagsForCertificateInput, _ ...func(*acm.Options)) (*acm.ListTagsForCertificateOutput, error) {
+	if f.listTagsOut == nil {
+		return &acm.ListTagsForCertificateOutput{}, nil
+	}
+	return f.listTagsOut, nil
+}
+
+func (f *fakeACMClient) ListCertificates(_ context.Context, _ *acm.ListCertificatesInput, _ ...func(*acm.Options)) (*acm.ListCertificatesOutput, error) {
+	return f.listCertificatesOut, f.listCertificatesErr
+}
+
+func (f *fakeACMClient) UpdateCertificateOptions(_ context.Context, in *acm.UpdateCertificateOptionsInput, _ ...func(*acm.Options)) (*acm.UpdateCertificateOptionsOutput, error) {
+	f.updateOptionsInput = in
+	return &acm.UpdateCertificateOptionsOutput{}, nil
+}
+
+// newCertificateWithFake wires a Certificate provisioner against the
+// supplied fake client.
+func newCertificateWithFake(fake *fakeACMClient) *Certificate {
+	return &Certificate{
+		cfg: &config.Config{Region: "us-east-1"},
+		acmClientFactory: func(_ *config.Config) (ACMClientInterface, error) {
+			return fake, nil
+		},
+	}
+}
+
+// ----- Create -----
+
+func TestCreate_DnsValidation_RequestsCertificateAndReturnsArn(t *testing.T) {
+	fake := &fakeACMClient{
+		requestCertificateOut: &acm.RequestCertificateOutput{
+			CertificateArn: aws.String("arn:aws:acm:us-east-1:111:certificate/abcd"),
+		},
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				CertificateArn: aws.String("arn:aws:acm:us-east-1:111:certificate/abcd"),
+				DomainName:     aws.String("example.com"),
+				KeyAlgorithm:   acmtypes.KeyAlgorithmRsa2048,
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	props := map[string]any{
+		"DomainName":       "example.com",
+		"ValidationMethod": "DNS",
+		"KeyAlgorithm":     "RSA_2048",
+	}
+	body, _ := json.Marshal(props)
+	res, err := cert.Create(context.Background(), &resource.CreateRequest{
+		Properties: body,
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if res.ProgressResult.OperationStatus != resource.OperationStatusSuccess {
+		t.Errorf("OperationStatus: want Success, got %v", res.ProgressResult.OperationStatus)
+	}
+	if res.ProgressResult.NativeID != "arn:aws:acm:us-east-1:111:certificate/abcd" {
+		t.Errorf("NativeID: want cert ARN, got %q", res.ProgressResult.NativeID)
+	}
+	if fake.requestCertificateInput == nil {
+		t.Fatal("expected RequestCertificate to be called")
+	}
+	if aws.ToString(fake.requestCertificateInput.DomainName) != "example.com" {
+		t.Errorf("RequestCertificate DomainName: want example.com, got %q", aws.ToString(fake.requestCertificateInput.DomainName))
+	}
+	if fake.requestCertificateInput.ValidationMethod != acmtypes.ValidationMethodDns {
+		t.Errorf("ValidationMethod: want DNS, got %v", fake.requestCertificateInput.ValidationMethod)
+	}
+	if fake.requestCertificateInput.KeyAlgorithm != acmtypes.KeyAlgorithmRsa2048 {
+		t.Errorf("KeyAlgorithm: want RSA_2048, got %v", fake.requestCertificateInput.KeyAlgorithm)
+	}
+}
+
+func TestCreate_SansAndTags_PassThroughToAPI(t *testing.T) {
+	fake := &fakeACMClient{
+		requestCertificateOut: &acm.RequestCertificateOutput{
+			CertificateArn: aws.String("arn:fake"),
+		},
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				DomainName: aws.String("example.com"),
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	props := map[string]any{
+		"DomainName":              "example.com",
+		"SubjectAlternativeNames": []any{"www.example.com", "api.example.com"},
+		"ValidationMethod":        "DNS",
+		"Tags": []any{
+			map[string]any{"Key": "Owner", "Value": "team"},
+			map[string]any{"Key": "Env", "Value": "test"},
+		},
+	}
+	body, _ := json.Marshal(props)
+	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if len(fake.requestCertificateInput.SubjectAlternativeNames) != 2 {
+		t.Errorf("SANs: want 2, got %d", len(fake.requestCertificateInput.SubjectAlternativeNames))
+	}
+	if len(fake.requestCertificateInput.Tags) != 2 {
+		t.Errorf("Tags: want 2, got %d", len(fake.requestCertificateInput.Tags))
+	}
+}
+
+func TestCreate_TransparencyPreference_AppliedViaUpdateOptions(t *testing.T) {
+	fake := &fakeACMClient{
+		requestCertificateOut: &acm.RequestCertificateOutput{
+			CertificateArn: aws.String("arn:fake"),
+		},
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{DomainName: aws.String("example.com")},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	props := map[string]any{
+		"DomainName":                               "example.com",
+		"ValidationMethod":                         "DNS",
+		"CertificateTransparencyLoggingPreference": "DISABLED",
+	}
+	body, _ := json.Marshal(props)
+	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if fake.updateOptionsInput == nil {
+		t.Fatal("expected UpdateCertificateOptions to be called for transparency pref")
+	}
+	if fake.updateOptionsInput.Options.CertificateTransparencyLoggingPreference != acmtypes.CertificateTransparencyLoggingPreferenceDisabled {
+		t.Errorf("transparency pref: want DISABLED, got %v",
+			fake.updateOptionsInput.Options.CertificateTransparencyLoggingPreference)
+	}
+}
+
+func TestCreate_RequestCertificateError_BubblesUp(t *testing.T) {
+	fake := &fakeACMClient{
+		requestCertificateErr: errors.New("rate exceeded"),
+	}
+	cert := newCertificateWithFake(fake)
+
+	props := map[string]any{"DomainName": "example.com"}
+	body, _ := json.Marshal(props)
+	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
+	if err == nil {
+		t.Fatal("expected Create to error when RequestCertificate fails")
+	}
+}
+
+// ----- Read -----
+
+func TestRead_PopulatesValidationRecords(t *testing.T) {
+	fake := &fakeACMClient{
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				CertificateArn: aws.String("arn:fake"),
+				DomainName:     aws.String("example.com"),
+				DomainValidationOptions: []acmtypes.DomainValidation{
+					{
+						DomainName: aws.String("example.com"),
+						ResourceRecord: &acmtypes.ResourceRecord{
+							Name:  aws.String("_abc.example.com."),
+							Type:  acmtypes.RecordTypeCname,
+							Value: aws.String("_xyz.acm-validations.aws."),
+						},
+					},
+				},
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	res, err := cert.Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "arn:fake",
+		ResourceType: "AWS::CertificateManager::Certificate",
+	})
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if res.ErrorCode != "" {
+		t.Errorf("unexpected ErrorCode: %v", res.ErrorCode)
+	}
+
+	var props map[string]any
+	if err := json.Unmarshal([]byte(res.Properties), &props); err != nil {
+		t.Fatalf("unmarshal properties: %v", err)
+	}
+	records, ok := props["ValidationRecords"].([]any)
+	if !ok {
+		t.Fatalf("expected ValidationRecords list, got %T", props["ValidationRecords"])
+	}
+	if len(records) != 1 {
+		t.Errorf("ValidationRecords: want 1, got %d", len(records))
+	}
+}
+
+func TestRead_PopulatesValidationMethodFromDomainValidationOption(t *testing.T) {
+	fake := &fakeACMClient{
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				CertificateArn: aws.String("arn:fake"),
+				DomainName:     aws.String("example.com"),
+				DomainValidationOptions: []acmtypes.DomainValidation{
+					{
+						DomainName:       aws.String("example.com"),
+						ValidationMethod: acmtypes.ValidationMethodDns,
+					},
+				},
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	res, err := cert.Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "arn:fake",
+		ResourceType: "AWS::CertificateManager::Certificate",
+	})
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	var props map[string]any
+	if err := json.Unmarshal([]byte(res.Properties), &props); err != nil {
+		t.Fatalf("unmarshal properties: %v", err)
+	}
+	vm, ok := props["ValidationMethod"].(string)
+	if !ok {
+		t.Fatalf("expected ValidationMethod string, got %T", props["ValidationMethod"])
+	}
+	if vm != "DNS" {
+		t.Errorf("ValidationMethod: want DNS, got %q", vm)
+	}
+}
+
+func TestRead_NotFound_ReturnsErrorCode(t *testing.T) {
+	fake := &fakeACMClient{
+		describeCertificateErr: &acmtypes.ResourceNotFoundException{Message: aws.String("nope")},
+	}
+	cert := newCertificateWithFake(fake)
+
+	res, err := cert.Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "arn:gone",
+		ResourceType: "AWS::CertificateManager::Certificate",
+	})
+	if err != nil {
+		t.Fatalf("Read should not error on NotFound, got: %v", err)
+	}
+	if res.ErrorCode != resource.OperationErrorCodeNotFound {
+		t.Errorf("ErrorCode: want NotFound, got %v", res.ErrorCode)
+	}
+}
+
+// ----- Update -----
+
+func TestUpdate_TagsAddedAndRemoved(t *testing.T) {
+	fake := &fakeACMClient{
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{DomainName: aws.String("example.com")},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	prior := map[string]any{
+		"DomainName": "example.com",
+		"Tags": []any{
+			map[string]any{"Key": "Owner", "Value": "team"},
+			map[string]any{"Key": "Stale", "Value": "yes"},
+		},
+	}
+	desired := map[string]any{
+		"DomainName": "example.com",
+		"Tags": []any{
+			map[string]any{"Key": "Owner", "Value": "team"},
+			map[string]any{"Key": "Env", "Value": "prod"},
+		},
+	}
+	priorBody, _ := json.Marshal(prior)
+	desiredBody, _ := json.Marshal(desired)
+	_, err := cert.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          "arn:fake",
+		PriorProperties:   priorBody,
+		DesiredProperties: desiredBody,
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if fake.addTagsInput == nil {
+		t.Fatal("expected AddTagsToCertificate to be called for new tags")
+	}
+	addedKeys := tagKeys(fake.addTagsInput.Tags)
+	if !equalStringSlices(addedKeys, []string{"Env"}) {
+		t.Errorf("added tag keys: want [Env], got %v", addedKeys)
+	}
+	if fake.removeTagsInput == nil {
+		t.Fatal("expected RemoveTagsFromCertificate to be called for stale tags")
+	}
+	removedKeys := tagKeys(fake.removeTagsInput.Tags)
+	if !equalStringSlices(removedKeys, []string{"Stale"}) {
+		t.Errorf("removed tag keys: want [Stale], got %v", removedKeys)
+	}
+}
+
+func TestUpdate_TransparencyPrefChange_AppliesOptions(t *testing.T) {
+	fake := &fakeACMClient{
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{DomainName: aws.String("example.com")},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	prior := map[string]any{
+		"CertificateTransparencyLoggingPreference": "ENABLED",
+	}
+	desired := map[string]any{
+		"CertificateTransparencyLoggingPreference": "DISABLED",
+	}
+	priorBody, _ := json.Marshal(prior)
+	desiredBody, _ := json.Marshal(desired)
+	_, err := cert.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          "arn:fake",
+		PriorProperties:   priorBody,
+		DesiredProperties: desiredBody,
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if fake.updateOptionsInput == nil {
+		t.Fatal("expected UpdateCertificateOptions to be called")
+	}
+	if fake.updateOptionsInput.Options.CertificateTransparencyLoggingPreference != acmtypes.CertificateTransparencyLoggingPreferenceDisabled {
+		t.Errorf("transparency pref: want DISABLED, got %v",
+			fake.updateOptionsInput.Options.CertificateTransparencyLoggingPreference)
+	}
+}
+
+// ----- Delete -----
+
+func TestDelete_NotFound_IsIdempotentSuccess(t *testing.T) {
+	fake := &fakeACMClient{
+		deleteCertificateErr: &acmtypes.ResourceNotFoundException{Message: aws.String("gone")},
+	}
+	cert := newCertificateWithFake(fake)
+
+	res, err := cert.Delete(context.Background(), &resource.DeleteRequest{
+		NativeID: "arn:gone",
+	})
+	if err != nil {
+		t.Fatalf("Delete should not error on NotFound, got: %v", err)
+	}
+	if res.ProgressResult.OperationStatus != resource.OperationStatusSuccess {
+		t.Errorf("OperationStatus on NotFound: want Success, got %v", res.ProgressResult.OperationStatus)
+	}
+}
+
+func TestDelete_OtherError_BubblesUp(t *testing.T) {
+	fake := &fakeACMClient{
+		deleteCertificateErr: errors.New("ResourceInUse"),
+	}
+	cert := newCertificateWithFake(fake)
+
+	_, err := cert.Delete(context.Background(), &resource.DeleteRequest{
+		NativeID: "arn:in-use",
+	})
+	if err == nil {
+		t.Fatal("expected Delete to bubble up non-NotFound errors")
+	}
+}
+
+// ----- List -----
+
+func TestList_ReturnsArnsAndNextToken(t *testing.T) {
+	fake := &fakeACMClient{
+		listCertificatesOut: &acm.ListCertificatesOutput{
+			CertificateSummaryList: []acmtypes.CertificateSummary{
+				{CertificateArn: aws.String("arn:1")},
+				{CertificateArn: aws.String("arn:2")},
+			},
+			NextToken: aws.String("page-2"),
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	res, err := cert.List(context.Background(), &resource.ListRequest{})
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if !equalStringSlices(res.NativeIDs, []string{"arn:1", "arn:2"}) {
+		t.Errorf("NativeIDs: %v", res.NativeIDs)
+	}
+	if aws.ToString(res.NextPageToken) != "page-2" {
+		t.Errorf("NextPageToken: want page-2, got %q", aws.ToString(res.NextPageToken))
+	}
+}
+
+// ----- helpers used only by tests -----
+
+func tagKeys(tags []acmtypes.Tag) []string {
+	keys := make([]string, 0, len(tags))
+	for _, t := range tags {
+		keys = append(keys, aws.ToString(t.Key))
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

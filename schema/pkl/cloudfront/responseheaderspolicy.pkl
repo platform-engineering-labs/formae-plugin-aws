@@ -1,0 +1,185 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudfront.responseheaderspolicy
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudFront::ResponseHeadersPolicy"
+
+typealias FrameOptionType = "DENY"|"SAMEORIGIN"
+
+typealias ReferrerPolicyType = "no-referrer"|"no-referrer-when-downgrade"|"origin"|"origin-when-cross-origin"|"same-origin"|"strict-origin"|"strict-origin-when-cross-origin"|"unsafe-url"
+
+
+@aws.SubResourceHint
+open class AccessControlAllowHeaders extends formae.SubResource {
+    items: Listing<String>
+}
+
+
+@aws.SubResourceHint
+open class AccessControlAllowMethods extends formae.SubResource {
+    items: Listing<String>
+}
+
+
+@aws.SubResourceHint
+open class AccessControlAllowOrigins extends formae.SubResource {
+    items: Listing<String>
+}
+
+
+@aws.SubResourceHint
+open class AccessControlExposeHeaders extends formae.SubResource {
+    items: Listing<String>
+}
+
+
+@aws.SubResourceHint
+open class CorsConfig extends formae.SubResource {
+    accessControlAllowCredentials: Boolean
+    accessControlAllowHeaders: AccessControlAllowHeaders
+    accessControlAllowMethods: AccessControlAllowMethods
+    accessControlAllowOrigins: AccessControlAllowOrigins
+    accessControlExposeHeaders: AccessControlExposeHeaders?
+    accessControlMaxAgeSec: Int?
+    originOverride: Boolean
+}
+
+
+@aws.SubResourceHint
+open class ContentSecurityPolicy extends formae.SubResource {
+    @aws.FieldHint { outputField = "ContentSecurityPolicy" }
+    contentSecurityPolicy: String
+    `override`: Boolean
+}
+
+
+@aws.SubResourceHint
+open class ContentTypeOptions extends formae.SubResource {
+    `override`: Boolean
+}
+
+
+@aws.SubResourceHint
+open class FrameOptions extends formae.SubResource {
+    frameOption: FrameOptionType
+    `override`: Boolean
+}
+
+
+@aws.SubResourceHint
+open class ReferrerPolicy extends formae.SubResource {
+    @aws.FieldHint { outputField = "ReferrerPolicy" }
+    referrerPolicy: ReferrerPolicyType
+    `override`: Boolean
+}
+
+
+@aws.SubResourceHint
+open class StrictTransportSecurity extends formae.SubResource {
+    accessControlMaxAgeSec: Int
+    includeSubdomains: Boolean?
+    `override`: Boolean
+    preload: Boolean?
+}
+
+
+@aws.SubResourceHint
+open class XSSProtection extends formae.SubResource {
+    @aws.FieldHint { outputField = "ModeBlock" }
+    modeBlock: Boolean?
+    `override`: Boolean
+    protection: Boolean
+    reportUri: String?
+}
+
+
+@aws.SubResourceHint
+open class SecurityHeadersConfig extends formae.SubResource {
+    contentSecurityPolicy: ContentSecurityPolicy?
+    contentTypeOptions: ContentTypeOptions?
+    frameOptions: FrameOptions?
+    referrerPolicy: ReferrerPolicy?
+    strictTransportSecurity: StrictTransportSecurity?
+    @aws.FieldHint { outputField = "XSSProtection" }
+    xssProtection: XSSProtection?
+}
+
+
+@aws.SubResourceHint
+open class CustomHeader extends formae.SubResource {
+    header: String
+    value: String
+    `override`: Boolean
+}
+
+
+@aws.SubResourceHint
+open class CustomHeadersConfig extends formae.SubResource {
+    items: Listing<CustomHeader>
+}
+
+
+@aws.SubResourceHint
+open class ServerTimingHeadersConfig extends formae.SubResource {
+    enabled: Boolean
+    samplingRate: Number?
+}
+
+
+@aws.SubResourceHint
+open class RemoveHeader extends formae.SubResource {
+    header: String
+}
+
+
+@aws.SubResourceHint
+open class RemoveHeadersConfig extends formae.SubResource {
+    items: Listing<RemoveHeader>
+}
+
+
+@aws.SubResourceHint
+open class ResponseHeadersPolicyConfig extends formae.SubResource {
+    name: String
+    comment: String?
+    corsConfig: CorsConfig?
+    customHeadersConfig: CustomHeadersConfig?
+    removeHeadersConfig: RemoveHeadersConfig?
+    securityHeadersConfig: SecurityHeadersConfig?
+    serverTimingHeadersConfig: ServerTimingHeadersConfig?
+}
+
+
+open class ResponseHeadersPolicyResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: ResponseHeadersPolicyResolvable = (this) {
+        property = "Id"
+    }
+}
+
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Id"
+    extractable = false
+}
+open class ResponseHeadersPolicy extends formae.Resource {
+
+    @aws.FieldHint
+    responseHeadersPolicyConfig: ResponseHeadersPolicyConfig
+
+    local parent = this
+
+    hidden res: ResponseHeadersPolicyResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

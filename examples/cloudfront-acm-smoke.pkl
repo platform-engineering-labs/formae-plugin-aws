@@ -1,0 +1,151 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Static-typing smoke: declares one of each new producer (KVS, Function,
+ * Cert, CachePolicy, OriginRequestPolicy, ResponseHeadersPolicy, OAC)
+ * and wires each into a Distribution via the corresponding widened
+ * field. Validates Resolvable shape compatibility at pkl-eval time.
+ *
+ * NOT intended to be applied — this is a type-check only.
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/cloudfront/keyvaluestore.pkl"
+import "@aws/cloudfront/cffunction.pkl" as cffn
+import "@aws/certificatemanager/certificate.pkl"
+import "@aws/cloudfront/cachepolicy.pkl"
+import "@aws/cloudfront/originrequestpolicy.pkl"
+import "@aws/cloudfront/responseheaderspolicy.pkl"
+import "@aws/cloudfront/originaccesscontrol.pkl"
+import "@aws/cloudfront/distribution.pkl"
+import "@aws/s3/bucket.pkl"
+
+local kvs = new keyvaluestore.KeyValueStore {
+  label = "smoke-kvs"
+  name = "smoke-kvs"
+  comment = "smoke"
+}
+
+local fn = new cffn.Function {
+  label = "smoke-fn"
+  name = "smoke-fn"
+  autoPublish = true
+  functionCode = "function handler(event){return event.request;}"
+  functionConfig = new cffn.FunctionConfig {
+    runtime = "cloudfront-js-2.0"
+    comment = "smoke"
+    keyValueStoreAssociations = new Listing<cffn.KeyValueStoreAssociation> {
+      new { keyValueStoreARN = kvs.res.arn }
+    }
+  }
+}
+
+local cert = new certificate.Certificate {
+  label = "smoke-cert"
+  domainName = "smoke.example"
+  validationMethod = "DNS"
+}
+
+local cp = new cachepolicy.CachePolicy {
+  label = "smoke-cp"
+  cachePolicyConfig = new cachepolicy.CachePolicyConfig {
+    name = "smoke-cp"
+    defaultTTL = 86400
+    maxTTL = 31536000
+    minTTL = 1
+    parametersInCacheKeyAndForwardedToOrigin = new cachepolicy.ParametersInCacheKeyAndForwardedToOrigin {
+      enableAcceptEncodingGzip = true
+      headersConfig = new cachepolicy.CachePolicyHeadersConfig { headerBehavior = "none" }
+      cookiesConfig = new cachepolicy.CachePolicyCookiesConfig { cookieBehavior = "none" }
+      queryStringsConfig = new cachepolicy.CachePolicyQueryStringsConfig { queryStringBehavior = "none" }
+    }
+  }
+}
+
+local orp = new originrequestpolicy.OriginRequestPolicy {
+  label = "smoke-orp"
+  originRequestPolicyConfig = new originrequestpolicy.OriginRequestPolicyConfig {
+    name = "smoke-orp"
+    headersConfig = new originrequestpolicy.OriginRequestPolicyHeadersConfig { headerBehavior = "none" }
+    cookiesConfig = new originrequestpolicy.OriginRequestPolicyCookiesConfig { cookieBehavior = "none" }
+    queryStringsConfig = new originrequestpolicy.OriginRequestPolicyQueryStringsConfig { queryStringBehavior = "none" }
+  }
+}
+
+local rhp = new responseheaderspolicy.ResponseHeadersPolicy {
+  label = "smoke-rhp"
+  responseHeadersPolicyConfig = new responseheaderspolicy.ResponseHeadersPolicyConfig {
+    name = "smoke-rhp"
+  }
+}
+
+local oac = new originaccesscontrol.OriginAccessControl {
+  label = "smoke-oac"
+  originAccessControlConfig = new originaccesscontrol.OriginAccessControlConfig {
+    name = "smoke-oac"
+    originAccessControlOriginType = "s3"
+    signingBehavior = "always"
+    signingProtocol = "sigv4"
+  }
+}
+
+local origin = new bucket.Bucket {
+  label = "smoke-origin"
+  bucketName = "smoke-origin"
+}
+
+local dist = new distribution.Distribution {
+  label = "smoke-dist"
+  distributionConfig = new distribution.DistributionConfig {
+    enabled = true
+    origins = new Listing<distribution.Origin> {
+      new {
+        id = "smoke-origin"
+        domainName = origin.res.regionalDomainName
+        originAccessControlId = oac.res.id
+        s3OriginConfig = new distribution.S3OriginConfig {}
+      }
+    }
+    defaultCacheBehavior = new distribution.DefaultCacheBehavior {
+      targetOriginId = "smoke-origin"
+      viewerProtocolPolicy = "redirect-to-https"
+      cachePolicyId = cp.res.id
+      originRequestPolicyId = orp.res.id
+      responseHeadersPolicyId = rhp.res.id
+      functionAssociations = new Listing<distribution.FunctionAssociation> {
+        new { eventType = "viewer-request"; functionARN = fn.res.arn }
+      }
+    }
+    viewerCertificate = new distribution.ViewerCertificate {
+      acmCertificateArn = cert.res.arn
+      sslSupportMethod = "sni-only"
+      minimumProtocolVersion = "TLSv1.2_2021"
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = "cloudfront-acm-smoke"
+    description = "Static-typing smoke for CloudFront/ACM resources — not intended to be applied"
+  }
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config { region = "us-east-1" }
+  }
+  kvs
+  fn
+  cert
+  cp
+  orp
+  rhp
+  oac
+  origin
+  dist
+}
