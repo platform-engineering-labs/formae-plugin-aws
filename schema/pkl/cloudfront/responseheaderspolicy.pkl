@@ -169,6 +169,7 @@ open class ResponseHeadersPolicyResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
+    extractable = false
 }
 open class ResponseHeadersPolicy extends formae.Resource {
 

@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.11
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
-	github.com/aws/aws-sdk-go-v2/service/acm v1.39.4
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.299.0
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.77.0

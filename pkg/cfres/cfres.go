@@ -11,7 +11,6 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/apigateway"
-	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/certificatemanager"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/ec2"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/ecs"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/elasticbeanstalk"

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-module aws.cloudfront.`function`
+module aws.cloudfront.cffunction
 
 import "@formae/formae.pkl"
 import "../aws.pkl"

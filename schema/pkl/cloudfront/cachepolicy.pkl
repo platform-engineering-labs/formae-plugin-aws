@@ -40,6 +40,8 @@ open class CachePolicyQueryStringsConfig extends formae.SubResource {
 @aws.SubResourceHint
 open class ParametersInCacheKeyAndForwardedToOrigin extends formae.SubResource {
     enableAcceptEncodingGzip: Boolean
+
+    @aws.FieldHint { hasProviderDefault = true }
     enableAcceptEncodingBrotli: Boolean?
     headersConfig: CachePolicyHeadersConfig
     cookiesConfig: CachePolicyCookiesConfig

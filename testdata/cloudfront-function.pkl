@@ -9,7 +9,7 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
-import "@aws/cloudfront/function.pkl" as cffn
+import "@aws/cloudfront/cffunction.pkl" as cffn
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-cloudfront-function-\(testRunID)"

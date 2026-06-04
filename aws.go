@@ -95,9 +95,6 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 			"AWS::IAM::Group":         "$.GroupName",
 			// Route53 records need both Name and Type to be unique (e.g., SOA vs NS for same domain)
 			"AWS::Route53::RecordSet": "$['Name','Type']",
-			// ACM certificates use the domain name as their natural label
-			// (Name tags are not standard for ACM).
-			"AWS::CertificateManager::Certificate": "$.DomainName",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",

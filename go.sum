@@ -30,8 +30,6 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.27 h1:9d8AoASQY9UwrOSmiJ
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.27/go.mod h1:x0rldpsnUQaQIs4Rh+Vwm9Z/0vI6BxadGtsgJfZFb8s=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 h1:OQqn11BtaYv1WLUowvcA30MpzIu8Ti4pcLPIIyoKZrA=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24/go.mod h1:X5ZJyfwVrWA96GzPmUCWFQaEARPR7gCrpq2E92PJwAE=
-github.com/aws/aws-sdk-go-v2/service/acm v1.39.4 h1:2P7p/kNLozilMJfF5SNfKCAslLZFtLmr7RjDHVni024=
-github.com/aws/aws-sdk-go-v2/service/acm v1.39.4/go.mod h1:xQtZpSJWrvS9GKpvmxLqZU98QbBAsXxjd4ZHH0U42Qk=
 github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14 h1:ImtrKaec9pN/hz2rCS0IiVUBGKjxS9ZFM3MHNVoZTiY=
 github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14/go.mod h1:7lrvANo4D0kDvxGrcKXEocfULnurpaYBiPRf17ri2lU=
 github.com/aws/aws-sdk-go-v2/service/ec2 v1.299.0 h1:qTozRFl2YFFU2HJGl7ZAywlRQvBnAN591gbAFT5bE0s=
