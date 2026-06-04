@@ -121,11 +121,13 @@ jobs:
     strategy:
       matrix:
         test-case: ${{ fromJson(needs.discover-tests.outputs.test-cases) }}
-      # us-east-1 VPC quota raised to 60 (2026-06-02). Bump back to 12 to claw
-      # back nightly throughput with headroom for orphans (the EFS-mount-target
-      # cleanup fix in scripts/ci/clean-environment.sh keeps orphan accumulation
-      # in check). Push higher once a few nightlies prove the new ceiling holds.
-      max-parallel: 12
+      # us-east-1 VPC quota was raised to 60 (2026-06-02) and we briefly ran at
+      # max-parallel: 12, but that ran the AWS account into CloudControl/EC2
+      # throttling (explicit `ThrottlingException: Rate exceeded` errors on
+      # Discovery ListResources during the 2026-06-03 and 2026-06-04 nightlies,
+      # plus elevated downstream timeouts). Back off to 10 until the per-plugin
+      # rate limiter handles shared-account contention better.
+      max-parallel: 10
       fail-fast: false
     permissions:
       id-token: write
