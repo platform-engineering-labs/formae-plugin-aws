@@ -267,6 +267,15 @@ func (c *Certificate) readProperties(
 		// schema.
 		props["KeyAlgorithm"] = normalizeKeyAlgorithmForCFN(string(cert.KeyAlgorithm))
 	}
+	// ValidationMethod isn't surfaced as a top-level field on the
+	// DescribeCertificate response, but ACM stamps every entry in
+	// DomainValidationOptions with the method that was used at request
+	// time. Pull it from the first entry — all entries carry the same
+	// value — so the readback round-trips the createOnly field that the
+	// operator declared.
+	if len(cert.DomainValidationOptions) > 0 && cert.DomainValidationOptions[0].ValidationMethod != "" {
+		props["ValidationMethod"] = string(cert.DomainValidationOptions[0].ValidationMethod)
+	}
 	if cert.Options != nil && cert.Options.CertificateTransparencyLoggingPreference != "" {
 		props["CertificateTransparencyLoggingPreference"] = string(cert.Options.CertificateTransparencyLoggingPreference)
 	}
@@ -482,7 +491,23 @@ func (c *Certificate) List(ctx context.Context, request *resource.ListRequest) (
 		return nil, err
 	}
 
-	input := &acm.ListCertificatesInput{}
+	// ACM's ListCertificates defaults Includes.KeyTypes to RSA_1024 and
+	// RSA_2048 only. Without an explicit override, EC certs (and RSA-3072
+	// / RSA-4096) are silently missing from discovery. Enumerate every
+	// algorithm the schema permits so List is complete.
+	input := &acm.ListCertificatesInput{
+		Includes: &acmtypes.Filters{
+			KeyTypes: []acmtypes.KeyAlgorithm{
+				acmtypes.KeyAlgorithmRsa1024,
+				acmtypes.KeyAlgorithmRsa2048,
+				acmtypes.KeyAlgorithmRsa3072,
+				acmtypes.KeyAlgorithmRsa4096,
+				acmtypes.KeyAlgorithmEcPrime256v1,
+				acmtypes.KeyAlgorithmEcSecp384r1,
+				acmtypes.KeyAlgorithmEcSecp521r1,
+			},
+		},
+	}
 	if request.PageSize > 0 {
 		input.MaxItems = aws.Int32(int32(request.PageSize))
 	}

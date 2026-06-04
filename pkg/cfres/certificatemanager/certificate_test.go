@@ -267,6 +267,44 @@ func TestRead_PopulatesValidationRecords(t *testing.T) {
 	}
 }
 
+func TestRead_PopulatesValidationMethodFromDomainValidationOption(t *testing.T) {
+	fake := &fakeACMClient{
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				CertificateArn: aws.String("arn:fake"),
+				DomainName:     aws.String("example.com"),
+				DomainValidationOptions: []acmtypes.DomainValidation{
+					{
+						DomainName:       aws.String("example.com"),
+						ValidationMethod: acmtypes.ValidationMethodDns,
+					},
+				},
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	res, err := cert.Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "arn:fake",
+		ResourceType: "AWS::CertificateManager::Certificate",
+	})
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	var props map[string]any
+	if err := json.Unmarshal([]byte(res.Properties), &props); err != nil {
+		t.Fatalf("unmarshal properties: %v", err)
+	}
+	vm, ok := props["ValidationMethod"].(string)
+	if !ok {
+		t.Fatalf("expected ValidationMethod string, got %T", props["ValidationMethod"])
+	}
+	if vm != "DNS" {
+		t.Errorf("ValidationMethod: want DNS, got %q", vm)
+	}
+}
+
 func TestRead_NotFound_ReturnsErrorCode(t *testing.T) {
 	fake := &fakeACMClient{
 		describeCertificateErr: &acmtypes.ResourceNotFoundException{Message: aws.String("nope")},
