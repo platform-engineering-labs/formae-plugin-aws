@@ -1,0 +1,40 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/cloudfront/function.pkl" as cffn
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-cloudfront-function-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for CloudFront Function"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new cffn.Function {
+    label = "plugin-sdk-test-fn"
+    name = "formae-plugin-sdk-test-fn-\(testRunID)"
+    autoPublish = true
+    functionCode = "function handler(event) { return event.request; }"
+    functionConfig = new cffn.FunctionConfig {
+      runtime = "cloudfront-js-2.0"
+      comment = "Plugin SDK test Function — updated comment"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/cloudfront/cachepolicy.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-cloudfront-cachepolicy-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for CloudFront CachePolicy"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new cachepolicy.CachePolicy {
+    label = "plugin-sdk-test-cp"
+    cachePolicyConfig = new cachepolicy.CachePolicyConfig {
+      name = "formae-plugin-sdk-test-cp-\(testRunID)"
+      comment = "Plugin SDK test CachePolicy"
+      defaultTTL = 86400
+      maxTTL = 31536000
+      minTTL = 1
+      parametersInCacheKeyAndForwardedToOrigin = new cachepolicy.ParametersInCacheKeyAndForwardedToOrigin {
+        enableAcceptEncodingGzip = true
+        headersConfig = new cachepolicy.CachePolicyHeadersConfig {
+          headerBehavior = "none"
+        }
+        cookiesConfig = new cachepolicy.CachePolicyCookiesConfig {
+          cookieBehavior = "none"
+        }
+        queryStringsConfig = new cachepolicy.CachePolicyQueryStringsConfig {
+          queryStringBehavior = "none"
+        }
+      }
+    }
+  }
+}
