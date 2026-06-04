@@ -1333,6 +1333,18 @@ aws cloudfront list-origin-access-controls --region "$REGION" \
     aws cloudfront delete-origin-access-control --id "$oac_id" --if-match "$etag" 2>/dev/null || true
 done
 
+# ACM Certificates (test prefix only — positive match guarantees prod certs
+# like pkl.platform.engineering and hub.platform.engineering cannot match)
+echo "Cleaning ACM test certificates..."
+aws acm list-certificates --region "$REGION" \
+    --certificate-statuses PENDING_VALIDATION ISSUED EXPIRED FAILED INACTIVE REVOKED VALIDATION_TIMED_OUT \
+    --query "CertificateSummaryList[?starts_with(DomainName, 'formae-plugin-sdk-test-cert-')].CertificateArn" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r cert_arn; do
+    [[ -z "$cert_arn" || "$cert_arn" == "None" ]] && continue
+    echo "  Deleting ACM Certificate: $cert_arn"
+    aws acm delete-certificate --certificate-arn "$cert_arn" --region "$REGION" 2>/dev/null || true
+done
+
 # Future-proofing: CloudFront Distributions cleanup would go here once
 # conformance creates them. Skipped today — Distribution is discoverable=false,
 # extractable=false and not in the conformance matrix.

@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  *
  * Static-typing smoke: declares one of each new producer (KVS, Function,
- * CachePolicy, OriginRequestPolicy, ResponseHeadersPolicy, OAC) and
- * wires each into a Distribution via the corresponding widened field.
- * Validates Resolvable shape compatibility at pkl-eval time.
+ * Cert, CachePolicy, OriginRequestPolicy, ResponseHeadersPolicy, OAC)
+ * and wires each into a Distribution via the corresponding widened
+ * field. Validates Resolvable shape compatibility at pkl-eval time.
  *
  * NOT intended to be applied — this is a type-check only.
  */
@@ -18,6 +18,7 @@ import "@aws/aws.pkl"
 
 import "@aws/cloudfront/keyvaluestore.pkl"
 import "@aws/cloudfront/cffunction.pkl" as cffn
+import "@aws/certificatemanager/certificate.pkl"
 import "@aws/cloudfront/cachepolicy.pkl"
 import "@aws/cloudfront/originrequestpolicy.pkl"
 import "@aws/cloudfront/responseheaderspolicy.pkl"
@@ -43,6 +44,12 @@ local fn = new cffn.Function {
       new { keyValueStoreARN = kvs.res.arn }
     }
   }
+}
+
+local cert = new certificate.Certificate {
+  label = "smoke-cert"
+  domainName = "smoke.example"
+  validationMethod = "DNS"
 }
 
 local cp = new cachepolicy.CachePolicy {
@@ -115,6 +122,11 @@ local dist = new distribution.Distribution {
         new { eventType = "viewer-request"; functionARN = fn.res.arn }
       }
     }
+    viewerCertificate = new distribution.ViewerCertificate {
+      acmCertificateArn = cert.res.arn
+      sslSupportMethod = "sni-only"
+      minimumProtocolVersion = "TLSv1.2_2021"
+    }
   }
 }
 
@@ -129,6 +141,7 @@ forma {
   }
   kvs
   fn
+  cert
   cp
   orp
   rhp
