@@ -1275,10 +1275,11 @@ aws cloudfront list-key-value-stores --region "$REGION" \
     --output text 2>/dev/null | tr '\t' '\n' | while read -r kvs_arn; do
     [[ -z "$kvs_arn" || "$kvs_arn" == "None" ]] && continue
     echo "  Deleting CloudFront KeyValueStore: $kvs_arn"
-    etag=$(aws cloudfront describe-key-value-store --kvs-arn "$kvs_arn" \
+    # describe/delete take --name (the ARN is the value, but the CLI flag is --name)
+    etag=$(aws cloudfront describe-key-value-store --name "$kvs_arn" \
         --query 'ETag' --output text 2>/dev/null)
     [[ -z "$etag" || "$etag" == "None" ]] && continue
-    aws cloudfront delete-key-value-store --kvs-arn "$kvs_arn" --if-match "$etag" 2>/dev/null || true
+    aws cloudfront delete-key-value-store --name "$kvs_arn" --if-match "$etag" 2>/dev/null || true
 done
 
 # CloudFront Cache Policies
