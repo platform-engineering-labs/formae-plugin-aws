@@ -31,12 +31,12 @@ forma {
     label = "plugin-sdk-test-rhp"
     responseHeadersPolicyConfig = new responseheaderspolicy.ResponseHeadersPolicyConfig {
       name = "formae-plugin-sdk-test-rhp-\(testRunID)"
-      comment = "Plugin SDK test ResponseHeadersPolicy"
+      comment = "Plugin SDK test ResponseHeadersPolicy — updated comment"
       customHeadersConfig = new responseheaderspolicy.CustomHeadersConfig {
         items = new Listing<responseheaderspolicy.CustomHeader> {
           new {
             header = "X-Formae-Test"
-            value = "updated"
+            value = "initial"
             `override` = true
           }
         }

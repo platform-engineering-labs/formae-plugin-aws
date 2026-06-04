@@ -79,6 +79,7 @@ open class CertificateResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
+    extractable = false
 }
 open class Certificate extends formae.Resource {
 

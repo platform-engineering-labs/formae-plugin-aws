@@ -244,11 +244,28 @@ func (c *Certificate) readProperties(
 	if cert.DomainName != nil {
 		props["DomainName"] = *cert.DomainName
 	}
+	// ACM populates SubjectAlternativeNames with [DomainName] when the
+	// operator doesn't specify any SANs explicitly. Skip the field when
+	// the readback only contains the domain name itself — that's the
+	// server default and would otherwise look like drift to the
+	// reconciler.
 	if len(cert.SubjectAlternativeNames) > 0 {
-		props["SubjectAlternativeNames"] = cert.SubjectAlternativeNames
+		domainName := ""
+		if cert.DomainName != nil {
+			domainName = *cert.DomainName
+		}
+		isJustDomain := len(cert.SubjectAlternativeNames) == 1 &&
+			cert.SubjectAlternativeNames[0] == domainName
+		if !isJustDomain {
+			props["SubjectAlternativeNames"] = cert.SubjectAlternativeNames
+		}
 	}
 	if cert.KeyAlgorithm != "" {
-		props["KeyAlgorithm"] = string(cert.KeyAlgorithm)
+		// ACM API returns KeyAlgorithm with hyphens (e.g. "RSA-2048"),
+		// but the CFN schema enum uses underscores ("RSA_2048"). Mirror
+		// the CFN translation so the readback matches the operator-side
+		// schema.
+		props["KeyAlgorithm"] = normalizeKeyAlgorithmForCFN(string(cert.KeyAlgorithm))
 	}
 	if cert.Options != nil && cert.Options.CertificateTransparencyLoggingPreference != "" {
 		props["CertificateTransparencyLoggingPreference"] = string(cert.Options.CertificateTransparencyLoggingPreference)
@@ -277,6 +294,29 @@ func (c *Certificate) readProperties(
 	}
 
 	return props, nil
+}
+
+// normalizeKeyAlgorithmForCFN translates ACM API key-algorithm values
+// (which use hyphens, e.g. "RSA-2048") to the CFN schema's underscore
+// form ("RSA_2048"). The two enums are equivalent in meaning but use
+// different punctuation; CFN translates internally and the schema
+// declares the underscore form, so the Read provisioner has to mirror
+// that translation.
+func normalizeKeyAlgorithmForCFN(s string) string {
+	switch s {
+	case "RSA-1024":
+		return "RSA_1024"
+	case "RSA-2048":
+		return "RSA_2048"
+	case "RSA-3072":
+		return "RSA_3072"
+	case "RSA-4096":
+		return "RSA_4096"
+	}
+	// EC values (EC_prime256v1, EC_secp384r1, EC_secp521r1) already use
+	// the same form in both APIs; pass through anything we don't
+	// explicitly translate.
+	return s
 }
 
 // validationRecordsFromCert converts ACM's DomainValidationOptions[].ResourceRecord
