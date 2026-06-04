@@ -1251,5 +1251,103 @@ aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[
     fi
 done
 
+# ============================================================================
+# CloudFront Resources (global)
+# ============================================================================
+
+# CloudFront Functions
+echo "Cleaning CloudFront Functions..."
+aws cloudfront list-functions --region "$REGION" \
+    --query "FunctionList.Items[?starts_with(Name, 'formae-plugin-sdk-test-')].Name" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r fn_name; do
+    [[ -z "$fn_name" ]] && continue
+    echo "  Deleting CloudFront Function: $fn_name"
+    etag=$(aws cloudfront describe-function --name "$fn_name" --stage DEVELOPMENT \
+        --query 'ETag' --output text 2>/dev/null)
+    [[ -z "$etag" || "$etag" == "None" ]] && continue
+    aws cloudfront delete-function --name "$fn_name" --if-match "$etag" 2>/dev/null || true
+done
+
+# CloudFront KeyValueStores
+echo "Cleaning CloudFront KeyValueStores..."
+aws cloudfront list-key-value-stores --region "$REGION" \
+    --query "KeyValueStoreList.Items[?starts_with(Name, 'formae-plugin-sdk-test-')].ARN" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r kvs_arn; do
+    [[ -z "$kvs_arn" ]] && continue
+    echo "  Deleting CloudFront KeyValueStore: $kvs_arn"
+    etag=$(aws cloudfront describe-key-value-store --kvs-arn "$kvs_arn" \
+        --query 'ETag' --output text 2>/dev/null)
+    [[ -z "$etag" || "$etag" == "None" ]] && continue
+    aws cloudfront delete-key-value-store --kvs-arn "$kvs_arn" --if-match "$etag" 2>/dev/null || true
+done
+
+# CloudFront Cache Policies
+echo "Cleaning CloudFront CachePolicies..."
+aws cloudfront list-cache-policies --type custom --region "$REGION" \
+    --query "CachePolicyList.Items[?starts_with(CachePolicy.CachePolicyConfig.Name, 'formae-plugin-sdk-test-')].CachePolicy.Id" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r pol_id; do
+    [[ -z "$pol_id" ]] && continue
+    echo "  Deleting CloudFront CachePolicy: $pol_id"
+    etag=$(aws cloudfront get-cache-policy --id "$pol_id" \
+        --query 'ETag' --output text 2>/dev/null)
+    [[ -z "$etag" || "$etag" == "None" ]] && continue
+    aws cloudfront delete-cache-policy --id "$pol_id" --if-match "$etag" 2>/dev/null || true
+done
+
+# CloudFront Origin Request Policies
+echo "Cleaning CloudFront OriginRequestPolicies..."
+aws cloudfront list-origin-request-policies --type custom --region "$REGION" \
+    --query "OriginRequestPolicyList.Items[?starts_with(OriginRequestPolicy.OriginRequestPolicyConfig.Name, 'formae-plugin-sdk-test-')].OriginRequestPolicy.Id" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r pol_id; do
+    [[ -z "$pol_id" ]] && continue
+    echo "  Deleting CloudFront OriginRequestPolicy: $pol_id"
+    etag=$(aws cloudfront get-origin-request-policy --id "$pol_id" \
+        --query 'ETag' --output text 2>/dev/null)
+    [[ -z "$etag" || "$etag" == "None" ]] && continue
+    aws cloudfront delete-origin-request-policy --id "$pol_id" --if-match "$etag" 2>/dev/null || true
+done
+
+# CloudFront Response Headers Policies
+echo "Cleaning CloudFront ResponseHeadersPolicies..."
+aws cloudfront list-response-headers-policies --type custom --region "$REGION" \
+    --query "ResponseHeadersPolicyList.Items[?starts_with(ResponseHeadersPolicy.ResponseHeadersPolicyConfig.Name, 'formae-plugin-sdk-test-')].ResponseHeadersPolicy.Id" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r pol_id; do
+    [[ -z "$pol_id" ]] && continue
+    echo "  Deleting CloudFront ResponseHeadersPolicy: $pol_id"
+    etag=$(aws cloudfront get-response-headers-policy --id "$pol_id" \
+        --query 'ETag' --output text 2>/dev/null)
+    [[ -z "$etag" || "$etag" == "None" ]] && continue
+    aws cloudfront delete-response-headers-policy --id "$pol_id" --if-match "$etag" 2>/dev/null || true
+done
+
+# CloudFront Origin Access Controls
+echo "Cleaning CloudFront OriginAccessControls..."
+aws cloudfront list-origin-access-controls --region "$REGION" \
+    --query "OriginAccessControlList.Items[?starts_with(Name, 'formae-plugin-sdk-test-')].Id" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r oac_id; do
+    [[ -z "$oac_id" ]] && continue
+    echo "  Deleting CloudFront OriginAccessControl: $oac_id"
+    etag=$(aws cloudfront get-origin-access-control --id "$oac_id" \
+        --query 'ETag' --output text 2>/dev/null)
+    [[ -z "$etag" || "$etag" == "None" ]] && continue
+    aws cloudfront delete-origin-access-control --id "$oac_id" --if-match "$etag" 2>/dev/null || true
+done
+
+# ACM Certificates (test prefix only — positive match guarantees prod certs
+# like pkl.platform.engineering and hub.platform.engineering cannot match)
+echo "Cleaning ACM test certificates..."
+aws acm list-certificates --region "$REGION" \
+    --certificate-statuses PENDING_VALIDATION ISSUED EXPIRED FAILED INACTIVE REVOKED VALIDATION_TIMED_OUT \
+    --query "CertificateSummaryList[?starts_with(DomainName, 'formae-plugin-sdk-test-cert-')].CertificateArn" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r cert_arn; do
+    [[ -z "$cert_arn" ]] && continue
+    echo "  Deleting ACM Certificate: $cert_arn"
+    aws acm delete-certificate --certificate-arn "$cert_arn" --region "$REGION" 2>/dev/null || true
+done
+
+# Future-proofing: CloudFront Distributions cleanup would go here once
+# conformance creates them. Skipped today — Distribution is discoverable=false,
+# extractable=false and not in the conformance matrix.
+
 echo ""
 echo "=== Cleanup complete ==="
