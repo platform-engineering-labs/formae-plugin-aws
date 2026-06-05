@@ -395,6 +395,35 @@ func TestCreate_WaitForIssued_ContextCancelled_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestCreate_WaitForIssued_EnvOverride_SkipsWait(t *testing.T) {
+	t.Setenv("FORMAE_AWS_CERT_SKIP_ISSUED_WAIT", "1")
+	fake := &fakeACMClient{
+		requestCertificateOut: &acm.RequestCertificateOutput{
+			CertificateArn: aws.String("arn:fake"),
+		},
+		// Status is PENDING_VALIDATION but the env override should make
+		// Create return without polling further than the readback.
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				CertificateArn: aws.String("arn:fake"),
+				Status:         acmtypes.CertificateStatusPendingValidation,
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+	cert.issuedTimeout = time.Hour // would normally block; the override must skip the wait
+
+	props := map[string]any{"DomainName": "test.example", "ValidationMethod": "DNS"}
+	body, _ := json.Marshal(props)
+	res, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
+	if err != nil {
+		t.Fatalf("Create should succeed when env override is set, got %v", err)
+	}
+	if res.ProgressResult.OperationStatus != resource.OperationStatusSuccess {
+		t.Errorf("OperationStatus: want Success, got %v", res.ProgressResult.OperationStatus)
+	}
+}
+
 func TestCreate_WaitForIssued_Timeout_ReturnsError(t *testing.T) {
 	fake := &fakeACMClient{
 		requestCertificateOut: &acm.RequestCertificateOutput{

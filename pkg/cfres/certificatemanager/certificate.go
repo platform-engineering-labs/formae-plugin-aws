@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -30,6 +31,12 @@ import (
 const (
 	defaultPollInterval  = 10 * time.Second
 	defaultIssuedTimeout = 15 * time.Minute
+
+	// skipIssuedWaitEnvVar disables the wait-for-ISSUED loop when set to
+	// "1" / "true". The conformance fixture uses unvalidatable
+	// `*.example` domains where the cert never reaches ISSUED, so the
+	// CI harness sets this to keep the lifecycle test fast.
+	skipIssuedWaitEnvVar = "FORMAE_AWS_CERT_SKIP_ISSUED_WAIT"
 )
 
 // Certificate is the AWS::CertificateManager::Certificate provisioner.
@@ -225,6 +232,11 @@ func (c *Certificate) Create(ctx context.Context, request *resource.CreateReques
 // validation check itself, so DNS-provider work composes via the
 // resource graph rather than via provider-aware wait logic here.
 func (c *Certificate) waitForIssued(ctx context.Context, client ACMClientInterface, certArn string) error {
+	if skip := os.Getenv(skipIssuedWaitEnvVar); skip == "1" || skip == "true" {
+		slog.Info("acm: skipping wait-for-ISSUED due to env override", "cert_arn", certArn, "env", skipIssuedWaitEnvVar)
+		return nil
+	}
+
 	pollInterval := c.pollInterval
 	if pollInterval <= 0 {
 		pollInterval = defaultPollInterval
