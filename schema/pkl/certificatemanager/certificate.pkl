@@ -61,6 +61,12 @@ open class CertificateResolvable extends formae.Resolvable {
         property = "Id"
     }
 
+    // Capture outer `this` so the `new ses.DnsRecordListingResolvable { ... }`
+    // body below references the CertificateResolvable, not the resolvable
+    // being constructed. Without this, `this.label` resolves to the new
+    // listing's own (uninitialised) label and PKL stack-overflows.
+    local self = this
+
     /// Populated by the custom Read provisioner at
     /// pkg/cfres/certificatemanager/certificate.go from ACM's
     /// DescribeCertificate response. Each entry exposes `name`,
@@ -68,9 +74,9 @@ open class CertificateResolvable extends formae.Resolvable {
     /// and `value`. Consume the first SAN's challenge as
     /// `cert.res.validationRecords.at(0).name` etc.
     hidden validationRecords: ses.DnsRecordListingResolvable = new ses.DnsRecordListingResolvable {
-        label = this.label
-        type = this.type
-        stack = this.stack
+        label = self.label
+        type = self.type
+        stack = self.stack
         property = "ValidationRecords"
     }
 }
