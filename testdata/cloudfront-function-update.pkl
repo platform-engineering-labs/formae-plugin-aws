@@ -31,7 +31,7 @@ forma {
     label = "plugin-sdk-test-fn"
     name = "formae-plugin-sdk-test-fn-\(testRunID)"
     autoPublish = true
-    functionCode = "function handler(event) { return event.request; }"
+    functionCode = "function handler(event) { event.request.headers['x-formae-test'] = { value: 'updated' }; return event.request; }"
     functionConfig = new cffn.FunctionConfig {
       runtime = "cloudfront-js-2.0"
       comment = "Plugin SDK test Function — updated comment"

@@ -403,6 +403,18 @@ func TestRead_PopulatesValidationRecords(t *testing.T) {
 	if len(records) != 1 {
 		t.Errorf("ValidationRecords: want 1, got %d", len(records))
 	}
+	// Trailing dot must be stripped: ACM returns `_abc.example.com.` but
+	// Route53::RecordSet's Read strips trailing dots from Name. Without
+	// matching that normalization, downstream RecordSet consumers see a
+	// fresh diff on every reconcile and delete+create the validation
+	// CNAME unnecessarily.
+	rec0, ok := records[0].(map[string]any)
+	if !ok {
+		t.Fatalf("ValidationRecords[0] not a map: %T", records[0])
+	}
+	if got := rec0["Name"]; got != "_abc.example.com" {
+		t.Errorf("ValidationRecords[0].Name: want %q (no trailing dot), got %q", "_abc.example.com", got)
+	}
 }
 
 func TestRead_PopulatesValidationMethodFromDomainValidationOption(t *testing.T) {
