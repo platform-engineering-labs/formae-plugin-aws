@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -421,6 +422,11 @@ func normalizeKeyAlgorithmForCFN(s string) string {
 // into the ses.DnsRecord shape that CertificateResolvable.validationRecords expects.
 // Records may be empty if the cert uses EMAIL validation or is too new for ACM
 // to have populated the CNAMEs yet.
+//
+// Trailing dots are stripped from Name to match Route53::RecordSet's Read
+// normalization. Without that, a downstream Route53::RecordSet that
+// resolves cert.res.validationRecords.at(0).name sees a perpetual diff
+// against its own readback and gets delete+recreate'd on every reconcile.
 func validationRecordsFromCert(cert *acmtypes.CertificateDetail) []ses.DnsRecord {
 	var records []ses.DnsRecord
 	for _, opt := range cert.DomainValidationOptions {
@@ -430,7 +436,7 @@ func validationRecordsFromCert(cert *acmtypes.CertificateDetail) []ses.DnsRecord
 		}
 		records = append(records, ses.DnsRecord{
 			Type:           string(rr.Type),
-			Name:           *rr.Name,
+			Name:           strings.TrimSuffix(*rr.Name, "."),
 			Values:         []string{*rr.Value},
 			RecommendedTtl: 300,
 		})
