@@ -41,12 +41,17 @@ local testSg = new securitygroup.SecurityGroup {
   vpcId = testVpc.res.vpcId
 }
 
-// FileSystem dependency
+// FileSystem dependency. The Name tag mirrors the formae label so the
+// CI cleanup script catches orphans even when a test aborts before its
+// own teardown can run.
 local testFs = new filesystem.FileSystem {
   label = "test-fs-for-mounttarget"
   encrypted = true
   performanceMode = "generalPurpose"
   throughputMode = "bursting"
+  fileSystemTags = new Listing<aws.Tag> {
+    new { key = "Name"; value = "formae-plugin-sdk-test-fs-for-mounttarget-\(testRunID)" }
+  }
 }
 
 forma {
