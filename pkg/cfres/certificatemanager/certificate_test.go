@@ -101,17 +101,17 @@ func (f *fakeACMClient) UpdateCertificateOptions(_ context.Context, in *acm.Upda
 }
 
 // newCertificateWithFake wires a Certificate provisioner against the
-// supplied fake client with a very short poll interval so wait-for-ISSUED
-// tests complete in microseconds rather than seconds. Tests that need
-// to drive the timeout path override issuedTimeout directly afterwards.
+// supplied fake client with a tiny validation-records poll interval so
+// the post-Create read-back returns in microseconds when records are
+// present (and finishes its budget quickly when they aren't).
 func newCertificateWithFake(fake *fakeACMClient) *Certificate {
 	return &Certificate{
 		cfg: &config.Config{Region: "us-east-1"},
 		acmClientFactory: func(_ *config.Config) (ACMClientInterface, error) {
 			return fake, nil
 		},
-		pollInterval:  time.Microsecond,
-		issuedTimeout: 5 * time.Second,
+		validationRecordsPollInterval: time.Microsecond,
+		validationRecordsPollAttempts: 3,
 	}
 }
 
@@ -127,7 +127,17 @@ func TestCreate_DnsValidation_RequestsCertificateAndReturnsArn(t *testing.T) {
 				CertificateArn: aws.String("arn:aws:acm:us-east-1:111:certificate/abcd"),
 				DomainName:     aws.String("example.com"),
 				KeyAlgorithm:   acmtypes.KeyAlgorithmRsa2048,
-				Status:         acmtypes.CertificateStatusIssued,
+				Status:         acmtypes.CertificateStatusPendingValidation,
+				DomainValidationOptions: []acmtypes.DomainValidation{
+					{
+						DomainName: aws.String("example.com"),
+						ResourceRecord: &acmtypes.ResourceRecord{
+							Name:  aws.String("_abc.example.com."),
+							Type:  acmtypes.RecordTypeCname,
+							Value: aws.String("_xyz.acm-validations.aws."),
+						},
+					},
+				},
 			},
 		},
 	}
@@ -173,7 +183,7 @@ func TestCreate_SansAndTags_PassThroughToAPI(t *testing.T) {
 		describeCertificateOut: &acm.DescribeCertificateOutput{
 			Certificate: &acmtypes.CertificateDetail{
 				DomainName: aws.String("example.com"),
-				Status:     acmtypes.CertificateStatusIssued,
+				Status:     acmtypes.CertificateStatusPendingValidation,
 			},
 		},
 	}
@@ -210,7 +220,7 @@ func TestCreate_TransparencyPreference_AppliedViaUpdateOptions(t *testing.T) {
 		describeCertificateOut: &acm.DescribeCertificateOutput{
 			Certificate: &acmtypes.CertificateDetail{
 				DomainName: aws.String("example.com"),
-				Status:     acmtypes.CertificateStatusIssued,
+				Status:     acmtypes.CertificateStatusPendingValidation,
 			},
 		},
 	}
@@ -249,17 +259,20 @@ func TestCreate_RequestCertificateError_BubblesUp(t *testing.T) {
 	}
 }
 
-// ----- Create: wait-for-ISSUED -----
+// ----- Create: validation-records readback -----
 //
-// ACM RequestCertificate returns the new ARN while the cert is still
-// PENDING_VALIDATION. CloudFront's Distribution.viewerCertificate
-// requires the cert to be ISSUED before it accepts the ARN, so Create
-// must block until ACM reports ISSUED (or a terminal failure) so the
-// changeset can wire downstream resources in a single apply. The DNS
-// publisher is wired upstream via runtimeDependency; this loop does not
-// query Route53 (the publisher could be Cloudflare or operator-manual).
+// ACM populates DomainValidationOptions[].ResourceRecord asynchronously
+// after RequestCertificate returns. Create briefly polls the readback so
+// downstream consumers wired to cert.res.validationRecords see them when
+// Create reports Success. The poll budget is small (a few hundred
+// milliseconds in production) because the ACM async window is sub-second
+// in practice; tests configure microsecond intervals.
 
-func TestCreate_WaitForIssued_TransitionsFromPendingToIssued(t *testing.T) {
+func TestCreate_ReadbackPollsForValidationRecords_RecordsAvailable(t *testing.T) {
+	// First readback returns no DomainValidationOptions yet; second
+	// returns the populated ResourceRecord. Create should keep Status as
+	// PENDING_VALIDATION (it does not wait for ISSUED) but surface the
+	// validation records to downstream consumers.
 	fake := &fakeACMClient{
 		requestCertificateOut: &acm.RequestCertificateOutput{
 			CertificateArn: aws.String("arn:fake"),
@@ -274,178 +287,74 @@ func TestCreate_WaitForIssued_TransitionsFromPendingToIssued(t *testing.T) {
 				CertificateArn: aws.String("arn:fake"),
 				DomainName:     aws.String("example.com"),
 				Status:         acmtypes.CertificateStatusPendingValidation,
+				DomainValidationOptions: []acmtypes.DomainValidation{
+					{
+						DomainName: aws.String("example.com"),
+						ResourceRecord: &acmtypes.ResourceRecord{
+							Name:  aws.String("_abc.example.com."),
+							Type:  acmtypes.RecordTypeCname,
+							Value: aws.String("_xyz.acm-validations.aws."),
+						},
+					},
+				},
 			}},
-			{Certificate: &acmtypes.CertificateDetail{
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
+	body, _ := json.Marshal(props)
+	res, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if res.ProgressResult.OperationStatus != resource.OperationStatusSuccess {
+		t.Errorf("OperationStatus: want Success, got %v", res.ProgressResult.OperationStatus)
+	}
+	if fake.describeCertificateCalls < 2 {
+		t.Errorf("expected at least 2 DescribeCertificate calls (re-poll for records), got %d", fake.describeCertificateCalls)
+	}
+
+	var returnedProps map[string]any
+	if err := json.Unmarshal(res.ProgressResult.ResourceProperties, &returnedProps); err != nil {
+		t.Fatalf("unmarshal returned properties: %v", err)
+	}
+	records, ok := returnedProps["ValidationRecords"].([]any)
+	if !ok {
+		t.Fatalf("expected ValidationRecords slice in returned properties, got %T", returnedProps["ValidationRecords"])
+	}
+	if len(records) != 1 {
+		t.Errorf("ValidationRecords: want 1, got %d", len(records))
+	}
+}
+
+func TestCreate_ReadbackBudgetExhausted_ReturnsSuccessAnyway(t *testing.T) {
+	// EMAIL-validated certs never populate ResourceRecord; Create should
+	// exhaust the poll budget and still return Success so the apply
+	// proceeds.
+	fake := &fakeACMClient{
+		requestCertificateOut: &acm.RequestCertificateOutput{
+			CertificateArn: aws.String("arn:fake"),
+		},
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
 				CertificateArn: aws.String("arn:fake"),
 				DomainName:     aws.String("example.com"),
-				Status:         acmtypes.CertificateStatusIssued,
-			}},
+				Status:         acmtypes.CertificateStatusPendingValidation,
+				// No DomainValidationOptions (e.g. EMAIL-validated path)
+			},
 		},
 	}
 	cert := newCertificateWithFake(fake)
 
-	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
+	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "EMAIL"}
 	body, _ := json.Marshal(props)
 	res, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
 	if err != nil {
-		t.Fatalf("Create failed after eventual ISSUED: %v", err)
+		t.Fatalf("Create should not error when validation records remain empty, got %v", err)
 	}
 	if res.ProgressResult.OperationStatus != resource.OperationStatusSuccess {
 		t.Errorf("OperationStatus: want Success, got %v", res.ProgressResult.OperationStatus)
-	}
-	// 3 polls for state transitions + 1 readback at the end.
-	if fake.describeCertificateCalls < 3 {
-		t.Errorf("expected at least 3 DescribeCertificate calls during wait, got %d", fake.describeCertificateCalls)
-	}
-}
-
-func TestCreate_WaitForIssued_StatusFailed_ReturnsError(t *testing.T) {
-	fake := &fakeACMClient{
-		requestCertificateOut: &acm.RequestCertificateOutput{
-			CertificateArn: aws.String("arn:fake"),
-		},
-		describeCertificateOut: &acm.DescribeCertificateOutput{
-			Certificate: &acmtypes.CertificateDetail{
-				CertificateArn: aws.String("arn:fake"),
-				Status:         acmtypes.CertificateStatusFailed,
-			},
-		},
-	}
-	cert := newCertificateWithFake(fake)
-
-	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
-	body, _ := json.Marshal(props)
-	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
-	if err == nil {
-		t.Fatal("expected Create to error on terminal FAILED status")
-	}
-}
-
-func TestCreate_WaitForIssued_StatusRevoked_ReturnsError(t *testing.T) {
-	fake := &fakeACMClient{
-		requestCertificateOut: &acm.RequestCertificateOutput{
-			CertificateArn: aws.String("arn:fake"),
-		},
-		describeCertificateOut: &acm.DescribeCertificateOutput{
-			Certificate: &acmtypes.CertificateDetail{
-				CertificateArn: aws.String("arn:fake"),
-				Status:         acmtypes.CertificateStatusRevoked,
-			},
-		},
-	}
-	cert := newCertificateWithFake(fake)
-
-	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
-	body, _ := json.Marshal(props)
-	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
-	if err == nil {
-		t.Fatal("expected Create to error on terminal REVOKED status")
-	}
-}
-
-func TestCreate_WaitForIssued_StatusValidationTimedOut_ReturnsError(t *testing.T) {
-	fake := &fakeACMClient{
-		requestCertificateOut: &acm.RequestCertificateOutput{
-			CertificateArn: aws.String("arn:fake"),
-		},
-		describeCertificateOut: &acm.DescribeCertificateOutput{
-			Certificate: &acmtypes.CertificateDetail{
-				CertificateArn: aws.String("arn:fake"),
-				Status:         acmtypes.CertificateStatusValidationTimedOut,
-			},
-		},
-	}
-	cert := newCertificateWithFake(fake)
-
-	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
-	body, _ := json.Marshal(props)
-	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
-	if err == nil {
-		t.Fatal("expected Create to error on terminal VALIDATION_TIMED_OUT status")
-	}
-}
-
-func TestCreate_WaitForIssued_ContextCancelled_ReturnsError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	fake := &fakeACMClient{
-		requestCertificateOut: &acm.RequestCertificateOutput{
-			CertificateArn: aws.String("arn:fake"),
-		},
-		describeCertificateOut: &acm.DescribeCertificateOutput{
-			Certificate: &acmtypes.CertificateDetail{
-				CertificateArn: aws.String("arn:fake"),
-				Status:         acmtypes.CertificateStatusPendingValidation,
-			},
-		},
-	}
-	// Cancel on the second describe call (first one returns PENDING and loop continues).
-	fake.describeCertificateHook = func(call int) {
-		if call == 2 {
-			cancel()
-		}
-	}
-	cert := newCertificateWithFake(fake)
-
-	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
-	body, _ := json.Marshal(props)
-	_, err := cert.Create(ctx, &resource.CreateRequest{Properties: body})
-	if err == nil {
-		t.Fatal("expected Create to error when ctx is cancelled mid-wait")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected wrapped context.Canceled, got %v", err)
-	}
-}
-
-func TestCreate_WaitForIssued_EnvOverride_SkipsWait(t *testing.T) {
-	t.Setenv("FORMAE_AWS_CERT_SKIP_ISSUED_WAIT", "1")
-	fake := &fakeACMClient{
-		requestCertificateOut: &acm.RequestCertificateOutput{
-			CertificateArn: aws.String("arn:fake"),
-		},
-		// Status is PENDING_VALIDATION but the env override should make
-		// Create return without polling further than the readback.
-		describeCertificateOut: &acm.DescribeCertificateOutput{
-			Certificate: &acmtypes.CertificateDetail{
-				CertificateArn: aws.String("arn:fake"),
-				Status:         acmtypes.CertificateStatusPendingValidation,
-			},
-		},
-	}
-	cert := newCertificateWithFake(fake)
-	cert.issuedTimeout = time.Hour // would normally block; the override must skip the wait
-
-	props := map[string]any{"DomainName": "test.example", "ValidationMethod": "DNS"}
-	body, _ := json.Marshal(props)
-	res, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
-	if err != nil {
-		t.Fatalf("Create should succeed when env override is set, got %v", err)
-	}
-	if res.ProgressResult.OperationStatus != resource.OperationStatusSuccess {
-		t.Errorf("OperationStatus: want Success, got %v", res.ProgressResult.OperationStatus)
-	}
-}
-
-func TestCreate_WaitForIssued_Timeout_ReturnsError(t *testing.T) {
-	fake := &fakeACMClient{
-		requestCertificateOut: &acm.RequestCertificateOutput{
-			CertificateArn: aws.String("arn:fake"),
-		},
-		describeCertificateOut: &acm.DescribeCertificateOutput{
-			Certificate: &acmtypes.CertificateDetail{
-				CertificateArn: aws.String("arn:fake"),
-				Status:         acmtypes.CertificateStatusPendingValidation,
-			},
-		},
-	}
-	cert := newCertificateWithFake(fake)
-	cert.issuedTimeout = 5 * time.Millisecond
-
-	props := map[string]any{"DomainName": "example.com", "ValidationMethod": "DNS"}
-	body, _ := json.Marshal(props)
-	_, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
-	if err == nil {
-		t.Fatal("expected Create to error when wait times out without ISSUED")
 	}
 }
 
