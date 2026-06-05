@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -25,18 +24,21 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
-// Wait-for-ISSUED defaults. Operators with unusual DNS-propagation
-// expectations can override these on the provisioner at construction
-// time; tests do so to keep run-time in microseconds.
+// ACM populates DomainValidationOptions[].ResourceRecord asynchronously
+// after RequestCertificate returns — typically within a second. Create
+// briefly polls DescribeCertificate so the validation records are
+// populated in the returned resource state by the time downstream
+// consumers (e.g. a Route53::RecordSet wired to
+// cert.res.validationRecords.at(0).name) try to resolve them.
+//
+// We intentionally do NOT wait for Status=ISSUED here: ACM cannot
+// transition to ISSUED until the validation CNAME is published in DNS,
+// and the publisher is a downstream resource that cannot start until
+// this Create returns. Waiting for ISSUED inside Create deadlocks the
+// changeset.
 const (
-	defaultPollInterval  = 10 * time.Second
-	defaultIssuedTimeout = 15 * time.Minute
-
-	// skipIssuedWaitEnvVar disables the wait-for-ISSUED loop when set to
-	// "1" / "true". The conformance fixture uses unvalidatable
-	// `*.example` domains where the cert never reaches ISSUED, so the
-	// CI harness sets this to keep the lifecycle test fast.
-	skipIssuedWaitEnvVar = "FORMAE_AWS_CERT_SKIP_ISSUED_WAIT"
+	validationRecordsPollInterval = 500 * time.Millisecond
+	validationRecordsPollAttempts = 10
 )
 
 // Certificate is the AWS::CertificateManager::Certificate provisioner.
@@ -56,12 +58,13 @@ const (
 type Certificate struct {
 	cfg              *config.Config
 	acmClientFactory func(cfg *config.Config) (ACMClientInterface, error)
-	// pollInterval is how long Create sleeps between DescribeCertificate
-	// polls while waiting for Status=ISSUED. Zero means use the default.
-	pollInterval time.Duration
-	// issuedTimeout is the upper bound on the wait-for-ISSUED loop. Zero
-	// means use the default.
-	issuedTimeout time.Duration
+	// validationRecordsPollInterval is the gap between DescribeCertificate
+	// polls during the brief Create-time wait for ACM to populate
+	// DomainValidationOptions[].ResourceRecord. Zero means use the default.
+	validationRecordsPollInterval time.Duration
+	// validationRecordsPollAttempts is the upper bound on the number of
+	// polls. Zero means use the default.
+	validationRecordsPollAttempts int
 }
 
 var _ prov.Provisioner = &Certificate{}
@@ -196,18 +199,12 @@ func (c *Certificate) Create(ctx context.Context, request *resource.CreateReques
 		}
 	}
 
-	// Block until the cert reaches ISSUED so downstream resources that
-	// depend on the ARN (e.g. CloudFront::Distribution.viewerCertificate)
-	// can be created in the same apply. The DNS publisher is wired
-	// upstream via runtimeDependency; this loop only observes ACM's view
-	// of the validation outcome.
-	if err := c.waitForIssued(ctx, client, certArn); err != nil {
-		return nil, err
-	}
-
-	// Read back so callers get the fully-enriched property set (including
-	// any validation records that ACM has already populated).
-	props, _ := c.readProperties(ctx, client, certArn)
+	// Read back so callers get the fully-enriched property set, briefly
+	// polling for the validation records that ACM populates
+	// asynchronously after RequestCertificate returns. Downstream
+	// resources wired to cert.res.validationRecords expect these to be
+	// present when Create reports Success.
+	props, _ := c.readPropertiesWithValidationRecords(ctx, client, certArn)
 	propsBytes, _ := json.Marshal(props)
 
 	return &resource.CreateResult{
@@ -220,59 +217,65 @@ func (c *Certificate) Create(ctx context.Context, request *resource.CreateReques
 	}, nil
 }
 
-// waitForIssued polls DescribeCertificate until Status transitions to
-// ISSUED, hits a terminal failure (FAILED / REVOKED /
-// VALIDATION_TIMED_OUT), the context is cancelled, or the configured
-// timeout elapses.
+// readPropertiesWithValidationRecords reads the cert's properties and
+// briefly polls until DomainValidationOptions[].ResourceRecord is
+// populated for at least one domain. ACM populates these asynchronously
+// after RequestCertificate returns -- typically in well under a second
+// -- and downstream consumers wired to cert.res.validationRecords expect
+// them to be present when Create reports Success.
 //
-// The provisioner makes no assumption about who publishes the validation
-// CNAME — that's the responsibility of upstream resources wired via
-// runtimeDependency (Route53::RecordSet from this plugin today, or any
-// other DNS plugin tomorrow). We only observe ACM's view; AWS owns the
-// validation check itself, so DNS-provider work composes via the
-// resource graph rather than via provider-aware wait logic here.
-func (c *Certificate) waitForIssued(ctx context.Context, client ACMClientInterface, certArn string) error {
-	if skip := os.Getenv(skipIssuedWaitEnvVar); skip == "1" || skip == "true" {
-		slog.Info("acm: skipping wait-for-ISSUED due to env override", "cert_arn", certArn, "env", skipIssuedWaitEnvVar)
-		return nil
-	}
-
-	pollInterval := c.pollInterval
+// We do NOT wait for ACM to transition out of PENDING_VALIDATION: the
+// validation CNAME is published by a downstream resource that cannot
+// start until this Create returns, so waiting for ISSUED here would
+// deadlock the changeset.
+//
+// EMAIL-validated certs never populate ResourceRecord; the poll
+// budget caps total wait so they don't pay an unnecessary delay.
+func (c *Certificate) readPropertiesWithValidationRecords(
+	ctx context.Context,
+	client ACMClientInterface,
+	certArn string,
+) (map[string]any, error) {
+	pollInterval := c.validationRecordsPollInterval
 	if pollInterval <= 0 {
-		pollInterval = defaultPollInterval
+		pollInterval = validationRecordsPollInterval
 	}
-	issuedTimeout := c.issuedTimeout
-	if issuedTimeout <= 0 {
-		issuedTimeout = defaultIssuedTimeout
+	maxAttempts := c.validationRecordsPollAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = validationRecordsPollAttempts
 	}
 
-	deadline := time.Now().Add(issuedTimeout)
-	for {
-		desc, err := client.DescribeCertificate(ctx, &acm.DescribeCertificateInput{
-			CertificateArn: aws.String(certArn),
-		})
+	var props map[string]any
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		props, err = c.readProperties(ctx, client, certArn)
 		if err != nil {
-			return fmt.Errorf("acm: DescribeCertificate while waiting for ISSUED: %w", err)
+			return nil, err
 		}
-		if desc != nil && desc.Certificate != nil {
-			switch desc.Certificate.Status {
-			case acmtypes.CertificateStatusIssued:
-				return nil
-			case acmtypes.CertificateStatusFailed,
-				acmtypes.CertificateStatusRevoked,
-				acmtypes.CertificateStatusValidationTimedOut:
-				return fmt.Errorf("acm: certificate %s reached terminal status %s before issuance", certArn, desc.Certificate.Status)
-			}
+		if hasNonEmptyValidationRecords(props) {
+			return props, nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("acm: certificate %s still not ISSUED after %s", certArn, issuedTimeout)
+		if attempt == maxAttempts {
+			break
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("acm: certificate %s wait cancelled: %w", certArn, ctx.Err())
+			return props, nil
 		case <-time.After(pollInterval):
 		}
 	}
+	slog.Info("acm: validation records still empty after poll budget; returning current state",
+		"cert_arn", certArn,
+		"attempts", maxAttempts)
+	return props, nil
+}
+
+func hasNonEmptyValidationRecords(props map[string]any) bool {
+	records, ok := props["ValidationRecords"].([]ses.DnsRecord)
+	if !ok {
+		return false
+	}
+	return len(records) > 0
 }
 
 // ----- Read -----

@@ -1089,11 +1089,30 @@ done
 # EFS Resources (regional)
 # ============================================================================
 
-# 31. Delete EFS file systems with test prefix (by Name tag)
+# 31. Delete EFS file systems that look like test orphans.
+#
+# The fixture-side label "test-fs-for-mounttarget" doesn't propagate to an
+# AWS tag, so the original Name-tag match missed every FS the
+# efs-mounttarget discovery test creates. Empirically these accumulate
+# untagged and trip the CCAPI ListResources call under conformance load
+# (the per-account elasticfilesystem rate limit hits, surfaced as
+# HandlerFailureException). Match three cases here:
+#   1. Tag-name prefix (FORMAE_PREFIX): standard formae-created FSes
+#   2. Tag-name prefix (TEST_PREFIX):   plugin-sdk fixtures with explicit tags
+#   3. Untagged with zero mount targets: conformance orphans (the discovery
+#      test creates these directly and they have no tags at all)
 echo "Cleaning EFS test file systems..."
 aws efs describe-file-systems --region "$REGION" \
-    --query "FileSystems[].{Id:FileSystemId, Tags:Tags}" --output json 2>/dev/null | \
-    jq -r '.[] | select(.Tags[]? | select(.Key == "Name" and (.Value | test("'"$FORMAE_PREFIX"'")))) | .Id' 2>/dev/null | while read -r fs_id; do
+    --query "FileSystems[].{Id:FileSystemId, Tags:Tags, MountTargets:NumberOfMountTargets}" --output json 2>/dev/null | \
+    jq -r '
+      .[] |
+      select(
+        (.Tags // []) as $tags |
+        ($tags | any(.Key == "Name" and ((.Value | test("'"$FORMAE_PREFIX"'")) or (.Value | test("'"$TEST_PREFIX"'")))))
+        or
+        ((.Tags == null or .Tags == []) and .MountTargets == 0)
+      ) | .Id
+    ' 2>/dev/null | while read -r fs_id; do
     if [[ -n "$fs_id" ]]; then
         echo "  Deleting EFS file system: $fs_id"
         # Delete mount targets first

@@ -433,92 +433,91 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 
 	// If operation status is success, run a Read to get the latest properties.
 	// Some resources (like DynamoDB tables) may not be immediately readable after
-	// CloudControl reports the operation as successful, so we retry with backoff.
+	// CloudControl reports the operation as successful, and AWS throttling can
+	// flap during high-concurrency periods. retryRead absorbs both with
+	// exponential backoff so the agent doesn't persist a stale snapshot.
 	if operationStatus == resource.OperationStatusSuccess && result.ProgressEvent.Operation != cctypes.OperationDelete {
-		const maxReadRetries = 3
-		const retryDelay = 2 * time.Second
-
-		var readResult *resource.ReadResult
-		var readErr error
-
-		for attempt := 1; attempt <= maxReadRetries; attempt++ {
-			readResult, readErr = readFunc(ctx, &resource.ReadRequest{
-				NativeID:     identifier,
-				ResourceType: *result.ProgressEvent.TypeName,
-				TargetConfig: request.TargetConfig,
+		typeName := *result.ProgressEvent.TypeName
+		readResult, readErr := retryRead(ctx, retryOpts{}, "StatusResource:"+typeName,
+			func(ctx context.Context) (*resource.ReadResult, error) {
+				return readFunc(ctx, &resource.ReadRequest{
+					NativeID:     identifier,
+					ResourceType: typeName,
+					TargetConfig: request.TargetConfig,
+				})
 			})
 
-			if readErr != nil {
-				slog.Warn("StatusResource: Read failed after successful operation",
-					"error", readErr,
-					"identifier", identifier,
-					"resourceType", *result.ProgressEvent.TypeName,
-					"attempt", attempt,
-					"maxRetries", maxReadRetries)
-			} else if readResult != nil && readResult.ErrorCode != "" {
-				slog.Warn("StatusResource: Read returned CloudControl error",
-					"errorCode", readResult.ErrorCode,
-					"identifier", identifier,
-					"resourceType", *result.ProgressEvent.TypeName,
-					"attempt", attempt,
-					"maxRetries", maxReadRetries)
-			} else if readResult != nil && readResult.Properties != "" {
-				// Success - we have properties
-				statusResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
-				break
-			}
-
-			// If not the last attempt, wait before retrying
-			if attempt < maxReadRetries {
-				slog.Info("StatusResource: Retrying Read after delay",
-					"identifier", identifier,
-					"delay", retryDelay)
-				time.Sleep(retryDelay)
-			}
+		switch {
+		case readErr != nil:
+			slog.Error("StatusResource: Read failed after retry budget exhausted",
+				"error", readErr,
+				"identifier", identifier,
+				"resourceType", typeName)
+		case readResult != nil && readResult.ErrorCode != "":
+			slog.Error("StatusResource: Read returned CloudControl error after retry budget",
+				"errorCode", readResult.ErrorCode,
+				"identifier", identifier,
+				"resourceType", typeName)
+		case readResult != nil && readResult.Properties != "":
+			statusResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
 		}
 
-		// If we exhausted retries without getting properties, log an error
 		if statusResult.ProgressResult.ResourceProperties == nil {
 			slog.Error("StatusResource: Failed to read properties after retries",
 				"identifier", identifier,
-				"resourceType", *result.ProgressEvent.TypeName,
-				"maxRetries", maxReadRetries)
+				"resourceType", typeName)
 		}
 	}
 
 	return statusResult, nil
 }
 
-// populateResourceProperties performs a post-success Read to populate ResourceProperties
-// on a ProgressResult. This is needed when CloudControl returns synchronous Success
-// (without going through StatusResource polling, which already does its own Read).
+// populateResourceProperties performs a post-success Read to populate
+// ResourceProperties on a ProgressResult. Used when CloudControl returns
+// synchronous Success (no async polling, so StatusResource's Read loop
+// doesn't run). Wraps the call in retryRead so transient throttling
+// surfaced as ErrorCode doesn't leave the agent with a stale snapshot.
 func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) {
-	readResult, err := c.ReadResource(ctx, &resource.ReadRequest{
-		NativeID:     identifier,
-		ResourceType: resourceType,
-	})
+	readResult, err := retryRead(ctx, retryOpts{}, "populateResourceProperties:"+resourceType,
+		func(ctx context.Context) (*resource.ReadResult, error) {
+			return c.ReadResource(ctx, &resource.ReadRequest{
+				NativeID:     identifier,
+				ResourceType: resourceType,
+			})
+		})
 	if err != nil {
-		slog.Error("post-success Read failed",
+		slog.Error("post-success Read failed after retries",
 			"error", err,
 			"identifier", identifier,
 			"resourceType", resourceType)
 		return
 	}
-	if readResult.ErrorCode != "" {
-		slog.Error("post-success Read returned error",
+	if readResult != nil && readResult.ErrorCode != "" {
+		slog.Error("post-success Read returned error after retries",
 			"errorCode", readResult.ErrorCode,
 			"identifier", identifier,
 			"resourceType", resourceType)
 		return
 	}
-	if readResult.Properties != "" {
+	if readResult != nil && readResult.Properties != "" {
 		pr.ResourceProperties = json.RawMessage(readResult.Properties)
 	}
 }
 
-// ListResources lists resources using CloudControl
+// ListResources lists resources using CloudControl. Wrapped in
+// retryCallable because Discovery has no PluginOperator layer to absorb
+// transient throttling / handler-failure errors; a single 5xx in a scan
+// loop drops the resource type for the tick and the conformance test
+// wait window typically expires before the next periodic scan.
 func (c *Client) ListResources(ctx context.Context, input *cloudcontrol.ListResourcesInput) (*cloudcontrol.ListResourcesOutput, error) {
-	return c.api.ListResources(ctx, input)
+	typeName := ""
+	if input != nil && input.TypeName != nil {
+		typeName = *input.TypeName
+	}
+	return retryCallable(ctx, retryOpts{}, "ListResources:"+typeName,
+		func(ctx context.Context) (*cloudcontrol.ListResourcesOutput, error) {
+			return c.api.ListResources(ctx, input)
+		})
 }
 
 // transformSecretStringPatch transforms replace operations to add operations for SecretString

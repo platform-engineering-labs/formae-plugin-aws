@@ -166,11 +166,6 @@ jobs:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: debug-${{ github.run_id }}-${{ github.run_attempt }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          # The certificatemanager fixture uses an unvalidatable `*.example`
-          # domain. With the new wait-for-ISSUED behavior in Certificate.Create
-          # the cert never transitions in CI, hanging the test until timeout.
-          # Skip the wait under conformance; production deployments leave it on.
-          FORMAE_AWS_CERT_SKIP_ISSUED_WAIT: "1"
         # 90-minute timeout accommodates LB-attached fixtures (ALB provisioning
         # + ECS stabilization + destroy + reapply takes 65-80m). Smaller fixtures
         # are unaffected — they finish well under the bound.
