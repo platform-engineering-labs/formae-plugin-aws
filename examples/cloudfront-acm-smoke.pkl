@@ -6,7 +6,12 @@
  * Static-typing smoke: declares one of each new producer (KVS, Function,
  * Cert, CachePolicy, OriginRequestPolicy, ResponseHeadersPolicy, OAC)
  * and wires each into a Distribution via the corresponding widened
- * field. Validates Resolvable shape compatibility at pkl-eval time.
+ * field. Also wires a Route53::RecordSet to cert.res.validationRecords
+ * to exercise the CertificateResolvable self-reference shape and the
+ * RecordSet.type String|Resolvable widening, and routes the Distribution
+ * origin at the bucket's hostname-only websiteEndpoint resolvable.
+ *
+ * Validates Resolvable shape compatibility at pkl-eval time.
  *
  * NOT intended to be applied — this is a type-check only.
  */
@@ -24,6 +29,7 @@ import "@aws/cloudfront/originrequestpolicy.pkl"
 import "@aws/cloudfront/responseheaderspolicy.pkl"
 import "@aws/cloudfront/originaccesscontrol.pkl"
 import "@aws/cloudfront/distribution.pkl"
+import "@aws/route53/recordset.pkl"
 import "@aws/s3/bucket.pkl"
 
 local kvs = new keyvaluestore.KeyValueStore {
@@ -50,6 +56,15 @@ local cert = new certificate.Certificate {
   label = "smoke-cert"
   domainName = "smoke.example"
   validationMethod = "DNS"
+}
+
+local certValidation = new recordset.RecordSet {
+  label = "smoke-cert-validation"
+  hostedZoneId = "Z00000000000000000000"
+  name = cert.res.validationRecords.at(0).name
+  type = cert.res.validationRecords.at(0).recordType
+  ttl = 300
+  resourceRecords = cert.res.validationRecords.at(0).values
 }
 
 local cp = new cachepolicy.CachePolicy {
@@ -107,7 +122,7 @@ local dist = new distribution.Distribution {
     origins = new Listing<distribution.Origin> {
       new {
         id = "smoke-origin"
-        domainName = origin.res.regionalDomainName
+        domainName = origin.res.websiteEndpoint
         originAccessControlId = oac.res.id
         s3OriginConfig = new distribution.S3OriginConfig {}
       }
@@ -142,6 +157,7 @@ forma {
   kvs
   fn
   cert
+  certValidation
   cp
   orp
   rhp

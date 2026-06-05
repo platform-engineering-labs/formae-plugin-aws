@@ -117,7 +117,7 @@ open class RecordSet extends formae.Resource {
 
     @aws.FieldHint{
     }
-    type: String
+    type: String|formae.Resolvable
 
     @aws.FieldHint
     weight: Int?

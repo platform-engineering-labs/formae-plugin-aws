@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/acm"
@@ -21,6 +23,20 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/ses"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/utils"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
+)
+
+// Wait-for-ISSUED defaults. Operators with unusual DNS-propagation
+// expectations can override these on the provisioner at construction
+// time; tests do so to keep run-time in microseconds.
+const (
+	defaultPollInterval  = 10 * time.Second
+	defaultIssuedTimeout = 15 * time.Minute
+
+	// skipIssuedWaitEnvVar disables the wait-for-ISSUED loop when set to
+	// "1" / "true". The conformance fixture uses unvalidatable
+	// `*.example` domains where the cert never reaches ISSUED, so the
+	// CI harness sets this to keep the lifecycle test fast.
+	skipIssuedWaitEnvVar = "FORMAE_AWS_CERT_SKIP_ISSUED_WAIT"
 )
 
 // Certificate is the AWS::CertificateManager::Certificate provisioner.
@@ -40,6 +56,12 @@ import (
 type Certificate struct {
 	cfg              *config.Config
 	acmClientFactory func(cfg *config.Config) (ACMClientInterface, error)
+	// pollInterval is how long Create sleeps between DescribeCertificate
+	// polls while waiting for Status=ISSUED. Zero means use the default.
+	pollInterval time.Duration
+	// issuedTimeout is the upper bound on the wait-for-ISSUED loop. Zero
+	// means use the default.
+	issuedTimeout time.Duration
 }
 
 var _ prov.Provisioner = &Certificate{}
@@ -174,6 +196,15 @@ func (c *Certificate) Create(ctx context.Context, request *resource.CreateReques
 		}
 	}
 
+	// Block until the cert reaches ISSUED so downstream resources that
+	// depend on the ARN (e.g. CloudFront::Distribution.viewerCertificate)
+	// can be created in the same apply. The DNS publisher is wired
+	// upstream via runtimeDependency; this loop only observes ACM's view
+	// of the validation outcome.
+	if err := c.waitForIssued(ctx, client, certArn); err != nil {
+		return nil, err
+	}
+
 	// Read back so callers get the fully-enriched property set (including
 	// any validation records that ACM has already populated).
 	props, _ := c.readProperties(ctx, client, certArn)
@@ -187,6 +218,61 @@ func (c *Certificate) Create(ctx context.Context, request *resource.CreateReques
 			ResourceProperties: propsBytes,
 		},
 	}, nil
+}
+
+// waitForIssued polls DescribeCertificate until Status transitions to
+// ISSUED, hits a terminal failure (FAILED / REVOKED /
+// VALIDATION_TIMED_OUT), the context is cancelled, or the configured
+// timeout elapses.
+//
+// The provisioner makes no assumption about who publishes the validation
+// CNAME — that's the responsibility of upstream resources wired via
+// runtimeDependency (Route53::RecordSet from this plugin today, or any
+// other DNS plugin tomorrow). We only observe ACM's view; AWS owns the
+// validation check itself, so DNS-provider work composes via the
+// resource graph rather than via provider-aware wait logic here.
+func (c *Certificate) waitForIssued(ctx context.Context, client ACMClientInterface, certArn string) error {
+	if skip := os.Getenv(skipIssuedWaitEnvVar); skip == "1" || skip == "true" {
+		slog.Info("acm: skipping wait-for-ISSUED due to env override", "cert_arn", certArn, "env", skipIssuedWaitEnvVar)
+		return nil
+	}
+
+	pollInterval := c.pollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultPollInterval
+	}
+	issuedTimeout := c.issuedTimeout
+	if issuedTimeout <= 0 {
+		issuedTimeout = defaultIssuedTimeout
+	}
+
+	deadline := time.Now().Add(issuedTimeout)
+	for {
+		desc, err := client.DescribeCertificate(ctx, &acm.DescribeCertificateInput{
+			CertificateArn: aws.String(certArn),
+		})
+		if err != nil {
+			return fmt.Errorf("acm: DescribeCertificate while waiting for ISSUED: %w", err)
+		}
+		if desc != nil && desc.Certificate != nil {
+			switch desc.Certificate.Status {
+			case acmtypes.CertificateStatusIssued:
+				return nil
+			case acmtypes.CertificateStatusFailed,
+				acmtypes.CertificateStatusRevoked,
+				acmtypes.CertificateStatusValidationTimedOut:
+				return fmt.Errorf("acm: certificate %s reached terminal status %s before issuance", certArn, desc.Certificate.Status)
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("acm: certificate %s still not ISSUED after %s", certArn, issuedTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("acm: certificate %s wait cancelled: %w", certArn, ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // ----- Read -----

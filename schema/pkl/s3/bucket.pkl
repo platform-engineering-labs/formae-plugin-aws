@@ -578,8 +578,22 @@ open class BucketResolvable extends formae.Resolvable {
         property = "RegionalDomainName"
     }
 
+    /// Full S3 website URL including the `http://` scheme and trailing
+    /// slash, e.g. `http://my-bucket.s3-website-us-west-2.amazonaws.com/`.
+    /// For consumers that want hostname-only (e.g. CloudFront's
+    /// Distribution.Origin.domainName), use `websiteEndpoint` instead.
     hidden websiteURL: BucketResolvable = (this) {
         property = "WebsiteURL"
+    }
+
+    /// Hostname-only form of the S3 website endpoint, e.g.
+    /// `my-bucket.s3-website-us-west-2.amazonaws.com`. Derived from
+    /// WebsiteURL by the bucket provisioner's custom Read because CFN's
+    /// GetAtt schema only exposes the full URL. Use this when wiring
+    /// the bucket into CloudFront::Distribution.Origin.domainName, which
+    /// rejects schemed URLs.
+    hidden websiteEndpoint: BucketResolvable = (this) {
+        property = "WebsiteEndpoint"
     }
 
     hidden bucketName: BucketResolvable = (this) {
