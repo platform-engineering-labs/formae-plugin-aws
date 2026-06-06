@@ -34,25 +34,33 @@ open class DistributionConfig extends formae.SubResource {
     anycastIpListId: (String|formae.Resolvable)?
     @aws.FieldHint{outputField = "CNAMEs"}
     cnames: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     cacheBehaviors: Listing<CacheBehavior>?
     comment: String?
+    @aws.FieldHint{hasProviderDefault = true}
     continuousDeploymentPolicyId: (String|formae.Resolvable)?
+    @aws.FieldHint{hasProviderDefault = true}
     customErrorResponses: Listing<CustomErrorResponse>?
     customOrigin: CustomOrigin?
     defaultCacheBehavior: DefaultCacheBehavior
     defaultRootObject: String?
     enabled: Boolean
     httpVersion: HttpVersionType?
-    @aws.FieldHint{outputField = "IPV6Enabled"}
+    @aws.FieldHint{outputField = "IPV6Enabled"; hasProviderDefault = true}
     ipV6Enabled: Boolean?
+    @aws.FieldHint{hasProviderDefault = true}
     logging: Logging?
+    @aws.FieldHint{hasProviderDefault = true}
     originGroups: OriginGroups?
     origins: Listing<Origin>?
     priceClass: PriceClassType?
+    @aws.FieldHint{hasProviderDefault = true}
     restrictions: Restrictions?
     s3Origin: S3Origin?
+    @aws.FieldHint{hasProviderDefault = true}
     staging: Boolean?
     viewerCertificate: ViewerCertificate?
+    @aws.FieldHint{hasProviderDefault = true}
     webACLId: (String|formae.Resolvable)?
 }
 
@@ -102,11 +110,14 @@ open class CustomErrorResponse extends formae.SubResource {
 open class CustomOriginConfig extends formae.SubResource {
     @aws.FieldHint{outputField = "HTTPPort"}
     httpPort: Int?
-    @aws.FieldHint{outputField = "HTTPSPort"}
+    @aws.FieldHint{outputField = "HTTPSPort"; hasProviderDefault = true}
     httpsPort: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     originKeepaliveTimeout: Int?
     originProtocolPolicy: OriginProtocolPolicyType
+    @aws.FieldHint{hasProviderDefault = true}
     originReadTimeout: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     originSSLProtocols: Listing<String>?
 }
 
@@ -116,12 +127,16 @@ open class DefaultCacheBehavior extends formae.SubResource {
     @aws.FieldHint{edgeKind = "runtimeDependency"}
     cachePolicyId: (String|formae.Resolvable)?
     cachedMethods: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     compress: Boolean?
     defaultTTL: Number?
+    @aws.FieldHint{hasProviderDefault = true}
     fieldLevelEncryptionId: (String|formae.Resolvable)?
     forwardedValues: ForwardedValues?
     functionAssociations: Listing<FunctionAssociation>?
+    @aws.FieldHint{hasProviderDefault = true}
     grpcConfig: GrpcConfig?
+    @aws.FieldHint{hasProviderDefault = true}
     lambdaFunctionAssociations: Listing<LambdaFunctionAssociation>?
     maxTTL: Number?
     minTTL: Number?
@@ -130,9 +145,12 @@ open class DefaultCacheBehavior extends formae.SubResource {
     realtimeLogConfigArn: (String|formae.Resolvable)?
     @aws.FieldHint{edgeKind = "runtimeDependency"}
     responseHeadersPolicyId: (String|formae.Resolvable)?
+    @aws.FieldHint{hasProviderDefault = true}
     smoothStreaming: Boolean?
     targetOriginId: String
+    @aws.FieldHint{hasProviderDefault = true}
     trustedKeyGroups: Listing<String>?
+    @aws.FieldHint{hasProviderDefault = true}
     trustedSigners: Listing<String>?
     viewerProtocolPolicy: ViewerProtocolPolicyType
 }
@@ -140,8 +158,10 @@ open class DefaultCacheBehavior extends formae.SubResource {
 @aws.SubResourceHint
 open class ForwardedValues extends formae.SubResource {
     cookies: Cookies?
+    @aws.FieldHint{hasProviderDefault = true}
     headers: Listing<String>?
     queryString: Boolean
+    @aws.FieldHint{hasProviderDefault = true}
     queryStringCacheKeys: Listing<String>?
 }
 
@@ -199,15 +219,20 @@ open class Logging extends formae.SubResource {
 
 @aws.SubResourceHint
 open class Origin extends formae.SubResource {
+    @aws.FieldHint{hasProviderDefault = true}
     connectionAttempts: Int?
+    @aws.FieldHint{hasProviderDefault = true}
     connectionTimeout: Int?
     customOriginConfig: CustomOriginConfig?
     domainName: String|formae.Resolvable
     id: String|formae.Resolvable
-    @aws.FieldHint{edgeKind = "runtimeDependency"}
+    @aws.FieldHint{edgeKind = "runtimeDependency"; hasProviderDefault = true}
     originAccessControlId: (String|formae.Resolvable)?
+    @aws.FieldHint{hasProviderDefault = true}
     originCustomHeaders: Listing<OriginCustomHeader>?
+    @aws.FieldHint{hasProviderDefault = true}
     originPath: String?
+    @aws.FieldHint{hasProviderDefault = true}
     originShield: OriginShield?
     s3OriginConfig: S3OriginConfig?
     vpcOriginConfig: VpcOriginConfig?
