@@ -181,3 +181,57 @@ func TestFunction_Update_PreservesNameFromDesiredProperties(t *testing.T) {
 		t.Fatalf("UpdateFunction Name wrong: %q", aws.ToString(client.updateFunctionInput.Name))
 	}
 }
+
+func TestFunction_Update_ResultReflectsPostUpdateReadbackFromAWS(t *testing.T) {
+	// The conformance harness verifies post-Update properties by reading
+	// formae's inventory, which comes from ResourceProperties returned
+	// here. If we trust DesiredProperties verbatim, a silent AWS-side
+	// failure (Update reports Success but the function code didn't
+	// actually change) is invisible to conformance. The fix: read back
+	// the actual AWS state after Update+Publish and use that as the
+	// returned ResourceProperties.
+	client := &fakeCloudFrontClient{
+		describeFunctionOut: &cloudfront.DescribeFunctionOutput{
+			ETag: aws.String("E1-before-update"),
+			FunctionSummary: &cftypes.FunctionSummary{
+				Name: aws.String("my-fn"),
+				FunctionConfig: &cftypes.FunctionConfig{
+					Runtime: cftypes.FunctionRuntimeCloudfrontJs20,
+					Comment: aws.String("old"),
+				},
+				FunctionMetadata: &cftypes.FunctionMetadata{
+					FunctionARN: aws.String("arn:aws:cloudfront::123:function/my-fn"),
+				},
+			},
+		},
+		updateFunctionOut: &cloudfront.UpdateFunctionOutput{
+			ETag: aws.String("E2-after-update"),
+		},
+		getFunctionOut: &cloudfront.GetFunctionOutput{
+			ETag:         aws.String("E2-after-update"),
+			FunctionCode: []byte("ACTUAL LIVE CODE FROM AWS"),
+		},
+	}
+	f := newFunctionForTest(client)
+
+	result, err := f.Update(context.Background(), functionUpdateRequest(true, "code we sent"))
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	// We must have queried AWS for the actual function code after
+	// publishing — otherwise the agent's DB will diverge from reality
+	// and silent no-ops in UpdateFunction become invisible.
+	if client.getFunctionInput == nil {
+		t.Fatal("expected GetFunction to be called for post-update readback")
+	}
+
+	var props map[string]any
+	if err := json.Unmarshal(result.ProgressResult.ResourceProperties, &props); err != nil {
+		t.Fatalf("unmarshal result properties: %v", err)
+	}
+	if got := props["FunctionCode"]; got != "ACTUAL LIVE CODE FROM AWS" {
+		t.Errorf("ResourceProperties.FunctionCode: want AWS readback %q, got %q (provisioner is trusting DesiredProperties instead of reading back from AWS)",
+			"ACTUAL LIVE CODE FROM AWS", got)
+	}
+}
