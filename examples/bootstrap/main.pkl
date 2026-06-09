@@ -1,0 +1,464 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+// VPC + Networking
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/route.pkl"
+import "@aws/ec2/subnetroutetableassociation.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ec2/securitygroupingress.pkl"
+
+// RDS
+import "@aws/rds/dbcluster.pkl"
+import "@aws/rds/dbinstance.pkl"
+import "@aws/rds/dbsubnetgroup.pkl"
+
+// ECS
+import "@aws/ecs/ecscluster.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+import "@aws/ecs/service.pkl"
+
+// IAM
+import "@aws/iam/role.pkl"
+
+// Logging
+import "@aws/logs/loggroup.pkl"
+
+// Load Balancer
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/elasticloadbalancingv2/targetgroup.pkl"
+import "@aws/elasticloadbalancingv2/listener.pkl"
+
+import "./vars.pkl"
+
+description {
+    text = """
+    Formae Bootstrap on AWS
+
+    Provisions:
+    - VPC with two public subnets across availability zones
+    - Aurora PostgreSQL Serverless v2 with Data API
+    - ECS Fargate cluster running the formae agent
+    - Application Load Balancer for API access
+    - IAM roles for ECS and Aurora Data API access
+    """
+    confirm = true
+}
+
+properties {
+    name = new formae.Prop {
+        flag = "name"
+        default = vars.projectName
+    }
+    region = vars.regionProp
+}
+
+local n = properties.name.value
+
+forma {
+    vars.stack
+    vars.target
+
+    // =========================================================================
+    // VPC + Networking
+    // =========================================================================
+
+    local vpcRes = new vpc.VPC {
+        label = "\(n)-vpc"
+        cidrBlock = vars.vpcCidr
+        enableDnsHostnames = true
+        enableDnsSupport = true
+        tags { new { key = "Name"; value = "\(n)-vpc" } }
+    }
+    vpcRes
+
+    local igw = new internetgateway.InternetGateway {
+        label = "\(n)-igw"
+        tags { new { key = "Name"; value = "\(n)-igw" } }
+    }
+    igw
+
+    new vpcgatewayattachment.VPCGatewayAttachment {
+        label = "\(n)-igw-attach"
+        vpcId = vpcRes.res.id
+        internetGatewayId = igw.res.id
+    }
+
+    local subnet1 = new subnet.Subnet {
+        label = "\(n)-subnet-1"
+        vpcId = vpcRes.res.id
+        cidrBlock = vars.subnetCidr1
+        availabilityZone = vars.availabilityZone1
+        mapPublicIpOnLaunch = true
+        tags { new { key = "Name"; value = "\(n)-subnet-1" } }
+    }
+    subnet1
+
+    local subnet2 = new subnet.Subnet {
+        label = "\(n)-subnet-2"
+        vpcId = vpcRes.res.id
+        cidrBlock = vars.subnetCidr2
+        availabilityZone = vars.availabilityZone2
+        mapPublicIpOnLaunch = true
+        tags { new { key = "Name"; value = "\(n)-subnet-2" } }
+    }
+    subnet2
+
+    local rt = new routetable.RouteTable {
+        label = "\(n)-rt"
+        vpcId = vpcRes.res.id
+        tags { new { key = "Name"; value = "\(n)-rt" } }
+    }
+    rt
+
+    new route.Route {
+        label = "\(n)-route"
+        routeTableId = rt.res.id
+        destinationCidrBlock = "0.0.0.0/0"
+        gatewayId = igw.res.id
+    }
+
+    new subnetroutetableassociation.SubnetRouteTableAssociation {
+        label = "\(n)-rt-assoc-1"
+        subnetId = subnet1.res.id
+        routeTableId = rt.res.id
+    }
+
+    new subnetroutetableassociation.SubnetRouteTableAssociation {
+        label = "\(n)-rt-assoc-2"
+        subnetId = subnet2.res.id
+        routeTableId = rt.res.id
+    }
+
+    // =========================================================================
+    // Aurora PostgreSQL Serverless v2
+    // =========================================================================
+
+    local auroraSg = new securitygroup.SecurityGroup {
+        label = "\(n)-aurora-sg"
+        groupDescription = "Allow PostgreSQL from VPC"
+        vpcId = vpcRes.res.id
+        tags { new { key = "Name"; value = "\(n)-aurora-sg" } }
+    }
+    auroraSg
+
+    new securitygroupingress.SecurityGroupIngress {
+        label = "\(n)-aurora-sg-ingress"
+        ipProtocol = "tcp"
+        fromPort = 5432
+        toPort = 5432
+        cidrIp = vars.vpcCidr
+        groupId = auroraSg.res.groupId
+    }
+
+    local dbSubnetGroup = new dbsubnetgroup.DBSubnetGroup {
+        label = "\(n)-db-subnet-group"
+        dbSubnetGroupDescription = "Subnet group for Aurora"
+        subnetIds { subnet1.res.subnetId; subnet2.res.subnetId }
+        tags { new { key = "Name"; value = "\(n)-db-subnet-group" } }
+    }
+    dbSubnetGroup
+
+    local auroraCluster = new dbcluster.DBCluster {
+        label = "\(n)-cluster"
+        dbClusterIdentifier = "\(n)-cluster"
+        engine = "aurora-postgresql"
+        engineVersion = "16.4"
+        enableHttpEndpoint = true
+        serverlessV2ScalingConfiguration {
+            minCapacity = 0.5
+            maxCapacity = 2.0
+        }
+        masterUsername = "postgres"
+        manageMasterUserPassword = true
+        masterUserSecret {
+            kmsKeyId = null
+        }
+        databaseName = vars.dbName
+        dbSubnetGroupName = dbSubnetGroup.res.dbSubnetGroupName
+        vpcSecurityGroupIds { auroraSg.res.groupId }
+        storageEncrypted = true
+        backupRetentionPeriod = 1
+        tags { new { key = "Name"; value = "\(n)-cluster" } }
+    }
+    auroraCluster
+
+    new dbinstance.DBInstance {
+        label = "\(n)-instance"
+        dbInstanceIdentifier = "\(n)-instance"
+        dbClusterIdentifier = auroraCluster.res.dbClusterIdentifier
+        dbInstanceClass = "db.serverless"
+        engine = "aurora-postgresql"
+        tags { new { key = "Name"; value = "\(n)-instance" } }
+    }
+
+    // =========================================================================
+    // IAM Roles
+    // =========================================================================
+
+    local ecsAssumeRole = new Dynamic {
+        ["Version"] = "2012-10-17"
+        ["Statement"] = new Listing {
+            new Dynamic {
+                ["Effect"] = "Allow"
+                ["Principal"] = new Dynamic { ["Service"] = "ecs-tasks.amazonaws.com" }
+                ["Action"] = "sts:AssumeRole"
+            }
+        }
+    }
+
+    local taskExecRole = new role.Role {
+        label = "\(n)-exec-role"
+        roleName = "\(n)-exec-role"
+        assumeRolePolicyDocument = ecsAssumeRole
+        managedPolicyArns {
+            "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        }
+        tags { new { key = "Name"; value = "\(n)-exec-role" } }
+    }
+    taskExecRole
+
+    local taskRole = new role.Role {
+        label = "\(n)-task-role"
+        roleName = "\(n)-task-role"
+        assumeRolePolicyDocument = ecsAssumeRole
+        policies {
+            new role.RolePolicy {
+                policyName = "\(n)-aurora-access"
+                policyDocument {
+                    ["Version"] = "2012-10-17"
+                    ["Statement"] = new Listing {
+                        new Dynamic {
+                            ["Effect"] = "Allow"
+                            ["Action"] = new Listing {
+                                "rds-data:ExecuteStatement"
+                                "rds-data:BatchExecuteStatement"
+                                "rds-data:BeginTransaction"
+                                "rds-data:CommitTransaction"
+                                "rds-data:RollbackTransaction"
+                                "secretsmanager:GetSecretValue"
+                            }
+                            ["Resource"] = "*"
+                        }
+                    }
+                }
+            }
+        }
+        tags { new { key = "Name"; value = "\(n)-task-role" } }
+    }
+    taskRole
+
+    // =========================================================================
+    // ECS Cluster + Task + Service
+    // =========================================================================
+
+    local logGrp = new loggroup.LogGroup {
+        label = "\(n)-logs"
+        logGroupName = "/ecs/\(n)"
+        retentionInDays = 14
+    }
+    logGrp
+
+    local ecsCluster = new ecscluster.Cluster {
+        label = "\(n)-ecs-cluster"
+        clusterName = "\(n)-cluster"
+        tags { new { key = "Name"; value = "\(n)-cluster" } }
+    }
+    ecsCluster
+
+    local configScript = new Listing {
+        "mkdir -p /home/pel/.config/formae &&"
+        "cat > /home/pel/.config/formae/formae.conf.pkl << PKLEOF"
+        "amends \"formae:/Config.pkl\""
+        "agent {"
+        "  server {"
+        "    port = \(vars.formaePort)"
+        "  }"
+        "  datastore {"
+        "    datastoreType = \"auroradataapi\""
+        "    auroraDataAPI {"
+        "      clusterArn = \"$FORMAE_CLUSTER_ARN\""
+        "      secretArn = \"$FORMAE_SECRET_ARN\""
+        "      database = \"\(vars.dbName)\""
+        "      region = \"\(vars.region)\""
+        "    }"
+        "  }"
+        "  synchronization {"
+        "    enabled = true"
+        "    interval = 300.s"
+        "  }"
+        "  discovery {"
+        "    enabled = true"
+        "    interval = 600.s"
+        "  }"
+        "}"
+        "PKLEOF"
+        "exec formae agent start"
+    }.join("\n")
+
+    local taskDef = new taskdefinition.TaskDefinition {
+        label = "\(n)-task-def"
+        family = "\(n)-task"
+        requiresCompatibilities { "FARGATE" }
+        networkMode = "awsvpc"
+        cpu = "512"
+        memory = "1024"
+        executionRoleArn = taskExecRole.res.arn
+        taskRoleArn = taskRole.res.arn
+        containerDefinitions {
+            new taskdefinition.ContainerDefinition {
+                name = "formae-agent"
+                image = vars.formaeImage
+                essential = true
+                entryPoint { "sh"; "-c" }
+                command { configScript }
+                portMappings {
+                    new taskdefinition.PortMapping {
+                        containerPort = vars.formaePort
+                        protocol = "tcp"
+                    }
+                }
+                environment {
+                    new taskdefinition.KeyValuePair {
+                        name = "FORMAE_CLUSTER_ARN"
+                        value = auroraCluster.res.dbClusterArn
+                    }
+                    new taskdefinition.KeyValuePair {
+                        name = "FORMAE_SECRET_ARN"
+                        value = auroraCluster.res.masterUserSecretSecretArn
+                    }
+                }
+                logConfiguration = new taskdefinition.LogConfiguration {
+                    logDriver = "awslogs"
+                    options {
+                        ["awslogs-group"] = "/ecs/\(n)"
+                        ["awslogs-region"] = vars.region
+                        ["awslogs-stream-prefix"] = "formae"
+                    }
+                }
+            }
+        }
+        tags { new { key = "Name"; value = "\(n)-task-def" } }
+    }
+    taskDef
+
+    // =========================================================================
+    // ALB
+    // =========================================================================
+
+    local albSg = new securitygroup.SecurityGroup {
+        label = "\(n)-alb-sg"
+        groupDescription = "Allow formae API traffic"
+        vpcId = vpcRes.res.id
+        tags { new { key = "Name"; value = "\(n)-alb-sg" } }
+    }
+    albSg
+
+    new securitygroupingress.SecurityGroupIngress {
+        label = "\(n)-alb-sg-ingress"
+        ipProtocol = "tcp"
+        fromPort = vars.formaePort
+        toPort = vars.formaePort
+        cidrIp = "0.0.0.0/0"
+        groupId = albSg.res.groupId
+    }
+
+    local taskSg = new securitygroup.SecurityGroup {
+        label = "\(n)-task-sg"
+        groupDescription = "Allow traffic from ALB to formae tasks"
+        vpcId = vpcRes.res.id
+        tags { new { key = "Name"; value = "\(n)-task-sg" } }
+    }
+    taskSg
+
+    new securitygroupingress.SecurityGroupIngress {
+        label = "\(n)-task-sg-ingress"
+        ipProtocol = "tcp"
+        fromPort = vars.formaePort
+        toPort = vars.formaePort
+        sourceSecurityGroupId = albSg.res.groupId
+        groupId = taskSg.res.groupId
+    }
+
+    local alb = new loadbalancer.LoadBalancer {
+        label = "\(n)-alb"
+        name = "\(n)-alb"
+        subnets { subnet1.res.subnetId; subnet2.res.subnetId }
+        securityGroups { albSg.res.groupId }
+        scheme = "internet-facing"
+        type = "application"
+        tags { new { key = "Name"; value = "\(n)-alb" } }
+    }
+    alb
+
+    local tg = new targetgroup.TargetGroup {
+        label = "\(n)-tg"
+        name = "\(n)-tg"
+        vpcId = vpcRes.res.id
+        port = vars.formaePort
+        protocol = "HTTP"
+        targetType = "ip"
+        healthCheckEnabled = true
+        healthCheckPath = "/api/v1/health"
+        healthCheckProtocol = "HTTP"
+        healthCheckPort = "\(vars.formaePort)"
+        matcher = new targetgroup.Matcher { httpCode = "200" }
+        healthCheckIntervalSeconds = 30
+        tags { new { key = "Name"; value = "\(n)-tg" } }
+    }
+    tg
+
+    new listener.Listener {
+        label = "\(n)-listener"
+        loadBalancerArn = alb.res.loadBalancerArn
+        port = vars.formaePort
+        protocol = "HTTP"
+        defaultActions {
+            new listener.Action {
+                type = "forward"
+                targetGroupArn = tg.res.targetGroupArn
+            }
+        }
+    }
+
+    // =========================================================================
+    // ECS Service
+    // =========================================================================
+
+    new service.Service {
+        label = "\(n)-ecs-service"
+        serviceName = "\(n)-service"
+        cluster = ecsCluster.res.arn
+        taskDefinition = new taskdefinition.TaskDefinitionResolvable {
+            label = taskDef.label
+            stack = vars.stack.label
+        }.taskDefinitionArn
+        desiredCount = 1
+        launchType = "FARGATE"
+        networkConfiguration = new service.NetworkConfiguration {
+            awsvpcConfiguration = new service.AwsVpcConfiguration {
+                assignPublicIp = "ENABLED"
+                subnets { subnet1.res.subnetId; subnet2.res.subnetId }
+                securityGroups { taskSg.res.groupId }
+            }
+        }
+        loadBalancers {
+            new service.LoadBalancer {
+                targetGroupArn = tg.res.targetGroupArn
+                containerName = "formae-agent"
+                containerPort = vars.formaePort
+            }
+        }
+        tags { new { key = "Name"; value = "\(n)-service" } }
+    }
+}

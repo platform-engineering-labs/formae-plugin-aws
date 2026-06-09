@@ -1,0 +1,96 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+import "@formae/formae.pkl"
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ec2/securitygroupingress.pkl"
+import "@aws/rds/dbcluster.pkl"
+import "@aws/rds/dbinstance.pkl"
+import "@aws/rds/dbsubnetgroup.pkl"
+
+class RdsResources {
+    name: String
+    vpcCidr: String
+    dbName: String
+    vpc: vpc.VPC
+    subnet1: subnet.Subnet
+    subnet2: subnet.Subnet
+
+    hidden auroraSg: securitygroup.SecurityGroup = new {
+        label = "\(name)-aurora-sg"
+        groupDescription = "Security group for Aurora Data API cluster"
+        vpcId = vpc.res.id
+        tags { new { key = "Name"; value = "\(name)-aurora-sg" } }
+    }
+
+    hidden auroraSgIngress: securitygroupingress.SecurityGroupIngress = new {
+        label = "\(name)-aurora-sg-ingress"
+        ipProtocol = "tcp"
+        fromPort = 5432
+        toPort = 5432
+        cidrIp = vpcCidr
+        groupId = auroraSg.res.groupId
+    }
+
+    hidden dbSubnetGroup: dbsubnetgroup.DBSubnetGroup = new {
+        label = "\(name)-db-subnet-group"
+        dbSubnetGroupDescription = "Subnet group for Aurora Data API cluster"
+        subnetIds { subnet1.res.subnetId; subnet2.res.subnetId }
+        tags { new { key = "Name"; value = "\(name)-db-subnet-group" } }
+    }
+
+    hidden auroraCluster: dbcluster.DBCluster = new {
+        label = "\(name)-cluster"
+        dbClusterIdentifier = "\(name)-cluster"
+        engine = "aurora-postgresql"
+        engineVersion = "16.4"
+
+        // Enable Data API to allow HTTP access
+        enableHttpEndpoint = true
+
+        serverlessV2ScalingConfiguration {
+            minCapacity = 0.5
+            maxCapacity = 2.0
+        }
+
+        // Credentials managed by RDS
+        masterUsername = "postgres"
+        manageMasterUserPassword = true
+        masterUserSecret {
+            kmsKeyId = null  // Use default KMS key
+        }
+
+        databaseName = dbName
+        dbSubnetGroupName = dbSubnetGroup.res.dbSubnetGroupName
+        vpcSecurityGroupIds { auroraSg.res.groupId }
+        storageEncrypted = true
+        backupRetentionPeriod = 1
+
+        tags {
+            new { key = "Name"; value = "\(name)-cluster" }
+            new { key = "Purpose"; value = "DatastoreAuroraDataAPI testing" }
+        }
+    }
+
+    hidden auroraInstance: dbinstance.DBInstance = new {
+        label = "\(name)-instance"
+        dbInstanceIdentifier = "\(name)-instance"
+        dbClusterIdentifier = auroraCluster.res.dbClusterIdentifier
+        dbInstanceClass = "db.serverless"
+        engine = "aurora-postgresql"
+        tags { new { key = "Name"; value = "\(name)-instance" } }
+    }
+
+    hidden resources: Listing<formae.Resource> = new {
+        auroraSg
+        auroraSgIngress
+        dbSubnetGroup
+        auroraCluster
+        auroraInstance
+    }
+}
