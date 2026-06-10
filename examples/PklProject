@@ -4,7 +4,8 @@ dependencies {
   ["formae"] {
     uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.83.0"
   }
-  ["aws"] {
-    uri = "package://hub.platform.engineering/plugins/aws/schema/pkl/aws/aws@0.1.3"
-  }
+  // In-repo examples resolve @aws against the LOCAL schema so they exercise this
+  // plugin's current resource definitions (incl. the ECS resolvable patches the
+  // bootstrap example needs), rather than a published hub version.
+  ["aws"] = import("../schema/pkl/PklProject")
 }

@@ -203,7 +203,10 @@ open class KernelCapabilities extends formae.SubResource {
 @aws.SubResourceHint
 open class KeyValuePair extends formae.SubResource {
     name: String?
-    value: String?
+    // formae patch: accept Resolvable so ECS container env vars can reference a
+    // provisioned resource's output (e.g. an RDS endpoint address) by `.res`.
+    // NOTE: re-apply if `make gen-aws-pkl-types` regenerates this file.
+    value: (String|formae.Resolvable)?
 }
 
 @aws.SubResourceHint
@@ -279,7 +282,10 @@ open class RuntimePlatform extends formae.SubResource {
 @aws.SubResourceHint
 open class Secret extends formae.SubResource {
     name: String
-    valueFrom: String
+    // formae patch: accept Resolvable so ECS secrets can reference a provisioned
+    // Secrets Manager secret's ARN by `.res.arn`.
+    // NOTE: re-apply if `make gen-aws-pkl-types` regenerates this file.
+    valueFrom: (String|formae.Resolvable)
 }
 
 @aws.SubResourceHint
