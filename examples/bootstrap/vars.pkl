@@ -15,7 +15,10 @@ vpcCidr = "10.100.0.0/16"
 subnetCidr1 = "10.100.1.0/24"
 subnetCidr2 = "10.100.2.0/24"
 dbName = "formae"
-formaeImage = "ghcr.io/platform-engineering-labs/formae:0.83.2"
+dbUser = "formae"
+dbInstanceClass = "db.t4g.micro"
+dbEngineVersion = "16.14"
+formaeImage = "ghcr.io/platform-engineering-labs/formae:0.86.0"
 formaePort = 49684
 
 stack: formae.Stack = new {

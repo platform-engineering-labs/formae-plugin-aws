@@ -17,11 +17,6 @@ import "@aws/ec2/subnetroutetableassociation.pkl"
 import "@aws/ec2/securitygroup.pkl"
 import "@aws/ec2/securitygroupingress.pkl"
 
-import "@aws/rds/dbinstance.pkl"
-import "@aws/rds/dbsubnetgroup.pkl"
-import "@aws/secretsmanager/secret.pkl"
-import "@formae/ext/random.pkl"
-
 import "@aws/ecs/ecscluster.pkl"
 import "@aws/ecs/taskdefinition.pkl"
 import "@aws/ecs/service.pkl"
@@ -38,14 +33,25 @@ import "./vars.pkl"
 
 description {
     text = """
-    Formae Bootstrap on AWS
+    Formae Bootstrap on AWS — bring your own database
 
-    Provisions:
-    - VPC with two public subnets across availability zones
-    - RDS PostgreSQL (db.t4g.micro) with a generated master password in Secrets Manager
-    - ECS Fargate cluster running the formae agent (connects to Postgres over TCP)
-    - Application Load Balancer for API access
-    - IAM roles for ECS task execution + Secrets Manager access
+    Provisions the formae agent (VPC + ECS Fargate + ALB) pointed at an EXISTING
+    PostgreSQL database you already run. NO database is created. Supply the
+    connection at apply time:
+
+      formae apply --mode reconcile examples/bootstrap/existing-db.pkl \\
+        --db-host mydb.abc123.us-east-2.rds.amazonaws.com \\
+        --db-name formae --db-user formae \\
+        --db-password-secret-arn arn:aws:secretsmanager:us-east-2:<acct>:secret:my-db-pw
+
+    The host/user/database are baked into the agent's config; the password is read
+    at task start from the Secrets Manager secret you point at (never in Pkl or the
+    task definition). If that secret stores JSON (e.g. an RDS-managed secret), append
+    the key selector to the ARN: `...:secret:my-db-pw:password::`.
+
+    NETWORKING: the Fargate task runs in the VPC this file creates, so your database
+    must be reachable from it — a publicly-accessible endpoint, or peer/share this
+    VPC with your database's VPC (or adapt this file to deploy into existing subnets).
     """
     confirm = true
 }
@@ -56,6 +62,27 @@ properties {
         default = vars.projectName
     }
     region = vars.regionProp
+    // Existing-database connection. host + password-secret-arn are required.
+    dbHost = new formae.Prop {
+        flag = "db-host"
+    }
+    dbPort = new formae.Prop {
+        flag = "db-port"
+        default = "5432"
+    }
+    dbUser = new formae.Prop {
+        flag = "db-user"
+        default = vars.dbUser
+    }
+    dbName = new formae.Prop {
+        flag = "db-name"
+        default = vars.dbName
+    }
+    // Secrets Manager ARN whose value is the DB password (or ARN + key selector,
+    // e.g. `...:secret:name:password::`, for a JSON secret).
+    dbPasswordSecretArn = new formae.Prop {
+        flag = "db-password-secret-arn"
+    }
 }
 
 local n = properties.name.value
@@ -131,60 +158,6 @@ forma {
         routeTableId = rt.res.id
     }
 
-    local dbSg = new securitygroup.SecurityGroup {
-        label = "\(n)-db-sg"
-        groupDescription = "Allow PostgreSQL from within the VPC (the ECS task)"
-        vpcId = vpcRes.res.id
-        tags { new { key = "Name"; value = "\(n)-db-sg" } }
-    }
-    dbSg
-
-    new securitygroupingress.SecurityGroupIngress {
-        label = "\(n)-db-sg-ingress"
-        ipProtocol = "tcp"
-        fromPort = 5432
-        toPort = 5432
-        cidrIp = vars.vpcCidr
-        groupId = dbSg.res.groupId
-    }
-
-    local dbSubnetGroup = new dbsubnetgroup.DBSubnetGroup {
-        label = "\(n)-db-subnet-group"
-        dbSubnetGroupDescription = "Subnet group for the formae database"
-        subnetIds { subnet1.res.subnetId; subnet2.res.subnetId }
-        tags { new { key = "Name"; value = "\(n)-db-subnet-group" } }
-    }
-    dbSubnetGroup
-
-    local dbSecret = new secret.Secret {
-        label = "\(n)-db-secret"
-        name = "\(n)-db-password"
-        description = "formae database master password (generated)"
-        secretString = formae.value(random.password(24, false)).opaque.setOnce
-    }
-    dbSecret
-
-    // The agent reaches this DB over TCP (5432) with the password from the secret
-    // above; the writer endpoint feeds its config at startup.
-    local db = new dbinstance.DBInstance {
-        label = "\(n)-db"
-        dbInstanceIdentifier = "\(n)-db"
-        engine = "postgres"
-        engineVersion = vars.dbEngineVersion
-        dbInstanceClass = vars.dbInstanceClass
-        allocatedStorage = "20"
-        dbName = vars.dbName
-        masterUsername = vars.dbUser
-        masterUserPassword = dbSecret.res.secretString
-        dbSubnetGroupName = dbSubnetGroup.res.dbSubnetGroupName
-        vpcSecurityGroups { dbSg.res.groupId }
-        storageEncrypted = true
-        publiclyAccessible = false
-        multiAZ = false
-        tags { new { key = "Name"; value = "\(n)-db" } }
-    }
-    db
-
     local ecsAssumeRole = new Dynamic {
         ["Version"] = "2012-10-17"
         ["Statement"] = new Listing {
@@ -246,6 +219,8 @@ forma {
     }
     ecsCluster
 
+    // host/port/user/database are baked into the config at apply time; the password
+    // is injected at runtime from your secret as $FORMAE_DB_PASSWORD.
     local configScript = new Listing {
         "mkdir -p /home/pel/.config/formae &&"
         "cat > /home/pel/.config/formae/formae.conf.pkl << PKLEOF"
@@ -257,11 +232,11 @@ forma {
         "  datastore {"
         "    datastoreType = \"postgres\""
         "    postgres {"
-        "      host = \"$FORMAE_DB_HOST\""
-        "      port = 5432"
-        "      user = \"\(vars.dbUser)\""
+        "      host = \"\(properties.dbHost.value)\""
+        "      port = \(properties.dbPort.value)"
+        "      user = \"\(properties.dbUser.value)\""
         "      password = \"$FORMAE_DB_PASSWORD\""
-        "      database = \"\(vars.dbName)\""
+        "      database = \"\(properties.dbName.value)\""
         "      connectionParams = \"sslmode=require\""
         "    }"
         "  }"
@@ -300,17 +275,10 @@ forma {
                         protocol = "tcp"
                     }
                 }
-                environment {
-                    new taskdefinition.KeyValuePair {
-                        name = "FORMAE_DB_HOST"
-                        value = db.res.endpointAddress
-                    }
-                    // Plain env var, not ECS `secrets`: this plugin version can't resolve the
-                    // in-stack Secret's ARN (NativeId is null), only its `secretString`. Trade-off:
-                    // the password shows in the task def. For the ARN-based path, see existing-db.pkl.
-                    new taskdefinition.KeyValuePair {
+                secrets {
+                    new taskdefinition.Secret {
                         name = "FORMAE_DB_PASSWORD"
-                        value = dbSecret.res.secretString
+                        valueFrom = properties.dbPasswordSecretArn.value
                     }
                 }
                 logConfiguration = new taskdefinition.LogConfiguration {
