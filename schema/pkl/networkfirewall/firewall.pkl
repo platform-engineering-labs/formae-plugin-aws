@@ -14,6 +14,7 @@ const type = "AWS::NetworkFirewall::Firewall"
 @aws.SubResourceHint
 open class SubnetMapping extends formae.SubResource {
     subnetId: String|formae.Resolvable
+    @aws.FieldHint{hasProviderDefault = true}
     iPAddressType: String?
 }
 
@@ -61,13 +62,13 @@ open class Firewall extends formae.Resource {
     @aws.FieldHint
     subnetMappings: Listing<SubnetMapping>
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     deleteProtection: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     subnetChangeProtection: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     firewallPolicyChangeProtection: Boolean?
 
     @aws.FieldHint
