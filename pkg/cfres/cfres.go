@@ -19,6 +19,7 @@ import (
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/elasticloadbalancingv2"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/iam"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/lambda"
+	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/networkfirewall"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/route53"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/s3"
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/secretsmanager"

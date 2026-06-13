@@ -1,0 +1,95 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.networkfirewall.rulegroup
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::NetworkFirewall::RuleGroup"
+
+@aws.SubResourceHint
+open class IPSet extends formae.SubResource {
+    definition: Listing<String>?
+}
+
+@aws.SubResourceHint
+open class RuleVariables extends formae.SubResource {
+    ipSets: Mapping<String, IPSet>?
+}
+
+@aws.SubResourceHint
+open class RulesSourceList extends formae.SubResource {
+    targets: Listing<String>
+    targetTypes: Listing<String>
+    generatedRulesType: String
+}
+
+@aws.SubResourceHint
+open class RulesSource extends formae.SubResource {
+    rulesSourceList: RulesSourceList?
+}
+
+@aws.SubResourceHint
+open class StatefulRuleOptions extends formae.SubResource {
+    ruleOrder: String?
+}
+
+@aws.SubResourceHint
+open class RuleGroupData extends formae.SubResource {
+    ruleVariables: RuleVariables?
+    rulesSource: RulesSource
+    statefulRuleOptions: StatefulRuleOptions?
+}
+
+open class RuleGroupResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: RuleGroupResolvable = (this) {
+        property = "RuleGroupArn"
+    }
+    hidden arn: RuleGroupResolvable = (this) {
+        property = "RuleGroupArn"
+    }
+    hidden ruleGroupId: RuleGroupResolvable = (this) {
+        property = "RuleGroupId"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "RuleGroupArn"
+}
+open class RuleGroup extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    ruleGroupName: String
+
+    @aws.FieldHint{createOnly = true}
+    type: String
+
+    @aws.FieldHint{createOnly = true}
+    capacity: Int
+
+    @aws.FieldHint
+    description: String?
+
+    @aws.FieldHint
+    ruleGroup: RuleGroupData?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: RuleGroupResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

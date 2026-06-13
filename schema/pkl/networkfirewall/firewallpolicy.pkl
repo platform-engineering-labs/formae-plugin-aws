@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.networkfirewall.firewallpolicy
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::NetworkFirewall::FirewallPolicy"
+
+@aws.SubResourceHint
+open class StatefulRuleGroupReference extends formae.SubResource {
+    resourceArn: String|formae.Resolvable
+    priority: Int?
+}
+
+@aws.SubResourceHint
+open class StatelessRuleGroupReference extends formae.SubResource {
+    resourceArn: String|formae.Resolvable
+    priority: Int
+}
+
+@aws.SubResourceHint
+open class StatefulEngineOptions extends formae.SubResource {
+    ruleOrder: String?
+    streamExceptionPolicy: String?
+}
+
+@aws.SubResourceHint
+open class FirewallPolicyData extends formae.SubResource {
+    statelessDefaultActions: Listing<String>
+    statelessFragmentDefaultActions: Listing<String>
+    statefulDefaultActions: Listing<String>?
+    statefulRuleGroupReferences: Listing<StatefulRuleGroupReference>?
+    statelessRuleGroupReferences: Listing<StatelessRuleGroupReference>?
+    statefulEngineOptions: StatefulEngineOptions?
+}
+
+open class FirewallPolicyResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: FirewallPolicyResolvable = (this) {
+        property = "FirewallPolicyArn"
+    }
+    hidden arn: FirewallPolicyResolvable = (this) {
+        property = "FirewallPolicyArn"
+    }
+    hidden firewallPolicyId: FirewallPolicyResolvable = (this) {
+        property = "FirewallPolicyId"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "FirewallPolicyArn"
+}
+open class FirewallPolicy extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    firewallPolicyName: String
+
+    @aws.FieldHint
+    description: String?
+
+    @aws.FieldHint
+    firewallPolicy: FirewallPolicyData
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: FirewallPolicyResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
