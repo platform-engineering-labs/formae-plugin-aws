@@ -1,0 +1,121 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/networkfirewall/rulegroup.pkl"
+import "@aws/networkfirewall/firewallpolicy.pkl"
+import "@aws/networkfirewall/firewall.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-networkfirewall-\(testRunID)"
+local azA = "us-east-1a"
+local azB = "us-east-1b"
+
+local testVpc = new vpc.VPC {
+  label = "nfw-vpc"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+  enableDnsHostnames = true
+}
+
+// Dedicated firewall subnets, one per AZ.
+local fwSubnetA = new subnet.Subnet {
+  label = "nfw-fw-subnet-a"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.0.0/28"
+  availabilityZone = azA
+  tags = new Listing<aws.Tag> { new { key = "Name"; value = "nfw-fw-subnet-a" } }
+}
+local fwSubnetB = new subnet.Subnet {
+  label = "nfw-fw-subnet-b"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.0.16/28"
+  availabilityZone = azB
+  tags = new Listing<aws.Tag> { new { key = "Name"; value = "nfw-fw-subnet-b" } }
+}
+
+// Stateful domain-allowlist rule group (the FQDN allowlist).
+local allowlist = new rulegroup.RuleGroup {
+  label = "nfw-allowlist"
+  ruleGroupName = "nfw-allowlist-\(testRunID)"
+  type = "STATEFUL"
+  capacity = 100
+  ruleGroup = new rulegroup.RuleGroupData {
+    rulesSource = new rulegroup.RulesSource {
+      rulesSourceList = new rulegroup.RulesSourceList {
+        targets = new Listing<String> { "github.com"; "api.anthropic.com" }
+        targetTypes = new Listing<String> { "TLS_SNI"; "HTTP_HOST" }
+        generatedRulesType = "ALLOWLIST"
+      }
+    }
+    statefulRuleOptions = new rulegroup.StatefulRuleOptions {
+      ruleOrder = "STRICT_ORDER"
+    }
+  }
+}
+
+// Firewall policy referencing the allowlist rule group.
+local policy = new firewallpolicy.FirewallPolicy {
+  label = "nfw-policy"
+  firewallPolicyName = "nfw-policy-\(testRunID)"
+  firewallPolicy = new firewallpolicy.FirewallPolicyData {
+    statelessDefaultActions = new Listing<String> { "aws:forward_to_sfe" }
+    statelessFragmentDefaultActions = new Listing<String> { "aws:forward_to_sfe" }
+    statefulDefaultActions = new Listing<String> { "aws:drop_established" }
+    statefulEngineOptions = new firewallpolicy.StatefulEngineOptions {
+      ruleOrder = "STRICT_ORDER"
+    }
+    statefulRuleGroupReferences = new Listing<firewallpolicy.StatefulRuleGroupReference> {
+      new {
+        resourceArn = allowlist.res.arn
+        // STRICT_ORDER requires an explicit evaluation priority per reference.
+        priority = 1
+      }
+    }
+  }
+}
+
+// Firewall spanning both AZs. Listed last in the forma block: the conformance
+// harness verifies the final resource in the fixture and OOB-deletes it in
+// isolation, so it must be a leaf (nothing references its endpoints). The
+// per-AZ endpoint outputs and route wiring are exercised separately.
+local fw = new firewall.Firewall {
+  label = "nfw-firewall"
+  firewallName = "nfw-firewall-\(testRunID)"
+  firewallPolicyArn = policy.res.arn
+  vpcId = testVpc.res.vpcId
+  subnetMappings = new Listing<firewall.SubnetMapping> {
+    new { subnetId = fwSubnetA.res.subnetId }
+    new { subnetId = fwSubnetB.res.subnetId }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for AWS Network Firewall"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  fwSubnetA
+  fwSubnetB
+  allowlist
+  policy
+  fw
+}

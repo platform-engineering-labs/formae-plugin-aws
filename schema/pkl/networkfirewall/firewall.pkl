@@ -1,0 +1,93 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.networkfirewall.firewall
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::NetworkFirewall::Firewall"
+
+@aws.SubResourceHint
+open class SubnetMapping extends formae.SubResource {
+    subnetId: String|formae.Resolvable
+    @aws.FieldHint{hasProviderDefault = true}
+    iPAddressType: String?
+}
+
+open class FirewallResolvable extends formae.Resolvable {
+    local _self = this
+
+    hidden type = module.type
+
+    hidden id: FirewallResolvable = (this) {
+        property = "FirewallArn"
+    }
+    hidden arn: FirewallResolvable = (this) {
+        property = "FirewallArn"
+    }
+    hidden firewallId: FirewallResolvable = (this) {
+        property = "FirewallId"
+    }
+
+    /// Per-AZ VPC endpoint IDs computed by AWS for this firewall.
+    /// Use at() to access an individual endpoint by availability zone:
+    ///   firewall.res.endpointIds.at("us-east-1a")
+    hidden endpointIds: formae.MappingResolvable = new formae.MappingResolvable {
+        label = _self.label
+        type = _self.type
+        stack = _self.stack
+        property = "EndpointIdsByAz"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "FirewallArn"
+}
+open class Firewall extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    firewallName: String
+
+    @aws.FieldHint
+    firewallPolicyArn: String|formae.Resolvable
+
+    @aws.FieldHint{createOnly = true}
+    vpcId: String|formae.Resolvable
+
+    @aws.FieldHint
+    subnetMappings: Listing<SubnetMapping>
+
+    @aws.FieldHint{hasProviderDefault = true}
+    deleteProtection: Boolean?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    subnetChangeProtection: Boolean?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    firewallPolicyChangeProtection: Boolean?
+
+    @aws.FieldHint
+    description: String?
+
+    /// Per-AZ VPC endpoint IDs computed by AWS, keyed by availability zone.
+    @aws.FieldHint{hasProviderDefault = true}
+    endpointIdsByAz: Mapping<String, String>?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: FirewallResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
