@@ -192,7 +192,6 @@ forma {
   appSubnetB
   allowlist
   policy
-  fw
   fwLogs
   logging
   fwRtA
@@ -228,4 +227,8 @@ forma {
     destinationCidrBlock = "0.0.0.0/0"
     vpcEndpointId = fw.res.endpointIds.at(azB)
   }
+
+  // Firewall is the resource under test for the conformance harness, so it is
+  // listed last (the harness verifies the final resource in the fixture).
+  fw
 }
