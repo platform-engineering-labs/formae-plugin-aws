@@ -121,6 +121,8 @@ local policy = new firewallpolicy.FirewallPolicy {
     statefulRuleGroupReferences = new Listing<firewallpolicy.StatefulRuleGroupReference> {
       new {
         resourceArn = allowlist.res.arn
+        // STRICT_ORDER requires an explicit evaluation priority per reference.
+        priority = 1
       }
     }
   }
