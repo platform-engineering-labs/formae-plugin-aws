@@ -659,6 +659,83 @@ aws efs describe-access-points --region "$REGION" 2>/dev/null | \
     fi
 done
 
+# --- Network Firewall (before VPCs/subnets)
+# The networkfirewall conformance fixture creates a Firewall, FirewallPolicy
+# and stateful RuleGroup, all named with `nfw-*` prefixes. They have a strict
+# deletion order — a policy can't be deleted while a firewall references it,
+# and a rule group can't be deleted while a policy references it — and the
+# firewall plants ENIs in the dedicated firewall subnets, so its deletion must
+# complete before the VPC/subnet sweeps below. The fixture's VPC is untagged
+# and its subnets carry only `nfw-*` Name tags (not $FORMAE_PREFIX), so they're
+# reclaimed by the orphan-untagged-VPC sweep — but only once these firewalls
+# are gone and their ENIs released.
+echo "Cleaning Network Firewall test firewalls..."
+NFW_TEST_FIREWALLS=()
+while IFS= read -r fw_name; do
+    [[ -n "$fw_name" && "$fw_name" == nfw-firewall-* ]] && NFW_TEST_FIREWALLS+=("$fw_name")
+done < <(aws network-firewall list-firewalls --region "$REGION" --query "Firewalls[].FirewallName" --output text 2>/dev/null | tr '\t' '\n')
+
+for fw_name in "${NFW_TEST_FIREWALLS[@]}"; do
+    echo "  Deleting Network Firewall firewall: $fw_name"
+    # Clear the logging configuration first (there is no delete-logging API;
+    # an empty LoggingConfiguration removes all log destinations). Tolerant of
+    # failure — delete-firewall removes the logging config either way.
+    aws network-firewall update-logging-configuration --firewall-name "$fw_name" \
+        --logging-configuration "LogDestinationConfigs=[]" --region "$REGION" 2>/dev/null || true
+    aws network-firewall delete-firewall --firewall-name "$fw_name" --region "$REGION" 2>/dev/null || true
+done
+
+# Wait for firewalls to fully delete before removing the policies/rule groups
+# they reference (delete-firewall is async; the firewall lingers in DELETING
+# while its endpoints/ENIs tear down). Budget 300s — firewall deletion plus
+# endpoint removal is usually 2-4 min.
+if [ ${#NFW_TEST_FIREWALLS[@]} -gt 0 ]; then
+    echo "  Waiting for Network Firewall firewalls to delete (max 300s)..."
+    waited=0
+    while [ $waited -lt 300 ]; do
+        remaining=0
+        while IFS= read -r fw_name; do
+            [[ -n "$fw_name" && "$fw_name" == nfw-firewall-* ]] && remaining=$((remaining + 1))
+        done < <(aws network-firewall list-firewalls --region "$REGION" --query "Firewalls[].FirewallName" --output text 2>/dev/null | tr '\t' '\n')
+        [ "$remaining" = "0" ] && break
+        sleep 10
+        waited=$((waited + 10))
+    done
+    echo "  Network Firewall firewalls drained after ${waited}s (residual count: ${remaining:-?})"
+fi
+
+# Delete firewall policies (after firewalls, before rule groups)
+echo "Cleaning Network Firewall test firewall policies..."
+aws network-firewall list-firewall-policies --region "$REGION" \
+    --query "FirewallPolicies[].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r pol_name; do
+    if [[ -n "$pol_name" && "$pol_name" == nfw-policy-* ]]; then
+        echo "  Deleting Network Firewall firewall policy: $pol_name"
+        aws network-firewall delete-firewall-policy --firewall-policy-name "$pol_name" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# Delete stateful rule groups (after policies that reference them)
+echo "Cleaning Network Firewall test rule groups..."
+aws network-firewall list-rule-groups --region "$REGION" --type STATEFUL \
+    --query "RuleGroups[].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r rg_name; do
+    if [[ -n "$rg_name" && "$rg_name" == nfw-allowlist-* ]]; then
+        echo "  Deleting Network Firewall rule group: $rg_name"
+        aws network-firewall delete-rule-group --rule-group-name "$rg_name" --type STATEFUL --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# Delete the firewall's CloudWatch log group (`/formae/test/nfw-*`). The generic
+# log-group sweep further below only matches $TEST_PREFIX (plugin-sdk-test), so
+# this prefix would otherwise be missed.
+echo "Cleaning Network Firewall test log groups..."
+aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "/formae/test/nfw-" \
+    --query "logGroups[].logGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r lg; do
+    if [[ -n "$lg" ]]; then
+        echo "  Deleting Network Firewall log group: $lg"
+        aws logs delete-log-group --log-group-name "$lg" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # 23a. Delete EC2 flow logs with test prefix (before VPCs)
 echo "Cleaning EC2 test flow logs..."
 aws ec2 describe-flow-logs --region "$REGION" \

@@ -1,0 +1,229 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/route.pkl"
+import "@aws/logs/loggroup.pkl"
+import "@aws/networkfirewall/rulegroup.pkl"
+import "@aws/networkfirewall/firewallpolicy.pkl"
+import "@aws/networkfirewall/firewall.pkl"
+import "@aws/networkfirewall/loggingconfiguration.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-networkfirewall-\(testRunID)"
+local azA = "us-east-1a"
+local azB = "us-east-1b"
+
+// VPC for the egress inspection topology
+local testVpc = new vpc.VPC {
+  label = "nfw-vpc"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+  enableDnsHostnames = true
+}
+
+// InternetGateway - egress target for the firewall subnets
+local igw = new internetgateway.InternetGateway {
+  label = "nfw-igw"
+}
+
+// Attach IGW to VPC. Routes reference the attachment's internetGatewayId
+// (not the IGW directly) so they wait for attach and reverse on teardown.
+local igwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "nfw-igw-attachment"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = igw.res.internetGatewayId
+}
+
+// Dedicated firewall subnets (one per AZ) - host the firewall endpoints
+local fwSubnetA = new subnet.Subnet {
+  label = "nfw-fw-subnet-a"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.0.0/28"
+  availabilityZone = azA
+  tags = new Listing<aws.Tag> {
+    new { key = "Name"; value = "nfw-fw-subnet-a" }
+  }
+}
+local fwSubnetB = new subnet.Subnet {
+  label = "nfw-fw-subnet-b"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.0.16/28"
+  availabilityZone = azB
+  tags = new Listing<aws.Tag> {
+    new { key = "Name"; value = "nfw-fw-subnet-b" }
+  }
+}
+
+// Protected ("app") subnets (one per AZ) - egress routed through the firewall
+local appSubnetA = new subnet.Subnet {
+  label = "nfw-app-subnet-a"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.1.0/24"
+  availabilityZone = azA
+  tags = new Listing<aws.Tag> {
+    new { key = "Name"; value = "nfw-app-subnet-a" }
+  }
+}
+local appSubnetB = new subnet.Subnet {
+  label = "nfw-app-subnet-b"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.2.0/24"
+  availabilityZone = azB
+  tags = new Listing<aws.Tag> {
+    new { key = "Name"; value = "nfw-app-subnet-b" }
+  }
+}
+
+// Stateful domain-allowlist rule group
+local allowlist = new rulegroup.RuleGroup {
+  label = "nfw-allowlist"
+  ruleGroupName = "nfw-allowlist-\(testRunID)"
+  type = "STATEFUL"
+  capacity = 100
+  ruleGroup = new rulegroup.RuleGroupData {
+    rulesSource = new rulegroup.RulesSource {
+      rulesSourceList = new rulegroup.RulesSourceList {
+        targets = new Listing<String> { "github.com"; "api.anthropic.com" }
+        targetTypes = new Listing<String> { "TLS_SNI"; "HTTP_HOST" }
+        generatedRulesType = "ALLOWLIST"
+      }
+    }
+    statefulRuleOptions = new rulegroup.StatefulRuleOptions {
+      ruleOrder = "STRICT_ORDER"
+    }
+  }
+}
+
+// Firewall policy referencing the allowlist rule group
+local policy = new firewallpolicy.FirewallPolicy {
+  label = "nfw-policy"
+  firewallPolicyName = "nfw-policy-\(testRunID)"
+  firewallPolicy = new firewallpolicy.FirewallPolicyData {
+    statelessDefaultActions = new Listing<String> { "aws:forward_to_sfe" }
+    statelessFragmentDefaultActions = new Listing<String> { "aws:forward_to_sfe" }
+    statefulDefaultActions = new Listing<String> { "aws:drop_established" }
+    statefulEngineOptions = new firewallpolicy.StatefulEngineOptions {
+      ruleOrder = "STRICT_ORDER"
+    }
+    statefulRuleGroupReferences = new Listing<firewallpolicy.StatefulRuleGroupReference> {
+      new {
+        resourceArn = allowlist.res.arn
+      }
+    }
+  }
+}
+
+// Firewall - one endpoint per firewall subnet/AZ
+local fw = new firewall.Firewall {
+  label = "nfw-firewall"
+  firewallName = "nfw-firewall-\(testRunID)"
+  firewallPolicyArn = policy.res.arn
+  vpcId = testVpc.res.vpcId
+  subnetMappings = new Listing<firewall.SubnetMapping> {
+    new { subnetId = fwSubnetA.res.subnetId }
+    new { subnetId = fwSubnetB.res.subnetId }
+  }
+}
+
+// CloudWatch log group for firewall alert logs
+local fwLogs = new loggroup.LogGroup {
+  label = "nfw-log-group"
+  logGroupName = "/formae/test/nfw-\(testRunID)"
+  retentionInDays = 1
+}
+
+// Logging configuration -> CloudWatch Logs (keyed by "logGroup" = log group name)
+local logging = new loggingconfiguration.LoggingConfiguration {
+  label = "nfw-logging"
+  firewallArn = fw.res.arn
+  loggingConfiguration = new loggingconfiguration.LoggingConfigurationData {
+    logDestinationConfigs = new Listing<loggingconfiguration.LogDestinationConfig> {
+      new {
+        logType = "ALERT"
+        logDestinationType = "CloudWatchLogs"
+        logDestination = new Mapping<String, String|formae.Resolvable> {
+          ["logGroup"] = fwLogs.res.logGroupName
+        }
+      }
+    }
+  }
+}
+
+// Route tables: one per firewall subnet, one per app subnet
+local fwRtA = new routetable.RouteTable { label = "nfw-fw-rt-a"; vpcId = testVpc.res.vpcId }
+local fwRtB = new routetable.RouteTable { label = "nfw-fw-rt-b"; vpcId = testVpc.res.vpcId }
+local appRtA = new routetable.RouteTable { label = "nfw-app-rt-a"; vpcId = testVpc.res.vpcId }
+local appRtB = new routetable.RouteTable { label = "nfw-app-rt-b"; vpcId = testVpc.res.vpcId }
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for AWS Network Firewall FQDN-allowlist egress"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  igw
+  igwAttachment
+  fwSubnetA
+  fwSubnetB
+  appSubnetA
+  appSubnetB
+  allowlist
+  policy
+  fw
+  fwLogs
+  logging
+  fwRtA
+  fwRtB
+  appRtA
+  appRtB
+
+  // Firewall-subnet egress: default route to the internet via the IGW
+  // attachment (ensures attach-before-route and reverse-on-teardown ordering).
+  new route.Route {
+    label = "nfw-fw-route-a"
+    routeTableId = fwRtA.res.routeTableId
+    destinationCidrBlock = "0.0.0.0/0"
+    gatewayId = igwAttachment.res.internetGatewayId
+  }
+  new route.Route {
+    label = "nfw-fw-route-b"
+    routeTableId = fwRtB.res.routeTableId
+    destinationCidrBlock = "0.0.0.0/0"
+    gatewayId = igwAttachment.res.internetGatewayId
+  }
+
+  // Protected-subnet egress: default route to the firewall endpoint for that AZ.
+  new route.Route {
+    label = "nfw-app-route-a"
+    routeTableId = appRtA.res.routeTableId
+    destinationCidrBlock = "0.0.0.0/0"
+    vpcEndpointId = fw.res.endpointIds.at(azA)
+  }
+  new route.Route {
+    label = "nfw-app-route-b"
+    routeTableId = appRtB.res.routeTableId
+    destinationCidrBlock = "0.0.0.0/0"
+    vpcEndpointId = fw.res.endpointIds.at(azB)
+  }
+}
