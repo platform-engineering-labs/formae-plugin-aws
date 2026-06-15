@@ -1,0 +1,118 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/route53/hostedzone.pkl"
+import "@aws/route53/recordset.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-route53-recordset-alias-\(testRunID)"
+local domainName = "sdk-alias-\(testRunID).test-formae.io"
+
+// Minimal VPC + two multi-AZ subnets + security group so we can stand up an
+// internal ALB to alias at. An internal ALB needs two subnets in different AZs
+// and a security group, but no internet routing or listener to get a DNSName.
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-r53-alias"
+  cidrBlock = "10.232.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnetA = new subnet.Subnet {
+  label = "test-subnet-a-for-r53-alias"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnetB = new subnet.Subnet {
+  label = "test-subnet-b-for-r53-alias"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+local albSG = new securitygroup.SecurityGroup {
+  label = "test-alb-sg-for-r53-alias"
+  groupDescription = "SG for internal ALB used as Route53 ALIAS target"
+  groupName = "formae-sdk-test-r53-alias-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+// Internal ALB across the two subnets. AWS stores its DNSName with a trailing
+// dot in the alias target; this fixture exercises that round-trip.
+local testALB = new loadbalancer.LoadBalancer {
+  label = "test-alb-for-r53-alias"
+  name = "formae-sdk-r53alias-\(testRunID)"
+  scheme = "internal"
+  type = "application"
+  subnets {
+    testSubnetA.res.subnetId
+    testSubnetB.res.subnetId
+  }
+  securityGroups {
+    albSG.res.groupId
+  }
+}
+
+// HostedZone the ALIAS record lives in.
+local hz = new hostedzone.HostedZone {
+  label = "test-hosted-zone-for-r53-alias"
+  name = domainName
+  hostedZoneConfig = new hostedzone.HostedZoneConfig {
+    comment = "SDK test hosted zone for Route53 ALIAS RecordSet tests"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Route53 A-ALIAS RecordSet to an ALB"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // ALB target infrastructure
+  testVpc
+  testSubnetA
+  testSubnetB
+  albSG
+  testALB
+
+  // HostedZone required for RecordSet
+  hz
+
+  // A-ALIAS RecordSet under test (declared last so the conformance harness
+  // treats it as the resource under test). Aliases at the ALB's DNSName, which
+  // AWS canonicalizes with a trailing dot — the round-trip that must reconcile
+  // as a no-op rather than producing phantom drift.
+  new recordset.RecordSet {
+    label = "plugin-sdk-test-recordset-alias"
+    hostedZoneId = hz.res.id
+    name = "app.\(domainName)"
+    type = "A"
+    aliasTarget = new recordset.AliasTarget {
+      dnsName = testALB.res.dnsName
+      hostedZoneId = testALB.res.canonicalHostedZoneID
+      evaluateTargetHealth = true
+    }
+  }
+}
