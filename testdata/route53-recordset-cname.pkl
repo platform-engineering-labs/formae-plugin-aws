@@ -1,0 +1,61 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/route53/hostedzone.pkl"
+import "@aws/route53/recordset.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-route53-recordset-cname-\(testRunID)"
+local domainName = "sdk-cname-\(testRunID).test-formae.io"
+
+// HostedZone dependency - RecordSet needs a hosted zone to live in
+local hz = new hostedzone.HostedZone {
+  label = "test-hosted-zone-for-cname"
+  name = domainName
+  hostedZoneConfig = new hostedzone.HostedZoneConfig {
+    comment = "SDK test hosted zone for CNAME RecordSet tests"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Route53 CNAME RecordSet re-reconcile (trailing-dot drift)"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // HostedZone required for RecordSet
+  hz
+
+  // CNAME RecordSet under test. The value is declared WITHOUT a trailing dot;
+  // AWS canonicalizes the stored record value WITH one, so without trailing-dot
+  // normalization on read this record shows phantom `update` drift on every
+  // re-reconcile (the conformance harness's post-sync idempotency check). It
+  // must reconcile as a no-op.
+  new recordset.RecordSet {
+    label = "plugin-sdk-test-recordset-cname"
+    hostedZoneId = hz.res.id
+    name = "www.\(domainName)"
+    type = "CNAME"
+    ttl = 300
+    resourceRecords = new Listing {
+      "cname-target.example.com"
+    }
+  }
+}
