@@ -157,25 +157,9 @@ func (r RecordSet) Create(ctx context.Context, request *resource.CreateRequest) 
 
 	var aliasTarget *types.AliasTarget
 	if aliasTargetRaw, hasAlias := properties["AliasTarget"].(map[string]any); hasAlias {
-		dnsName, err := utils.GetStringProperty(aliasTargetRaw, "DNSName")
+		aliasTarget, err = buildAliasTarget(aliasTargetRaw)
 		if err != nil {
-			return nil, fmt.Errorf("invalid AliasTarget DNSName: %w", err)
-		}
-
-		hostedZoneID, err := utils.GetStringProperty(aliasTargetRaw, "HostedZoneId")
-		if err != nil {
-			return nil, fmt.Errorf("invalid AliasTarget HostedZoneId: %w", err)
-		}
-
-		evaluateTargetHealth := false
-		if evalHealth, ok := aliasTargetRaw["EvaluateTargetHealth"].(bool); ok {
-			evaluateTargetHealth = evalHealth
-		}
-
-		aliasTarget = &types.AliasTarget{
-			DNSName:              aws.String(dnsName),
-			HostedZoneId:         aws.String(hostedZoneID),
-			EvaluateTargetHealth: evaluateTargetHealth,
+			return nil, err
 		}
 	}
 
@@ -294,36 +278,18 @@ func (r RecordSet) Update(ctx context.Context, request *resource.UpdateRequest) 
 	// Handle prior AliasTarget
 	var priorAliasTarget *types.AliasTarget
 	if priorAliasTargetRaw, hasAlias := priorProperties["AliasTarget"].(map[string]any); hasAlias {
-		dnsName, err := utils.GetStringProperty(priorAliasTargetRaw, "DNSName")
+		priorAliasTarget, err = buildAliasTarget(priorAliasTargetRaw)
 		if err != nil {
-			return nil, fmt.Errorf("invalid prior AliasTarget DNSName: %w", err)
-		}
-		hostedZoneID, err := utils.GetStringProperty(priorAliasTargetRaw, "HostedZoneId")
-		if err != nil {
-			return nil, fmt.Errorf("invalid prior AliasTarget HostedZoneId: %w", err)
-		}
-		priorAliasTarget = &types.AliasTarget{
-			DNSName:              aws.String(dnsName),
-			HostedZoneId:         aws.String(hostedZoneID),
-			EvaluateTargetHealth: false,
+			return nil, fmt.Errorf("prior %w", err)
 		}
 	}
 
 	// Handle desired AliasTarget
 	var desiredAliasTarget *types.AliasTarget
 	if desiredAliasTargetRaw, hasAlias := desiredProperties["AliasTarget"].(map[string]any); hasAlias {
-		dnsName, err := utils.GetStringProperty(desiredAliasTargetRaw, "DNSName")
+		desiredAliasTarget, err = buildAliasTarget(desiredAliasTargetRaw)
 		if err != nil {
-			return nil, fmt.Errorf("invalid desired AliasTarget DNSName: %w", err)
-		}
-		hostedZoneID, err := utils.GetStringProperty(desiredAliasTargetRaw, "HostedZoneId")
-		if err != nil {
-			return nil, fmt.Errorf("invalid desired AliasTarget HostedZoneId: %w", err)
-		}
-		desiredAliasTarget = &types.AliasTarget{
-			DNSName:              aws.String(dnsName),
-			HostedZoneId:         aws.String(hostedZoneID),
-			EvaluateTargetHealth: false,
+			return nil, fmt.Errorf("desired %w", err)
 		}
 	}
 
@@ -461,14 +427,13 @@ func (r RecordSet) Delete(ctx context.Context, request *resource.DeleteRequest) 
 
 	// Handle AliasTarget if present
 	if meta.AliasTarget != nil {
-		dnsName := meta.AliasTarget.DNSName
-		if !strings.HasSuffix(dnsName, ".") {
-			dnsName = dnsName + "."
-		}
-		rrs.AliasTarget = &types.AliasTarget{
-			DNSName:              aws.String(dnsName),
-			HostedZoneId:         aws.String(meta.AliasTarget.HostedZoneID),
-			EvaluateTargetHealth: meta.AliasTarget.EvaluateTargetHealth,
+		rrs.AliasTarget, err = buildAliasTarget(map[string]any{
+			"DNSName":              meta.AliasTarget.DNSName,
+			"HostedZoneId":         meta.AliasTarget.HostedZoneID,
+			"EvaluateTargetHealth": meta.AliasTarget.EvaluateTargetHealth,
+		})
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		rrs.TTL = aws.Int64(meta.TTL)
@@ -606,28 +571,7 @@ func (r RecordSet) Read(ctx context.Context, request *resource.ReadRequest) (*re
 	}
 
 	// Build properties map
-	props := map[string]any{
-		"HostedZoneId": hostedZoneID,
-		"Name":         strings.TrimSuffix(name, "."), // remove trailing dot
-		"Type":         recordType,
-	}
-
-	if found.AliasTarget != nil {
-		props["AliasTarget"] = map[string]any{
-			"DNSName":              aws.ToString(found.AliasTarget.DNSName),
-			"HostedZoneId":         aws.ToString(found.AliasTarget.HostedZoneId),
-			"EvaluateTargetHealth": found.AliasTarget.EvaluateTargetHealth,
-		}
-	} else {
-		records := make([]string, 0, len(found.ResourceRecords))
-		for _, rr := range found.ResourceRecords {
-			records = append(records, aws.ToString(rr.Value))
-		}
-		props["ResourceRecords"] = records
-		if found.TTL != nil {
-			props["TTL"] = *found.TTL
-		}
-	}
+	props := buildReadProperties(found, hostedZoneID, name, recordType)
 
 	// Marshal back to JSON
 	propBytes, err := json.Marshal(props)
@@ -670,6 +614,66 @@ func (r *RecordSet) List(ctx context.Context, request *resource.ListRequest) (*r
 		NativeIDs:     nativeIDs,
 		NextPageToken: res.NextRecordName,
 	}, nil
+}
+
+// buildAliasTarget constructs an AWS AliasTarget from declared properties.
+// Outbound normalization mirrors Read's inbound stripping: Route53 stores DNS
+// names with a trailing dot, so it is restored here for change requests — a
+// delete-by-value (used by Update and Delete) is rejected unless the alias
+// DNSName matches Route53's canonical (dotted) form.
+func buildAliasTarget(raw map[string]any) (*types.AliasTarget, error) {
+	dnsName, err := utils.GetStringProperty(raw, "DNSName")
+	if err != nil {
+		return nil, fmt.Errorf("invalid AliasTarget DNSName: %w", err)
+	}
+	hostedZoneID, err := utils.GetStringProperty(raw, "HostedZoneId")
+	if err != nil {
+		return nil, fmt.Errorf("invalid AliasTarget HostedZoneId: %w", err)
+	}
+	if !strings.HasSuffix(dnsName, ".") {
+		dnsName += "."
+	}
+	evaluateTargetHealth := false
+	if v, ok := raw["EvaluateTargetHealth"].(bool); ok {
+		evaluateTargetHealth = v
+	}
+	return &types.AliasTarget{
+		DNSName:              aws.String(dnsName),
+		HostedZoneId:         aws.String(hostedZoneID),
+		EvaluateTargetHealth: evaluateTargetHealth,
+	}, nil
+}
+
+// buildReadProperties maps an AWS ResourceRecordSet into the formae property
+// map returned by Read.
+func buildReadProperties(found *types.ResourceRecordSet, hostedZoneID, name, recordType string) map[string]any {
+	props := map[string]any{
+		"HostedZoneId": hostedZoneID,
+		"Name":         strings.TrimSuffix(name, "."), // remove trailing dot
+		"Type":         recordType,
+	}
+
+	if found.AliasTarget != nil {
+		props["AliasTarget"] = map[string]any{
+			// AWS canonicalizes the alias target DNSName with a trailing dot;
+			// strip it so it matches the stored (no-dot) desired state and an
+			// unchanged ALIAS reconciles as a no-op.
+			"DNSName":              strings.TrimSuffix(aws.ToString(found.AliasTarget.DNSName), "."),
+			"HostedZoneId":         aws.ToString(found.AliasTarget.HostedZoneId),
+			"EvaluateTargetHealth": found.AliasTarget.EvaluateTargetHealth,
+		}
+	} else {
+		records := make([]string, 0, len(found.ResourceRecords))
+		for _, rr := range found.ResourceRecords {
+			records = append(records, aws.ToString(rr.Value))
+		}
+		props["ResourceRecords"] = records
+		if found.TTL != nil {
+			props["TTL"] = *found.TTL
+		}
+	}
+
+	return props
 }
 
 func nativeID(hostedZoneID, name, recordType string) string {
