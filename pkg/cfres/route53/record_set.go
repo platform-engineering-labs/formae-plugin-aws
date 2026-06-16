@@ -644,6 +644,24 @@ func buildAliasTarget(raw map[string]any) (*types.AliasTarget, error) {
 	}, nil
 }
 
+// hostnameValuedRecordTypes are record types whose RDATA is a domain name that
+// AWS canonicalizes with a trailing dot. Their ResourceRecords values must have
+// the trailing dot stripped on read to match dot-less desired state. TXT/SPF
+// (quoted character strings — a trailing dot is data) and A/AAAA (IP addresses)
+// are deliberately excluded.
+var hostnameValuedRecordTypes = map[string]bool{
+	"CNAME": true,
+	"DNAME": true,
+	"NS":    true,
+	"PTR":   true,
+	"MX":    true,
+	"SRV":   true,
+}
+
+func isHostnameValuedRecordType(recordType string) bool {
+	return hostnameValuedRecordTypes[recordType]
+}
+
 // buildReadProperties maps an AWS ResourceRecordSet into the formae property
 // map returned by Read.
 func buildReadProperties(found *types.ResourceRecordSet, hostedZoneID, name, recordType string) map[string]any {
@@ -663,9 +681,17 @@ func buildReadProperties(found *types.ResourceRecordSet, hostedZoneID, name, rec
 			"EvaluateTargetHealth": found.AliasTarget.EvaluateTargetHealth,
 		}
 	} else {
+		stripDot := isHostnameValuedRecordType(recordType)
 		records := make([]string, 0, len(found.ResourceRecords))
 		for _, rr := range found.ResourceRecords {
-			records = append(records, aws.ToString(rr.Value))
+			value := aws.ToString(rr.Value)
+			if stripDot {
+				// AWS canonicalizes domain-name record values with a trailing
+				// dot; strip it so a dot-less desired value (e.g. an ACM
+				// validation target) reconciles as a no-op.
+				value = strings.TrimSuffix(value, ".")
+			}
+			records = append(records, value)
 		}
 		props["ResourceRecords"] = records
 		if found.TTL != nil {
