@@ -415,6 +415,19 @@ func TestRead_PopulatesValidationRecords(t *testing.T) {
 	if got := rec0["Name"]; got != "_abc.example.com" {
 		t.Errorf("ValidationRecords[0].Name: want %q (no trailing dot), got %q", "_abc.example.com", got)
 	}
+	// The value is consumed by a downstream Route53::RecordSet via
+	// cert.res.validationRecords.at(0).values. RecordSet's Read strips the
+	// trailing dot from CNAME values, so this value must be stripped too —
+	// otherwise the cert-sourced desired (dotted) never matches the
+	// RecordSet's normalized read (dot-less) and the CNAME shows perpetual
+	// phantom drift.
+	values, ok := rec0["Values"].([]any)
+	if !ok || len(values) != 1 {
+		t.Fatalf("ValidationRecords[0].Values: want 1-element list, got %T %v", rec0["Values"], rec0["Values"])
+	}
+	if got := values[0]; got != "_xyz.acm-validations.aws" {
+		t.Errorf("ValidationRecords[0].Values[0]: want %q (no trailing dot), got %q", "_xyz.acm-validations.aws", got)
+	}
 }
 
 func TestRead_PopulatesValidationMethodFromDomainValidationOption(t *testing.T) {
