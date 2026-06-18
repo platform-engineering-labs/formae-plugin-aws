@@ -78,6 +78,30 @@ Verify:
 formae status agent
 ```
 
+## Shell into the agent
+
+The agent service runs with ECS Exec enabled (`enableExecuteCommand` on the
+service plus the `ssmmessages` channel permissions on the task role), so you can
+open a shell in the running container. Fargate has no host to `docker exec` into,
+so this is the way in.
+
+Requires the AWS Session Manager plugin installed locally:
+
+```bash
+brew install --cask session-manager-plugin    # macOS; see AWS docs for Linux/Windows
+```
+
+Then exec in (task id is fetched inline so it survives task rolls):
+
+```bash
+aws ecs execute-command --region us-east-2 \
+  --cluster formae-bootstrap-cluster \
+  --task "$(aws ecs list-tasks --region us-east-2 --cluster formae-bootstrap-cluster --query 'taskArns[0]' --output text)" \
+  --container formae-agent --interactive --command /bin/sh
+```
+
+Cluster name and region follow `projectName` / `region` in `vars.pkl`.
+
 ## Teardown
 
 ```bash
