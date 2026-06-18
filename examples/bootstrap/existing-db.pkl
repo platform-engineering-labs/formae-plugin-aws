@@ -195,12 +195,31 @@ forma {
     }
     taskExecRole
 
-    // Empty on purpose: the agent reaches Postgres over TCP with the injected password,
-    // so it needs no data-plane perms. Add discovery/sync perms here if you enable discovery.
+    // SSM channel perms so `aws ecs execute-command` can shell into the running agent.
     local taskRole = new role.Role {
         label = "\(n)-task-role"
         roleName = "\(n)-task-role"
         assumeRolePolicyDocument = ecsAssumeRole
+        policies {
+            new role.RolePolicy {
+                policyName = "\(n)-ecs-exec"
+                policyDocument {
+                    ["Version"] = "2012-10-17"
+                    ["Statement"] = new Listing {
+                        new Dynamic {
+                            ["Effect"] = "Allow"
+                            ["Action"] = new Listing {
+                                "ssmmessages:CreateControlChannel"
+                                "ssmmessages:CreateDataChannel"
+                                "ssmmessages:OpenControlChannel"
+                                "ssmmessages:OpenDataChannel"
+                            }
+                            ["Resource"] = "*"
+                        }
+                    }
+                }
+            }
+        }
         tags { new { key = "Name"; value = "\(n)-task-role" } }
     }
     taskRole
@@ -380,6 +399,7 @@ forma {
         }.taskDefinitionArn
         desiredCount = 1
         launchType = "FARGATE"
+        enableExecuteCommand = true
         networkConfiguration = new service.NetworkConfiguration {
             awsvpcConfiguration = new service.AwsVpcConfiguration {
                 assignPublicIp = "ENABLED"
