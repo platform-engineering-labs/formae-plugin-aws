@@ -31,8 +31,20 @@ open class StatefulEngineOptions extends formae.SubResource {
 
 @aws.SubResourceHint
 open class FirewallPolicyData extends formae.SubResource {
+    // The default-action lists are mutually-exclusive value sets that AWS
+    // replaces wholesale. Marking them Atomic makes formae emit a single
+    // whole-array `replace` on update instead of per-element remove+add:
+    // CloudControl does not reliably apply a remove+add pair against these
+    // lists, leaving both the old and new action present (which AWS then
+    // rejects, e.g. "aws:drop_strict / aws:drop_established cannot exist
+    // together"). See PLA-37.
+    @aws.FieldHint{updateMethod = "Atomic"}
     statelessDefaultActions: Listing<String>
+
+    @aws.FieldHint{updateMethod = "Atomic"}
     statelessFragmentDefaultActions: Listing<String>
+
+    @aws.FieldHint{updateMethod = "Atomic"}
     statefulDefaultActions: Listing<String>?
     statefulRuleGroupReferences: Listing<StatefulRuleGroupReference>?
     statelessRuleGroupReferences: Listing<StatelessRuleGroupReference>?
