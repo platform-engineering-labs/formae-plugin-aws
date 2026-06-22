@@ -118,6 +118,12 @@ open class ResourcesVpcConfig extends formae.SubResource {
     @aws.FieldHint{edgeKind = "runtimeDependency"; hasProviderDefault = true}
     securityGroupIds: Listing<String|formae.Resolvable>?
     subnetIds: Listing<String|formae.Resolvable>
+
+    // AWS populates the control-plane egress mode (e.g. on EKS 1.32+) even when
+    // the user doesn't set it, so treat it as a provider default to avoid
+    // phantom drift on every read.
+    @aws.FieldHint{hasProviderDefault = true}
+    controlPlaneEgressMode: String?
 }
 
 @aws.SubResourceHint

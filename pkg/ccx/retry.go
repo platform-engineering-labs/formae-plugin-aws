@@ -33,8 +33,14 @@ import (
 //
 // Both surfaces need an in-process exponential-backoff loop with a budget
 // long enough to absorb AWS's typical 30-60s recovery window.
+//
+// The budget is sized for sustained CloudControl throttling during the
+// conformance matrix, where many resource types poll status concurrently:
+// 10 attempts over the 1s..30s backoff give roughly a 3-minute window, enough
+// for status reads to ride out the throttling bursts that previously exhausted
+// a 6-attempt budget and failed otherwise-healthy applies.
 const (
-	defaultRetryMaxAttempts = 6
+	defaultRetryMaxAttempts = 10
 	defaultRetryBaseDelay   = 1 * time.Second
 	defaultRetryMaxDelay    = 30 * time.Second
 )

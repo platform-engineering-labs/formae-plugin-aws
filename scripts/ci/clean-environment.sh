@@ -439,6 +439,23 @@ aws rds describe-db-instances --region "$REGION" \
     fi
 done
 
+# --- RDS manual DB snapshots
+# A DBInstance delete through CloudControl creates a final snapshot by default,
+# and instance cleanup above does not remove it. These accumulate against the
+# per-account 100 manual-snapshot limit until a later delete fails with
+# ServiceLimitExceeded ("cannot create more than 100 manual snapshots"),
+# blocking the rds-dbinstance conformance teardown. Purge the test-owned manual
+# snapshots so each run starts under the limit. Match on either the snapshot id
+# or its source instance id, since final-snapshot ids are auto-generated.
+echo "Cleaning RDS test manual DB snapshots..."
+aws rds describe-db-snapshots --snapshot-type manual --region "$REGION" \
+    --query "DBSnapshots[?contains(DBSnapshotIdentifier, '$SDK_PREFIX') || contains(DBSnapshotIdentifier, '$FORMAE_PREFIX') || contains(DBSnapshotIdentifier, '$TEST_PREFIX') || contains(DBInstanceIdentifier, '$SDK_PREFIX') || contains(DBInstanceIdentifier, '$FORMAE_PREFIX') || contains(DBInstanceIdentifier, '$TEST_PREFIX')].DBSnapshotIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r snap; do
+    if [[ -n "$snap" ]]; then
+        echo "  Deleting RDS manual snapshot: $snap"
+        aws rds delete-db-snapshot --db-snapshot-identifier "$snap" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # --- RDS DB subnet groups (after DB instances, before VPCs)
 echo "Cleaning RDS test DB subnet groups..."
 aws rds describe-db-subnet-groups --region "$REGION" \

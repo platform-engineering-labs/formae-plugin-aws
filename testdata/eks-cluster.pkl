@@ -89,7 +89,7 @@ forma {
     label = "plugin-sdk-test-eks"
     name = "formae-sdk-test-eks-\(testRunID)"
     roleArn = testRole.res.arn
-    version = "1.29"
+    version = "1.32"
     resourcesVpcConfig = new {
       subnetIds {
         testSubnet1.res.subnetId
