@@ -6,6 +6,10 @@ dependencies {
 
   // Formae schema - fetched from public registry
   ["formae"] {
-    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.86.0"
+    uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.83.0"
   }
+  // In-repo examples resolve @aws against the LOCAL schema so they exercise this
+  // plugin's current resource definitions (incl. the ECS resolvable patches the
+  // bootstrap example needs), rather than a published hub version.
+  ["aws"] = import("../schema/pkl/PklProject")
 }

@@ -95,7 +95,12 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	// - Fewer max attempts (let PluginOperator handle retries at a higher level)
 	// - Longer max backoff to give AWS time to recover from throttling
 	retryer := retry.NewStandard(func(o *retry.StandardOptions) {
-		o.MaxAttempts = 2            // Reduce from default 3 to fail faster to PluginOperator
+		// Ride out transient connection failures (TLS-handshake timeouts, throttling)
+		// that occur under load — e.g. when discovery scans hundreds of resources
+		// concurrently with an apply. Resolve-reads (resolvable resolution) do NOT get
+		// PluginOperator-level retries, so the SDK retryer is their only protection;
+		// 2 attempts was too aggressive for that path.
+		o.MaxAttempts = 8
 		o.MaxBackoff = 30 * time.Second // Allow longer backoff for throttling
 	})
 
