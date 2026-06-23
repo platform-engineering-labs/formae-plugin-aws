@@ -8,11 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -38,7 +38,7 @@ func init() {
 func (r *RolePolicy) List(ctx context.Context, request *resource.ListRequest) (result *resource.ListResult, err error) {
 	cfg, err := r.cfg.ToAwsConfig(ctx)
 	if err != nil {
-		slog.Error("Failed to load AWS config", "error", err)
+		plugin.LoggerFromContext(ctx).Error("Failed to load AWS config", "error", err)
 		return nil, fmt.Errorf("unable to load aws config: %w", err)
 	}
 	client := iam.NewFromConfig(cfg)

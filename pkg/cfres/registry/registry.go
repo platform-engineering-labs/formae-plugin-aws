@@ -5,8 +5,6 @@
 package registry
 
 import (
-	"log/slog"
-
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -25,20 +23,11 @@ func Register(name string, operations []resource.Operation, f func(cfg *config.C
 
 func Get(name string, operation resource.Operation, cfg *config.Config) prov.Provisioner {
 	if !HasProvisioner(name, operation) {
-		slog.Error("Provisioner not found in registry", "name", name, "operation", operation, "registry_keys", getRegistryKeys())
 		return nil
 	}
 
 	provisioner := registry[name][operation](cfg)
 	return provisioner
-}
-
-func getRegistryKeys() []string {
-	var keys []string
-	for k := range registry {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 func HasProvisioner(name string, operation resource.Operation) bool {

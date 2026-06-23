@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -327,8 +328,8 @@ func TestUpdateResource_SynchronousSuccess_PopulatesResourceProperties(t *testin
 	)
 
 	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
-		NativeID:     nativeID,
-		ResourceType: resourceType,
+		NativeID:      nativeID,
+		ResourceType:  resourceType,
 		PatchDocument: ptr.Of(patchDoc),
 	})
 
@@ -368,8 +369,8 @@ func TestUpdateResource_InProgress_DoesNotRead(t *testing.T) {
 	)
 
 	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
-		NativeID:     nativeID,
-		ResourceType: resourceType,
+		NativeID:      nativeID,
+		ResourceType:  resourceType,
 		PatchDocument: ptr.Of(`[{"op":"replace","path":"/PolicyDocument","value":{}}]`),
 	})
 
@@ -728,16 +729,16 @@ func TestReadResource_PreservesRealEventInvokeDestination(t *testing.T) {
 		"the empty OnSuccess sibling should be stripped")
 }
 
-// captureSlog redirects slog.Default to write WARN+ records into the returned
-// buffer and restores the previous default at test cleanup. Returned buffer
-// contains the rendered text output.
-func captureSlog(t *testing.T) *bytes.Buffer {
+// captureSlog returns a context carrying a plugin.Logger that writes WARN+
+// records into the returned buffer, so a test can drive StatusResource through
+// the SDK context logger and inspect what it emitted. Returned buffer contains
+// the rendered text output.
+func captureSlog(t *testing.T) (context.Context, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return &buf
+	logger := plugin.NewPluginLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	ctx := plugin.WithLogger(context.Background(), logger)
+	return ctx, &buf
 }
 
 // When a Status poll comes back FAILED and none of the remap rules apply, the
@@ -747,7 +748,7 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 // diagnostic we can't tell ServiceTimeout from GeneralServiceException from
 // ServiceInternalError when the next problem destroy hits prod.
 func TestStatusResource_FailedProgress_LogsDiagnosticDetails(t *testing.T) {
-	buf := captureSlog(t)
+	ctx, buf := captureSlog(t)
 
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
@@ -767,7 +768,7 @@ func TestStatusResource_FailedProgress_LogsDiagnosticDetails(t *testing.T) {
 	)
 
 	_, err := client.StatusResource(
-		context.Background(),
+		ctx,
 		&resource.StatusRequest{RequestID: "req-token-svc-timeout"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			t.Fatalf("readFunc must not be called on a FAILED status")
@@ -790,7 +791,7 @@ func TestStatusResource_FailedProgress_LogsDiagnosticDetails(t *testing.T) {
 // many per minute). They MUST NOT trigger the diagnostic log or we'd drown
 // real failure signals.
 func TestStatusResource_InProgress_DoesNotLog(t *testing.T) {
-	buf := captureSlog(t)
+	ctx, buf := captureSlog(t)
 
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
@@ -807,7 +808,7 @@ func TestStatusResource_InProgress_DoesNotLog(t *testing.T) {
 	)
 
 	_, err := client.StatusResource(
-		context.Background(),
+		ctx,
 		&resource.StatusRequest{RequestID: "req-in-progress"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			return nil, nil
@@ -821,7 +822,7 @@ func TestStatusResource_InProgress_DoesNotLog(t *testing.T) {
 // InProgress (see ccx/client.go NotStabilized→InProgress). The diagnostic log
 // must fire AFTER all remaps so remapped-to-InProgress cases stay silent.
 func TestStatusResource_NotStabilizedRemap_DoesNotLog(t *testing.T) {
-	buf := captureSlog(t)
+	ctx, buf := captureSlog(t)
 
 	mockAPI := new(mockCloudControlAPI)
 	client := &Client{api: mockAPI}
@@ -839,7 +840,7 @@ func TestStatusResource_NotStabilizedRemap_DoesNotLog(t *testing.T) {
 	)
 
 	_, err := client.StatusResource(
-		context.Background(),
+		ctx,
 		&resource.StatusRequest{RequestID: "req-not-stabilized"},
 		func(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
 			return nil, nil

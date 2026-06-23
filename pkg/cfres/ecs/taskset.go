@@ -9,13 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
@@ -151,13 +151,13 @@ func (t *TaskSet) readWithClient(ctx context.Context, client ccxReadClient, requ
 
 	parts := strings.Split(request.NativeID, "|")
 	if len(parts) != 3 {
-		slog.Debug("AWS::ECS::TaskSet Read: skipping ARN re-inflation, NativeID not composite",
+		plugin.LoggerFromContext(ctx).Debug("AWS::ECS::TaskSet Read: skipping ARN re-inflation, NativeID not composite",
 			"nativeID", request.NativeID)
 		return result, nil
 	}
 	partition, region, account, ok := parseEcsArn(parts[0])
 	if !ok {
-		slog.Debug("AWS::ECS::TaskSet Read: skipping ARN re-inflation, NativeID parts[0] not an ECS ARN",
+		plugin.LoggerFromContext(ctx).Debug("AWS::ECS::TaskSet Read: skipping ARN re-inflation, NativeID parts[0] not an ECS ARN",
 			"nativeIDPart0", parts[0], "nativeID", request.NativeID)
 		return result, nil
 	}

@@ -7,13 +7,13 @@ package ec2
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ccsdk "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	ec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -90,7 +90,7 @@ func (s *SubnetRouteTableAssociation) listWithClients(ctx context.Context, ccCli
 	// One API call covers all associations — no per-resource calls needed.
 	mainAssociations, err := getMainRouteTableAssociations(ctx, ec2Client, allIDs)
 	if err != nil {
-		slog.Warn("Failed to identify main route table associations, returning all",
+		plugin.LoggerFromContext(ctx).Warn("Failed to identify main route table associations, returning all",
 			"error", err, "count", len(allIDs))
 		return &resource.ListResult{
 			NativeIDs:     allIDs,
@@ -101,7 +101,7 @@ func (s *SubnetRouteTableAssociation) listWithClients(ctx context.Context, ccCli
 	var filtered []string
 	for _, id := range allIDs {
 		if mainAssociations[id] {
-			slog.Debug("Filtering out main route table association from discovery", "associationId", id)
+			plugin.LoggerFromContext(ctx).Debug("Filtering out main route table association from discovery", "associationId", id)
 			continue
 		}
 		filtered = append(filtered, id)

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	awselbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/smithy-go"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 )
 
 // ComposeResult is the outcome of composeEndpoints. Endpoints is the
@@ -46,7 +46,7 @@ func composeEndpoints(
 	ctx context.Context,
 	loadBalancers []ecstypes.LoadBalancer,
 	elbv2 elbv2Client,
-	logger *slog.Logger,
+	logger plugin.Logger,
 ) ComposeResult {
 	if len(loadBalancers) == 0 {
 		return ComposeResult{Endpoints: map[string]string{}}
@@ -167,7 +167,7 @@ func indexLBsByArn(lbs []elbv2types.LoadBalancer) map[string]elbv2types.LoadBala
 
 // describeTargetGroupsRetry / describeLoadBalancersRetry / describeListenersRetry
 // wrap their AWS SDK calls with a 3-attempt retry loop (500ms / 1s / 2s).
-func describeTargetGroupsRetry(ctx context.Context, cli elbv2Client, arns []string, logger *slog.Logger,
+func describeTargetGroupsRetry(ctx context.Context, cli elbv2Client, arns []string, logger plugin.Logger,
 ) ([]elbv2types.TargetGroup, error) {
 	var out *awselbv2.DescribeTargetGroupsOutput
 	err := withRetries(ctx, "DescribeTargetGroups", logger, func() error {
@@ -181,7 +181,7 @@ func describeTargetGroupsRetry(ctx context.Context, cli elbv2Client, arns []stri
 	return out.TargetGroups, nil
 }
 
-func describeLoadBalancersRetry(ctx context.Context, cli elbv2Client, arns []string, logger *slog.Logger,
+func describeLoadBalancersRetry(ctx context.Context, cli elbv2Client, arns []string, logger plugin.Logger,
 ) ([]elbv2types.LoadBalancer, error) {
 	var out *awselbv2.DescribeLoadBalancersOutput
 	err := withRetries(ctx, "DescribeLoadBalancers", logger, func() error {
@@ -195,7 +195,7 @@ func describeLoadBalancersRetry(ctx context.Context, cli elbv2Client, arns []str
 	return out.LoadBalancers, nil
 }
 
-func describeListenersRetry(ctx context.Context, cli elbv2Client, albArn string, logger *slog.Logger,
+func describeListenersRetry(ctx context.Context, cli elbv2Client, albArn string, logger plugin.Logger,
 ) ([]elbv2types.Listener, error) {
 	var out *awselbv2.DescribeListenersOutput
 	err := withRetries(ctx, "DescribeListeners", logger, func() error {
@@ -211,7 +211,7 @@ func describeListenersRetry(ctx context.Context, cli elbv2Client, albArn string,
 
 // withRetries runs fn up to 3 times with 500ms/1s/2s backoff. Stops early on
 // non-transient errors.
-func withRetries(ctx context.Context, op string, logger *slog.Logger, fn func() error) error {
+func withRetries(ctx context.Context, op string, logger plugin.Logger, fn func() error) error {
 	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -243,7 +243,7 @@ func composeOneEntry(
 	tgByArn map[string]elbv2types.TargetGroup,
 	albs map[string]elbv2types.LoadBalancer,
 	listenersByALB map[string][]elbv2types.Listener,
-	logger *slog.Logger,
+	logger plugin.Logger,
 ) (key, url string, skipped bool) {
 	tgArn := aws.ToString(lb.TargetGroupArn)
 	containerName := aws.ToString(lb.ContainerName)
@@ -387,9 +387,9 @@ func isTransient(err error) bool {
 	return true
 }
 
-// logSkip emits a structured warn-level slog event for permanent per-entry
+// logSkip emits a structured warn-level log event for permanent per-entry
 // skips. Special-cases AccessDenied with an IAM remediation hint.
-func logSkip(logger *slog.Logger, reason, tgArn string, err error, extras ...any) {
+func logSkip(logger plugin.Logger, reason, tgArn string, err error, extras ...any) {
 	attrs := []any{"op", "composeEndpoints", "reason", reason, "tgArn", tgArn}
 	attrs = append(attrs, extras...)
 	if err != nil {
