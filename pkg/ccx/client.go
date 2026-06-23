@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -95,7 +95,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	// - Fewer max attempts (let PluginOperator handle retries at a higher level)
 	// - Longer max backoff to give AWS time to recover from throttling
 	retryer := retry.NewStandard(func(o *retry.StandardOptions) {
-		o.MaxAttempts = 2            // Reduce from default 3 to fail faster to PluginOperator
+		o.MaxAttempts = 2               // Reduce from default 3 to fail faster to PluginOperator
 		o.MaxBackoff = 30 * time.Second // Allow longer backoff for throttling
 	})
 
@@ -411,7 +411,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	// (notably the ECS Service Delete drain timeout) have the actual ErrorCode and
 	// StatusMessage from prod runs without needing to reproduce them.
 	if operationStatus == resource.OperationStatusFailure {
-		slog.Warn("StatusResource: CCAPI ProgressEvent reports Failure",
+		plugin.LoggerFromContext(ctx).Warn("StatusResource: CCAPI ProgressEvent reports Failure",
 			"operation", string(result.ProgressEvent.Operation),
 			"errorCode", string(result.ProgressEvent.ErrorCode),
 			"statusMessage", aws.ToString(result.ProgressEvent.StatusMessage),
@@ -449,12 +449,12 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 
 		switch {
 		case readErr != nil:
-			slog.Error("StatusResource: Read failed after retry budget exhausted",
+			plugin.LoggerFromContext(ctx).Error("StatusResource: Read failed after retry budget exhausted",
 				"error", readErr,
 				"identifier", identifier,
 				"resourceType", typeName)
 		case readResult != nil && readResult.ErrorCode != "":
-			slog.Error("StatusResource: Read returned CloudControl error after retry budget",
+			plugin.LoggerFromContext(ctx).Error("StatusResource: Read returned CloudControl error after retry budget",
 				"errorCode", readResult.ErrorCode,
 				"identifier", identifier,
 				"resourceType", typeName)
@@ -463,7 +463,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		}
 
 		if statusResult.ProgressResult.ResourceProperties == nil {
-			slog.Error("StatusResource: Failed to read properties after retries",
+			plugin.LoggerFromContext(ctx).Error("StatusResource: Failed to read properties after retries",
 				"identifier", identifier,
 				"resourceType", typeName)
 		}
@@ -486,14 +486,14 @@ func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.Pr
 			})
 		})
 	if err != nil {
-		slog.Error("post-success Read failed after retries",
+		plugin.LoggerFromContext(ctx).Error("post-success Read failed after retries",
 			"error", err,
 			"identifier", identifier,
 			"resourceType", resourceType)
 		return
 	}
 	if readResult != nil && readResult.ErrorCode != "" {
-		slog.Error("post-success Read returned error after retries",
+		plugin.LoggerFromContext(ctx).Error("post-success Read returned error after retries",
 			"errorCode", readResult.ErrorCode,
 			"identifier", identifier,
 			"resourceType", resourceType)

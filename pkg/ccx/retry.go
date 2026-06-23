@@ -7,11 +7,11 @@ package ccx
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"math/rand/v2"
 	"strings"
 	"time"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
@@ -108,7 +108,7 @@ func retryRead(
 		if res != nil {
 			errCode = string(res.ErrorCode)
 		}
-		slog.Info("ccx: retrying read on recoverable error",
+		plugin.LoggerFromContext(ctx).Info("ccx: retrying read on recoverable error",
 			"hint", logHint,
 			"attempt", attempt,
 			"maxAttempts", opts.MaxAttempts,
@@ -158,7 +158,7 @@ func retryCallable[T any](
 			break
 		}
 		delay := backoffDelay(attempt, opts.BaseDelay, opts.MaxDelay)
-		slog.Info("ccx: retrying call on recoverable error",
+		plugin.LoggerFromContext(ctx).Info("ccx: retrying call on recoverable error",
 			"hint", logHint,
 			"attempt", attempt,
 			"maxAttempts", opts.MaxAttempts,

@@ -9,13 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	sesv2types "github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -204,7 +204,7 @@ func (e *EmailIdentityVerification) Status(ctx context.Context, request *resourc
 
 	outcome, err := evaluateVerification(ctx, client, identity, deadline, e.now())
 	if err != nil {
-		slog.Error("EmailIdentityVerification: evaluateVerification failed", "error", err, "identity", identity)
+		plugin.LoggerFromContext(ctx).Error("EmailIdentityVerification: evaluateVerification failed", "error", err, "identity", identity)
 		return nil, err
 	}
 
@@ -232,7 +232,7 @@ func (e *EmailIdentityVerification) Read(ctx context.Context, request *resource.
 	client, err := e.sesClientFactory(e.cfg)
 	if err != nil {
 		// Best-effort: return the persisted properties unchanged.
-		slog.Warn("EmailIdentityVerification: SDK client unavailable; returning identity-only Properties", "error", err)
+		plugin.LoggerFromContext(ctx).Warn("EmailIdentityVerification: SDK client unavailable; returning identity-only Properties", "error", err)
 		state := stateProperties{Identity: request.NativeID}
 		js, _ := json.Marshal(state)
 		return &resource.ReadResult{ResourceType: request.ResourceType, Properties: string(js)}, nil
@@ -244,7 +244,7 @@ func (e *EmailIdentityVerification) Read(ctx context.Context, request *resource.
 	deadline := now.Add(time.Hour)
 	outcome, err := evaluateVerification(ctx, client, request.NativeID, deadline, now)
 	if err != nil {
-		slog.Warn("EmailIdentityVerification: GetEmailIdentity failed; returning identity-only Properties",
+		plugin.LoggerFromContext(ctx).Warn("EmailIdentityVerification: GetEmailIdentity failed; returning identity-only Properties",
 			"error", err, "identity", request.NativeID)
 		state := stateProperties{Identity: request.NativeID}
 		js, _ := json.Marshal(state)

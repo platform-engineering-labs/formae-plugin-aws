@@ -8,12 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	sesv2types "github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
@@ -132,25 +132,25 @@ func synthesizeFromIdentity(
 func (e *EmailIdentity) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	ccxClient, err := ccx.NewClient(e.cfg)
 	if err != nil {
-		slog.Error("SES EmailIdentity: ccx client init failed", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SES EmailIdentity: ccx client init failed", "error", err)
 		return nil, err
 	}
 	result, err := ccxClient.ReadResource(ctx, request)
 	if err != nil {
-		slog.Error("SES EmailIdentity: ccx ReadResource failed", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SES EmailIdentity: ccx ReadResource failed", "error", err)
 		return nil, err
 	}
 
 	sesClient, err := e.sesClientFactory(e.cfg)
 	if err != nil {
-		slog.Warn("SES EmailIdentity: SDK client unavailable; returning unenriched CCAPI result", "error", err)
+		plugin.LoggerFromContext(ctx).Warn("SES EmailIdentity: SDK client unavailable; returning unenriched CCAPI result", "error", err)
 		return result, nil
 	}
 	region := e.cfg.Region
 
 	records, status, dkim, err := synthesizeFromIdentity(ctx, sesClient, request.NativeID, region)
 	if err != nil {
-		slog.Warn("SES EmailIdentity: GetEmailIdentity failed; returning unenriched CCAPI result",
+		plugin.LoggerFromContext(ctx).Warn("SES EmailIdentity: GetEmailIdentity failed; returning unenriched CCAPI result",
 			"error", err, "identity", request.NativeID)
 		return result, nil
 	}
@@ -158,7 +158,7 @@ func (e *EmailIdentity) Read(ctx context.Context, request *resource.ReadRequest)
 	props := map[string]any{}
 	if raw := strings.TrimSpace(result.Properties); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &props); err != nil {
-			slog.Warn("SES EmailIdentity: ccx Properties not valid JSON; defaulting to empty map", "error", err)
+			plugin.LoggerFromContext(ctx).Warn("SES EmailIdentity: ccx Properties not valid JSON; defaulting to empty map", "error", err)
 			props = map[string]any{}
 		}
 	}
@@ -168,7 +168,7 @@ func (e *EmailIdentity) Read(ctx context.Context, request *resource.ReadRequest)
 
 	enriched, err := json.Marshal(props)
 	if err != nil {
-		slog.Warn("SES EmailIdentity: marshal enriched Properties failed; returning ccx result", "error", err)
+		plugin.LoggerFromContext(ctx).Warn("SES EmailIdentity: marshal enriched Properties failed; returning ccx result", "error", err)
 		return result, nil
 	}
 	result.Properties = string(enriched)

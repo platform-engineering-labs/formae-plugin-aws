@@ -8,11 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
@@ -43,13 +43,13 @@ func init() {
 func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	ccxClient, err := ccx.NewClient(s.cfg)
 	if err != nil {
-		slog.Error("SecretsManager: Failed to create ccx client", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Failed to create ccx client", "error", err)
 		return nil, err
 	}
 
 	result, err := ccxClient.ReadResource(ctx, request)
 	if err != nil {
-		slog.Error("SecretsManager: Cloud Control ReadResource failed", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Cloud Control ReadResource failed", "error", err)
 		return nil, err
 	}
 
@@ -60,7 +60,7 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 
 	awsCfg, err := s.cfg.ToAwsConfig(ctx)
 	if err != nil {
-		slog.Error("SecretsManager: Failed to create AWS config", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Failed to create AWS config", "error", err)
 		return nil, err
 	}
 
@@ -71,7 +71,7 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 	})
 	if err != nil {
 		// Don't fail the read - just return Cloud Control result without secret value
-		slog.Warn("SecretsManager: GetSecretValue failed, returning Cloud Control result only",
+		plugin.LoggerFromContext(ctx).Warn("SecretsManager: GetSecretValue failed, returning Cloud Control result only",
 			"error", err, "secretID", request.NativeID)
 		return result, nil
 	}
@@ -82,7 +82,7 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 		props = map[string]any{}
 	} else {
 		if err := json.Unmarshal([]byte(raw), &props); err != nil {
-			slog.Warn("SecretsManager: properties not valid JSON, defaulting to empty", "error", err)
+			plugin.LoggerFromContext(ctx).Warn("SecretsManager: properties not valid JSON, defaulting to empty", "error", err)
 			props = map[string]any{}
 		}
 	}
@@ -96,7 +96,7 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 
 	completeProps, err := json.Marshal(props)
 	if err != nil {
-		slog.Error("SecretsManager: Failed to marshal complete properties", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Failed to marshal complete properties", "error", err)
 		return result, nil
 	}
 
@@ -107,7 +107,7 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 func (s *Secret) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
 	ccxClient, err := ccx.NewClient(s.cfg)
 	if err != nil {
-		slog.Error("SecretsManager: Create failed to create ccx client", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Create failed to create ccx client", "error", err)
 		return nil, err
 	}
 
@@ -117,7 +117,7 @@ func (s *Secret) Create(ctx context.Context, request *resource.CreateRequest) (*
 func (s *Secret) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	ccxClient, err := ccx.NewClient(s.cfg)
 	if err != nil {
-		slog.Error("SecretsManager: Update failed to create ccx client", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Update failed to create ccx client", "error", err)
 		return nil, err
 	}
 
@@ -127,7 +127,7 @@ func (s *Secret) Update(ctx context.Context, request *resource.UpdateRequest) (*
 func (s *Secret) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
 	ccxClient, err := ccx.NewClient(s.cfg)
 	if err != nil {
-		slog.Error("SecretsManager: Delete failed to create ccx client", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Delete failed to create ccx client", "error", err)
 		return nil, err
 	}
 
@@ -137,7 +137,7 @@ func (s *Secret) Delete(ctx context.Context, request *resource.DeleteRequest) (*
 func (s *Secret) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
 	ccxClient, err := ccx.NewClient(s.cfg)
 	if err != nil {
-		slog.Error("SecretsManager: Status failed to create ccx client", "error", err)
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Status failed to create ccx client", "error", err)
 		return nil, err
 	}
 

@@ -17,13 +17,14 @@ import (
 	awselbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/smithy-go"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/stretchr/testify/assert"
 )
 
-// testLogger returns a slog.Logger discarding all output, suitable for use in
+// testLogger returns a logger discarding all output, suitable for use in
 // table-driven tests that don't assert on log content.
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
+func testLogger() plugin.Logger {
+	return plugin.NewPluginLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
 func TestComposeEndpoints_EmptyLoadBalancers(t *testing.T) {
@@ -105,10 +106,10 @@ func TestComposeEndpoints_SingleEntryHTTPS(t *testing.T) {
 
 // captureLogs returns a logger that writes to the returned buffer, plus the buffer.
 // Used by tests asserting on warn-level skip events.
-func captureLogs() (*slog.Logger, *bytes.Buffer) {
+func captureLogs() (plugin.Logger, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	h := slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	return slog.New(h), buf
+	return plugin.NewPluginLogger(slog.New(h)), buf
 }
 
 // awsAPIErr constructs a smithy.APIError with the given code/message for tests

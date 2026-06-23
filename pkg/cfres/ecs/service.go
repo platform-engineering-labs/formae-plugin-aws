@@ -8,11 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -118,7 +118,7 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 		serviceArn, _ := props["ServiceArn"].(string)
 		partition, region, account, parsed := parseEcsArn(serviceArn)
 		if !parsed {
-			slog.Debug("AWS::ECS::Service Read: skipping Cluster ARN re-inflation, ServiceArn unparseable",
+			plugin.LoggerFromContext(ctx).Debug("AWS::ECS::Service Read: skipping Cluster ARN re-inflation, ServiceArn unparseable",
 				"cluster", cluster, "serviceArn", serviceArn, "nativeID", request.NativeID)
 		} else {
 			props["Cluster"] = fmt.Sprintf("arn:%s:ecs:%s:%s:cluster/%s", partition, region, account, cluster)
@@ -132,7 +132,7 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 		if err != nil {
 			return nil, fmt.Errorf("building ELBv2 client for endpoint composition: %w", err)
 		}
-		composed := composeEndpoints(ctx, lbs, elb, slog.Default())
+		composed := composeEndpoints(ctx, lbs, elb, plugin.LoggerFromContext(ctx))
 		if composed.TransientError != nil {
 			// Surface as a recoverable plugin error so ResolveCache and the
 			// sync loop retry the Plugin Read. Do not return partial

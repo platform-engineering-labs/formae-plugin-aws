@@ -7,7 +7,6 @@ package ecs
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	awselbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
@@ -226,7 +226,7 @@ func (s *Service) finalSuccess(ctx context.Context, req *resource.StatusRequest,
 		// consumer fast-fail. Permanent failures (rule-routed, NLB-only,
 		// AccessDenied, etc.) populate missing keys in the map; consumers
 		// requesting those keys fast-fail with a clear diagnostic.
-		composed := composeEndpoints(ctx, svc.LoadBalancers, elbCli, slog.Default())
+		composed := composeEndpoints(ctx, svc.LoadBalancers, elbCli, plugin.LoggerFromContext(ctx))
 		if composed.TransientError != nil {
 			return s.inProgressOrTimeout(op, req, unixStart,
 				"deployment stable; waiting for endpoint composition: "+composed.TransientError.Error()), nil

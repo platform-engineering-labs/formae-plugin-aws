@@ -8,9 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
@@ -90,13 +90,13 @@ func (l *Listener) Read(ctx context.Context, request *resource.ReadRequest) (*re
 func enrichWithURL(ctx context.Context, reader resourceReader, propsMap map[string]any) {
 	loadBalancerArn, ok := propsMap["LoadBalancerArn"].(string)
 	if !ok || loadBalancerArn == "" {
-		slog.Debug("Listener missing LoadBalancerArn, skipping URL enrichment")
+		plugin.LoggerFromContext(ctx).Debug("Listener missing LoadBalancerArn, skipping URL enrichment")
 		return
 	}
 
 	protocol, _ := propsMap["Protocol"].(string)
 	if protocol == "" {
-		slog.Debug("Listener missing Protocol, skipping URL enrichment")
+		plugin.LoggerFromContext(ctx).Debug("Listener missing Protocol, skipping URL enrichment")
 		return
 	}
 
@@ -106,13 +106,13 @@ func enrichWithURL(ctx context.Context, reader resourceReader, propsMap map[stri
 		ResourceType: "AWS::ElasticLoadBalancingV2::LoadBalancer",
 	})
 	if err != nil {
-		slog.Warn("Failed to read parent ALB for URL enrichment",
+		plugin.LoggerFromContext(ctx).Warn("Failed to read parent ALB for URL enrichment",
 			"loadBalancerArn", loadBalancerArn,
 			"error", err)
 		return
 	}
 	if albResult.ErrorCode != "" {
-		slog.Warn("Parent ALB read returned error for URL enrichment",
+		plugin.LoggerFromContext(ctx).Warn("Parent ALB read returned error for URL enrichment",
 			"loadBalancerArn", loadBalancerArn,
 			"errorCode", albResult.ErrorCode)
 		return
@@ -120,14 +120,14 @@ func enrichWithURL(ctx context.Context, reader resourceReader, propsMap map[stri
 
 	var albProps map[string]any
 	if err = json.Unmarshal([]byte(albResult.Properties), &albProps); err != nil {
-		slog.Warn("Failed to unmarshal ALB properties for URL enrichment",
+		plugin.LoggerFromContext(ctx).Warn("Failed to unmarshal ALB properties for URL enrichment",
 			"error", err)
 		return
 	}
 
 	dnsName, ok := albProps["DNSName"].(string)
 	if !ok || dnsName == "" {
-		slog.Debug("ALB missing DNSName, skipping URL enrichment")
+		plugin.LoggerFromContext(ctx).Debug("ALB missing DNSName, skipping URL enrichment")
 		return
 	}
 

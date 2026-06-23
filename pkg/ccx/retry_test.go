@@ -10,11 +10,32 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
+
+// countingHandler is a slog.Handler that counts the records routed to it,
+// letting a test assert that a retry path logged through an injected logger
+// rather than the package-global slog default. It records counts only — no
+// message text or level is inspected.
+type countingHandler struct{ count *int }
+
+func (h countingHandler) Enabled(context.Context, slog.Level) bool  { return true }
+func (h countingHandler) Handle(context.Context, slog.Record) error { *h.count++; return nil }
+func (h countingHandler) WithAttrs([]slog.Attr) slog.Handler        { return h }
+func (h countingHandler) WithGroup(string) slog.Handler             { return h }
+
+// ctxWithCountingLogger returns a context carrying a plugin.Logger whose records
+// land in the counter, plus the counter pointer.
+func ctxWithCountingLogger() (context.Context, *int) {
+	count := 0
+	logger := plugin.NewPluginLogger(slog.New(countingHandler{count: &count}))
+	return plugin.WithLogger(context.Background(), logger), &count
+}
 
 // Sub-millisecond options keep the retry loop fast under test while still
 // exercising every code path (backoff loop, exhaustion, cancellation).
@@ -192,6 +213,33 @@ func TestRetryCallable_NonRecoverableErrorReturnsImmediately(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("expected 1 call for non-recoverable error, got %d", calls)
+	}
+}
+
+// The retry paths must log through the context logger so the agent's plugin
+// supervisor preserves the intended INFO level (and the SDK routing attributes)
+// instead of flattening the line to ERROR off stderr. These assert the wiring
+// only: that a retried call records through the logger injected on ctx.
+
+func TestRetryCallable_LogsViaContextLogger(t *testing.T) {
+	ctx, count := ctxWithCountingLogger()
+	_, _ = retryCallable(ctx, testOpts(3), "test",
+		func(ctx context.Context) (string, error) {
+			return "", fmt.Errorf("ThrottlingException: Rate exceeded")
+		})
+	if *count == 0 {
+		t.Error("expected retry to record through the context logger, got 0 records")
+	}
+}
+
+func TestRetryRead_LogsViaContextLogger(t *testing.T) {
+	ctx, count := ctxWithCountingLogger()
+	_, _ = retryRead(ctx, testOpts(3), "test",
+		func(ctx context.Context) (*resource.ReadResult, error) {
+			return &resource.ReadResult{ErrorCode: resource.OperationErrorCodeThrottling}, nil
+		})
+	if *count == 0 {
+		t.Error("expected retry to record through the context logger, got 0 records")
 	}
 }
 

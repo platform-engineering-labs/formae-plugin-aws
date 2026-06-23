@@ -8,9 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
@@ -37,9 +37,9 @@ func init() {
 }
 
 func (m *Method) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	transformedProperties, err := m.handleLambdaIntegration(request.Properties)
+	transformedProperties, err := m.handleLambdaIntegration(ctx, request.Properties)
 	if err != nil {
-		slog.Error("ApiGateway::Method: Failed to transform Lambda integration", "error", err)
+		plugin.LoggerFromContext(ctx).Error("ApiGateway::Method: Failed to transform Lambda integration", "error", err)
 		return nil, err
 	}
 
@@ -54,7 +54,7 @@ func (m *Method) Create(ctx context.Context, request *resource.CreateRequest) (*
 }
 
 func (m *Method) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	transformedProperties, err := m.handleLambdaIntegration(request.DesiredProperties)
+	transformedProperties, err := m.handleLambdaIntegration(ctx, request.DesiredProperties)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (m *Method) List(ctx context.Context, request *resource.ListRequest) (*reso
 // handleLambdaIntegration transforms the Lambda integration properties for API Gateway.
 // This solves the issue of using Lambda ARNs directly in API Gateway integrations and
 // allows the API Gateway to $ref the Lambda function.
-func (m *Method) handleLambdaIntegration(properties []byte) ([]byte, error) {
+func (m *Method) handleLambdaIntegration(ctx context.Context, properties []byte) ([]byte, error) {
 	var props map[string]any
 	if err := json.Unmarshal(properties, &props); err != nil {
 		return properties, err
@@ -134,7 +134,7 @@ func (m *Method) handleLambdaIntegration(properties []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal transformed properties: %w", err)
 	}
 
-	slog.Debug("ApiGateway::Method: Transformed Lambda integration",
+	plugin.LoggerFromContext(ctx).Debug("ApiGateway::Method: Transformed Lambda integration",
 		"lambdaArn", lambdaArnStr, "uri", uri)
 
 	return transformedProps, nil

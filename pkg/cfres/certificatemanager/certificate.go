@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/acm"
 	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
 
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -195,7 +195,7 @@ func (c *Certificate) Create(ctx context.Context, request *resource.CreateReques
 			},
 		})
 		if err != nil {
-			slog.Warn("acm: UpdateCertificateOptions failed; cert created but transparency pref not applied",
+			plugin.LoggerFromContext(ctx).Warn("acm: UpdateCertificateOptions failed; cert created but transparency pref not applied",
 				"error", err, "cert_arn", certArn)
 		}
 	}
@@ -265,7 +265,7 @@ func (c *Certificate) readPropertiesWithValidationRecords(
 		case <-time.After(pollInterval):
 		}
 	}
-	slog.Info("acm: validation records still empty after poll budget; returning current state",
+	plugin.LoggerFromContext(ctx).Info("acm: validation records still empty after poll budget; returning current state",
 		"cert_arn", certArn,
 		"attempts", maxAttempts)
 	return props, nil
