@@ -184,6 +184,13 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          # Discovery polls inventory for the OOB-created resource. The 2-min
+          # default is too tight when CloudControl ListResources gets throttled
+          # in the shared test account (discovery scans every parent — e.g. each
+          # EFS filesystem — so leftover resources from parallel jobs inflate the
+          # list-call volume and trigger Rate exceeded backoffs). 5 min gives
+          # discovery room to push past the throttling window.
+          FORMAE_TEST_DISCOVERY_TIMEOUT: 5
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 
