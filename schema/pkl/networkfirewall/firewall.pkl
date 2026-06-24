@@ -11,11 +11,13 @@ import "../aws.pkl"
 
 const type = "AWS::NetworkFirewall::Firewall"
 
+typealias IPAddressType = "DUALSTACK"|"IPV4"|"IPV6"
+
 @aws.SubResourceHint
 open class SubnetMapping extends formae.SubResource {
     subnetId: String|formae.Resolvable
     @aws.FieldHint{hasProviderDefault = true}
-    iPAddressType: String?
+    iPAddressType: IPAddressType?
 }
 
 open class FirewallResolvable extends formae.Resolvable {

@@ -11,6 +11,12 @@ import "../aws.pkl"
 
 const type = "AWS::NetworkFirewall::FirewallPolicy"
 
+typealias RuleOrder = "DEFAULT_ACTION_ORDER"|"STRICT_ORDER"
+
+typealias StreamExceptionPolicy = "DROP"|"CONTINUE"|"REJECT"
+
+typealias StatefulDefaultAction = "aws:drop_strict"|"aws:drop_established"|"aws:alert_strict"|"aws:alert_established"|"aws:drop_established_app_layer"|"aws:alert_established_app_layer"|"aws:drop_established_app_layer_to_server"|"aws:alert_established_app_layer_to_server"
+
 @aws.SubResourceHint
 open class StatefulRuleGroupReference extends formae.SubResource {
     resourceArn: String|formae.Resolvable
@@ -25,8 +31,8 @@ open class StatelessRuleGroupReference extends formae.SubResource {
 
 @aws.SubResourceHint
 open class StatefulEngineOptions extends formae.SubResource {
-    ruleOrder: String?
-    streamExceptionPolicy: String?
+    ruleOrder: RuleOrder?
+    streamExceptionPolicy: StreamExceptionPolicy?
 }
 
 @aws.SubResourceHint
@@ -38,6 +44,11 @@ open class FirewallPolicyData extends formae.SubResource {
     // lists, leaving both the old and new action present (which AWS then
     // rejects, e.g. "aws:drop_strict / aws:drop_established cannot exist
     // together"). See PLA-37.
+    // The stateless default-action lists stay String (not a literal union):
+    // beyond the reserved actions (aws:pass, aws:drop, aws:forward_to_sfe) AWS
+    // also accepts the names of custom actions defined in the policy, so a
+    // closed union would reject valid configurations. The stateful default
+    // actions below ARE a closed set, so they are constrained.
     @aws.FieldHint{updateMethod = "Atomic"}
     statelessDefaultActions: Listing<String>
 
@@ -45,7 +56,7 @@ open class FirewallPolicyData extends formae.SubResource {
     statelessFragmentDefaultActions: Listing<String>
 
     @aws.FieldHint{updateMethod = "Atomic"}
-    statefulDefaultActions: Listing<String>?
+    statefulDefaultActions: Listing<StatefulDefaultAction>?
     statefulRuleGroupReferences: Listing<StatefulRuleGroupReference>?
     statelessRuleGroupReferences: Listing<StatelessRuleGroupReference>?
     statefulEngineOptions: StatefulEngineOptions?
