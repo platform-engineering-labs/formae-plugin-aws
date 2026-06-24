@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::NetworkFirewall::RuleGroup"
 
+typealias RuleGroupType = "STATELESS"|"STATEFUL"
+
+typealias GeneratedRulesType = "ALLOWLIST"|"DENYLIST"|"ALERTLIST"|"REJECTLIST"
+
+typealias TargetType = "TLS_SNI"|"HTTP_HOST"
+
+typealias RuleOrder = "DEFAULT_ACTION_ORDER"|"STRICT_ORDER"
+
 @aws.SubResourceHint
 open class IPSet extends formae.SubResource {
     definition: Listing<String>?
@@ -24,8 +32,8 @@ open class RuleVariables extends formae.SubResource {
 @aws.SubResourceHint
 open class RulesSourceList extends formae.SubResource {
     targets: Listing<String>
-    targetTypes: Listing<String>
-    generatedRulesType: String
+    targetTypes: Listing<TargetType>
+    generatedRulesType: GeneratedRulesType
 }
 
 @aws.SubResourceHint
@@ -35,7 +43,7 @@ open class RulesSource extends formae.SubResource {
 
 @aws.SubResourceHint
 open class StatefulRuleOptions extends formae.SubResource {
-    ruleOrder: String?
+    ruleOrder: RuleOrder?
 }
 
 @aws.SubResourceHint
@@ -69,7 +77,7 @@ open class RuleGroup extends formae.Resource {
     ruleGroupName: String
 
     @aws.FieldHint{createOnly = true}
-    type: String
+    type: RuleGroupType
 
     @aws.FieldHint{createOnly = true}
     capacity: Int

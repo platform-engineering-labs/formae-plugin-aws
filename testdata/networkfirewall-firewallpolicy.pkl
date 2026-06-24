@@ -1,0 +1,86 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+// Conformance fixture for AWS::NetworkFirewall::FirewallPolicy. The policy is
+// the headline (last) resource: the harness verifies the final resource and
+// OOB-deletes it in isolation, so it must be a singleton leaf — nothing
+// references the policy, and it depends only on a STATEFUL RuleGroup.
+//
+// It populates the enum-valued fields with VALID values across both resources —
+// ruleOrder, streamExceptionPolicy (which the networkfirewall.pkl fixture never
+// sets), statefulDefaultActions, RuleGroup.type, generatedRulesType and
+// targetTypes — so the constrained literal-union schema is exercised end to end.
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/networkfirewall/rulegroup.pkl"
+import "@aws/networkfirewall/firewallpolicy.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-networkfirewall-firewallpolicy-\(testRunID)"
+
+// Stateful domain-allowlist rule group the policy references.
+local allowlist = new rulegroup.RuleGroup {
+  label = "nfwp-allowlist"
+  ruleGroupName = "nfwp-allowlist-\(testRunID)"
+  type = "STATEFUL"
+  capacity = 100
+  ruleGroup = new rulegroup.RuleGroupData {
+    rulesSource = new rulegroup.RulesSource {
+      rulesSourceList = new rulegroup.RulesSourceList {
+        targets = new Listing<String> { "github.com"; "api.anthropic.com" }
+        targetTypes = new Listing<rulegroup.TargetType> { "TLS_SNI"; "HTTP_HOST" }
+        generatedRulesType = "ALLOWLIST"
+      }
+    }
+    statefulRuleOptions = new rulegroup.StatefulRuleOptions {
+      ruleOrder = "STRICT_ORDER"
+    }
+  }
+}
+
+// Firewall policy exercising the full enum surface with valid values. Listed
+// last in the forma block as the headline leaf resource.
+local policy = new firewallpolicy.FirewallPolicy {
+  label = "nfwp-policy"
+  firewallPolicyName = "nfwp-policy-\(testRunID)"
+  firewallPolicy = new firewallpolicy.FirewallPolicyData {
+    statelessDefaultActions = new Listing<String> { "aws:forward_to_sfe" }
+    statelessFragmentDefaultActions = new Listing<String> { "aws:forward_to_sfe" }
+    statefulDefaultActions = new Listing<firewallpolicy.StatefulDefaultAction> { "aws:drop_established" }
+    statefulEngineOptions = new firewallpolicy.StatefulEngineOptions {
+      ruleOrder = "STRICT_ORDER"
+      streamExceptionPolicy = "REJECT"
+    }
+    statefulRuleGroupReferences = new Listing<firewallpolicy.StatefulRuleGroupReference> {
+      new {
+        resourceArn = allowlist.res.arn
+        // STRICT_ORDER requires an explicit evaluation priority per reference.
+        priority = 1
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for AWS Network Firewall FirewallPolicy enums"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  allowlist
+  policy
+}

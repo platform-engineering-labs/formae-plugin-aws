@@ -11,10 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::NetworkFirewall::LoggingConfiguration"
 
+typealias LogType = "ALERT"|"FLOW"|"TLS"
+
+typealias LogDestinationType = "S3"|"CloudWatchLogs"|"KinesisDataFirehose"
+
 @aws.SubResourceHint
 open class LogDestinationConfig extends formae.SubResource {
-    logType: String
-    logDestinationType: String
+    logType: LogType
+    logDestinationType: LogDestinationType
     logDestination: Mapping<String, String|formae.Resolvable>
 }
 
