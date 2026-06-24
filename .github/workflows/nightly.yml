@@ -258,6 +258,9 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: nightly-main-${{ github.run_id }}
+          # See ci.yml: 2-min discovery default is too tight under CloudControl
+          # ListResources throttling in the shared account.
+          FORMAE_TEST_DISCOVERY_TIMEOUT: 5
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 

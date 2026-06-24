@@ -165,6 +165,9 @@ jobs:
         env:
           AWS_REGION: us-east-1
           FORMAE_TEST_RUN_ID: debug-${{ github.run_id }}-${{ github.run_attempt }}
+          # See ci.yml: 2-min discovery default is too tight under CloudControl
+          # ListResources throttling in the shared account.
+          FORMAE_TEST_DISCOVERY_TIMEOUT: 5
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         # 90-minute timeout accommodates LB-attached fixtures (ALB provisioning
         # + ECS stabilization + destroy + reapply takes 65-80m). Smaller fixtures
