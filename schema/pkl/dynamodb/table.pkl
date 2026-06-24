@@ -11,6 +11,22 @@ import "../aws.pkl"
 
 const type = "AWS::DynamoDB::Table"
 
+open class TableResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: TableResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden streamArn: TableResolvable = (this) {
+        property = "StreamArn"
+    }
+
+    hidden tableName: TableResolvable = (this) {
+        property = "TableName"
+    }
+}
+
 @aws.SubResourceHint
 open class AttributeDefinition extends formae.SubResource {
     attributeName: String
@@ -210,4 +226,10 @@ open class Table extends formae.Resource {
     @aws.FieldHint { hasProviderDefault = true }
     warmThroughput: WarmThroughput?
 
+    local parent = this
+
+    hidden res: TableResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
