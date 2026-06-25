@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
@@ -78,12 +79,7 @@ func (r *RestApi) Read(ctx context.Context, request *resource.ReadRequest) (*res
 		return result, nil
 	}
 
-	stsClient, err := r.stsClientFactory(r.cfg)
-	if err != nil {
-		plugin.LoggerFromContext(ctx).Warn("apigateway restapi: STS client unavailable; execute-api ARN not derived", "error", err)
-		return result, nil
-	}
-	r.enrichWithExecuteApiArn(ctx, stsClient, props)
+	r.enrichWithExecuteApiArn(ctx, props)
 
 	enriched, err := json.Marshal(props)
 	if err != nil {
@@ -93,27 +89,81 @@ func (r *RestApi) Read(ctx context.Context, request *resource.ReadRequest) (*res
 	return result, nil
 }
 
-// enrichWithExecuteApiArn resolves the account ID and partition via STS and
-// derives the execute-api ARN onto props. On any failure (STS error or missing
-// inputs) it logs a WARN naming the cause and leaves props unchanged — the
-// resolvable then resolves to null, surfacing an apply-time error to a consumer
-// that needs it rather than a silent pass-through.
-func (r *RestApi) enrichWithExecuteApiArn(ctx context.Context, stsClient stsClientInterface, props map[string]any) {
+// callerIdentity is the account ID and partition resolved from STS. Both are
+// invariant for a given credential set, so they are memoized (see identityCache)
+// to avoid a GetCallerIdentity round-trip on every Read.
+type callerIdentity struct {
+	account   string
+	partition string
+}
+
+// identityCacheKey scopes the memo to a credential set. The plugin Config
+// exposes only Profile and Region, which together determine the account
+// (credentials) and partition (region) — so this is the finest credential
+// distinction available, and keying by it keeps the cache multi-account-safe.
+type identityCacheKey struct {
+	profile string
+	region  string
+}
+
+var (
+	identityCacheMu sync.Mutex
+	identityCache   = map[identityCacheKey]callerIdentity{}
+)
+
+// enrichWithExecuteApiArn resolves the account ID and partition (memoized per
+// credential set) and derives the execute-api ARN onto props. On any failure
+// (STS error or missing inputs) it logs a WARN naming the cause and leaves props
+// unchanged — the resolvable then resolves to null, surfacing an apply-time
+// error to a consumer that needs it rather than a silent pass-through.
+func (r *RestApi) enrichWithExecuteApiArn(ctx context.Context, props map[string]any) {
 	if _, exists := props["ExecuteApiArn"]; exists {
 		// Never overwrite a value a future CloudControl schema might supply.
 		return
 	}
-	caller, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	identity, err := r.resolveCallerIdentity(ctx)
 	if err != nil {
-		plugin.LoggerFromContext(ctx).Warn("apigateway restapi: GetCallerIdentity failed; execute-api ARN not derived", "error", err)
+		plugin.LoggerFromContext(ctx).Warn("apigateway restapi: caller identity unavailable; execute-api ARN not derived", "error", err)
 		return
 	}
-	account := aws.ToString(caller.Account)
-	partition := partitionFromArn(aws.ToString(caller.Arn))
-	if !synthesizeExecuteApiArn(props, partition, r.cfg.Region, account) {
+	if !synthesizeExecuteApiArn(props, identity.partition, r.cfg.Region, identity.account) {
 		plugin.LoggerFromContext(ctx).Warn("apigateway restapi: execute-api ARN not derived (missing region/account/RestApiId)",
-			"region", r.cfg.Region, "account", account)
+			"region", r.cfg.Region, "account", identity.account)
 	}
+}
+
+// resolveCallerIdentity returns the account and partition for the plugin's
+// credentials, memoized by (profile, region). On a cache miss it builds the STS
+// client and calls GetCallerIdentity once; the result is invariant for the
+// credential set, so every subsequent Read reuses it. A failed lookup is not
+// cached, so a transient STS error can be retried on the next Read.
+func (r *RestApi) resolveCallerIdentity(ctx context.Context) (callerIdentity, error) {
+	key := identityCacheKey{profile: r.cfg.Profile, region: r.cfg.Region}
+
+	identityCacheMu.Lock()
+	cached, ok := identityCache[key]
+	identityCacheMu.Unlock()
+	if ok {
+		return cached, nil
+	}
+
+	stsClient, err := r.stsClientFactory(r.cfg)
+	if err != nil {
+		return callerIdentity{}, fmt.Errorf("build STS client: %w", err)
+	}
+	caller, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return callerIdentity{}, err
+	}
+	identity := callerIdentity{
+		account:   aws.ToString(caller.Account),
+		partition: partitionFromArn(aws.ToString(caller.Arn)),
+	}
+
+	identityCacheMu.Lock()
+	identityCache[key] = identity
+	identityCacheMu.Unlock()
+	return identity, nil
 }
 
 // synthesizeExecuteApiArn builds the execute-api ARN

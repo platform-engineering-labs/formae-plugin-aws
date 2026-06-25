@@ -13,6 +13,14 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+// resetIdentityCache clears the package-level caller-identity memo so each test
+// starts from a cold cache.
+func resetIdentityCache() {
+	identityCacheMu.Lock()
+	defer identityCacheMu.Unlock()
+	identityCache = map[identityCacheKey]callerIdentity{}
+}
+
 type mockStsClient struct {
 	mock.Mock
 }
