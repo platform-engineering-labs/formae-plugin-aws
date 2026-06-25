@@ -110,10 +110,10 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint
     batchSize: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     bisectBatchOnFunctionError: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     destinationConfig: DestinationConfig?
 
     @aws.FieldHint
@@ -140,16 +140,16 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint{hasProviderDefault = true}
     maximumBatchingWindowInSeconds: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     maximumRecordAgeInSeconds: Int?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     maximumRetryAttempts: Int?
 
     @aws.FieldHint
     metricsConfig: MetricsConfig?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     parallelizationFactor: Int?
 
     @aws.FieldHint
@@ -186,6 +186,6 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     topics: Listing<String>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     tumblingWindowInSeconds: Int?
 }
