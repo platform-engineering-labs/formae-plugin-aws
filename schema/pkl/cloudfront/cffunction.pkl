@@ -57,7 +57,7 @@ open class Function extends formae.Resource {
     autoPublish: Boolean?
 
     @aws.FieldHint
-    functionCode: String
+    functionCode: String|formae.Embedded
 
     @aws.FieldHint
     functionConfig: FunctionConfig
