@@ -42,6 +42,15 @@ open class RestApiResolvable extends formae.Resolvable {
     hidden rootResourceId: RestApiResolvable = (this) {
         property = "RootResourceId"
     }
+
+    /// The full execute-api ARN
+    /// `arn:<partition>:execute-api:<region>:<account>:<restApiId>/*/*`, derived
+    /// by the plugin's custom Read (CloudControl exposes no ARN for a RestApi).
+    /// The trailing `/*/*` scopes all stages, methods, and resource paths — use
+    /// it for a Lambda invoke permission's `sourceArn`.
+    hidden executeApiArn: RestApiResolvable = (this) {
+        property = "ExecuteApiArn"
+    }
 }
 
 @aws.ResourceHint {
