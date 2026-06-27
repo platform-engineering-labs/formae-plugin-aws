@@ -17,9 +17,10 @@ const type = "AWS::EC2::VPNGatewayRoutePropagation"
     discoverable = false
 }
 open class VPNGatewayRoutePropagation extends formae.Resource {
-    @aws.FieldHint
-    routeTableIds: Listing<String|formae.Resolvable>
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
+    routeTableId: String|formae.Resolvable
+
+    @aws.FieldHint{createOnly = true}
     vpnGatewayId: String|formae.Resolvable
 }
