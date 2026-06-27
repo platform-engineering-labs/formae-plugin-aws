@@ -105,16 +105,8 @@ forma {
   new taskset.TaskSet {
     label = "plugin-sdk-test-ecs-taskset"
     cluster = testCluster.res.arn
-    service = new formae.Resolvable {
-      label = testService.label
-      type = "AWS::ECS::Service"
-      property = "ServiceArn"
-    }
-    taskDefinition = new formae.Resolvable {
-      label = testTaskDef.label
-      type = "AWS::ECS::TaskDefinition"
-      property = "TaskDefinitionArn"
-    }
+    service = testService.res.serviceArn
+    taskDefinition = testTaskDef.res.taskDefinitionArn
     launchType = "FARGATE"
     networkConfiguration = new taskset.NetworkConfiguration {
       awsVpcConfiguration = new taskset.AWSVpcConfiguration {

@@ -45,11 +45,7 @@ forma {
   // TransitGatewayRouteTable under test
   new transitgatewayroutetable.TransitGatewayRouteTable {
     label = "plugin-sdk-test-tgw-routetable"
-    transitGatewayId = new formae.Resolvable {
-      label = testTgw.label
-      type = "AWS::EC2::TransitGateway"
-      property = "Id"
-    }
+    transitGatewayId = testTgw.res.id
     tags {
       new { key = "Name"; value = "formae-plugin-sdk-test-tgwrt-\(testRunID)" }
     }

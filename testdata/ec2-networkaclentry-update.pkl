@@ -51,11 +51,7 @@ forma {
   // NetworkAclEntry under test - updated ruleAction to deny
   new networkaclentry.NetworkAclEntry {
     label = "plugin-sdk-test-networkaclentry"
-    networkAclId = new formae.Resolvable {
-      label = testNetworkAcl.label
-      type = "AWS::EC2::NetworkAcl"
-      property = "Id"
-    }
+    networkAclId = testNetworkAcl.res.id
     ruleNumber = 100
     protocol = 6
     ruleAction = "deny"

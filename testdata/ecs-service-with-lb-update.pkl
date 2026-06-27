@@ -247,11 +247,7 @@ forma {
     label = "plugin-sdk-test-ecs-service-with-lb"
     serviceName = "formae-sdk-test-svc-lb-\(testRunID)"
     cluster = testCluster.res.arn
-    taskDefinition = new formae.Resolvable {
-      label = testTaskDef.label
-      type = "AWS::ECS::TaskDefinition"
-      property = "TaskDefinitionArn"
-    }
+    taskDefinition = testTaskDef.res.taskDefinitionArn
     // Updated: scale from 1 -> 2 tasks. This triggers ECS to roll a new
     // deployment to bring up the extra task, which is exactly the path
     // Phase B's new-deployment-detection + TG-health-gate logic needs to

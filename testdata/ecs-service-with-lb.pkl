@@ -256,11 +256,7 @@ forma {
     label = "plugin-sdk-test-ecs-service-with-lb"
     serviceName = "formae-sdk-test-svc-lb-\(testRunID)"
     cluster = testCluster.res.arn
-    taskDefinition = new formae.Resolvable {
-      label = testTaskDef.label
-      type = "AWS::ECS::TaskDefinition"
-      property = "TaskDefinitionArn"
-    }
+    taskDefinition = testTaskDef.res.taskDefinitionArn
     desiredCount = 1
     schedulingStrategy = "REPLICA"
     launchType = "FARGATE"
