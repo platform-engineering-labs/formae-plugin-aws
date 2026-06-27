@@ -1,0 +1,64 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/events/eventbus.pkl"
+import "@aws/events/rule.pkl"
+import "@aws/sqs/queue.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-events-rule-\(testRunID)"
+
+local eventBus = new eventbus.EventBus {
+  label = "plugin-sdk-test-rule-bus"
+  name = "formae-plugin-sdk-test-rule-bus-\(testRunID)"
+}
+
+local targetQueue = new queue.Queue {
+  label = "plugin-sdk-test-rule-queue"
+  queueName = "formae-plugin-sdk-test-rule-queue-\(testRunID)"
+}
+
+local secondQueue = new queue.Queue {
+  label = "plugin-sdk-test-rule-queue-2"
+  queueName = "formae-plugin-sdk-test-rule-queue2-\(testRunID)"
+}
+
+local testRule = new rule.Rule {
+  label = "plugin-sdk-test-rule"
+  name = "formae-plugin-sdk-test-rule-\(testRunID)"
+  eventBusName = eventBus.res.name
+  description = "formae plugin sdk test rule (updated)"
+  eventPattern = new Dynamic {
+    source = new Listing { "formae.plugin.sdk.test.updated" }
+  }
+  state = "ENABLED"
+  targets {
+    new {
+      id = "sqs-target"
+      arn = targetQueue.res.arn
+      input = "{\"hello\":\"updated\"}"
+    }
+    new {
+      id = "sqs-target-2"
+      arn = secondQueue.res.arn
+      input = "{\"second\":\"target\"}"
+    }
+  }
+}
+
+forma {
+  new formae.Stack { label = stackName; description = "Plugin SDK test for EventBridge Rule" }
+  new formae.Target { label = "aws-target"; config = new aws.Config { region = "us-east-1" } }
+  eventBus
+  targetQueue
+  secondQueue
+  testRule
+}
