@@ -1,0 +1,75 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/ipam.pkl"
+import "@aws/ec2/ipamscope.pkl"
+import "@aws/ec2/ipampool.pkl"
+import "@aws/ec2/ipampoolcidr.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-ipampoolcidr-\(testRunID)"
+
+local testIpam = new ipam.IPAM {
+  label = "test-ipam-for-poolcidr"
+  description = "IPAM for IPAMPoolCidr test"
+  operatingRegions {
+    new { regionName = "us-east-1" }
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-ipam-for-poolcidr-\(testRunID)" }
+  }
+}
+
+local testScope = new ipamscope.IPAMScope {
+  label = "test-scope-for-poolcidr"
+  ipamId = testIpam.res.ipamId
+  description = "Scope for IPAMPoolCidr test"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-scope-for-poolcidr-\(testRunID)" }
+  }
+}
+
+local testPool = new ipampool.IPAMPool {
+  label = "test-pool-for-poolcidr"
+  addressFamily = "ipv4"
+  ipamScopeId = testScope.res.ipamScopeId
+  locale = "us-east-1"
+  description = "Pool for IPAMPoolCidr test"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-pool-for-poolcidr-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 IPAMPoolCidr"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // IPAM + scope + pool required for the CIDR provisioning
+  testIpam
+  testScope
+  testPool
+
+  // IPAMPoolCidr under test (provisions a CIDR into the pool)
+  new ipampoolcidr.IPAMPoolCidr {
+    label = "plugin-sdk-test-ipampoolcidr"
+    ipamPoolId = testPool.res.ipamPoolId
+    cidr = "10.0.0.0/16"
+  }
+}

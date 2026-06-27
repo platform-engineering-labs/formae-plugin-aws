@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/transitgateway.pkl"
+import "@aws/ec2/transitgatewayattachment.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-transitgatewayattachment-\(testRunID)"
+
+// VPC dependency - the attachment connects this VPC to the transit gateway
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-tgwattach"
+  cidrBlock = "10.211.0.0/16"
+  enableDnsSupport = true
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwattach-vpc-\(testRunID)" }
+  }
+}
+
+// Subnet dependency - the generic attachment requires at least one subnet
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-tgwattach"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.211.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// TransitGateway dependency
+local testTgw = new transitgateway.TransitGateway {
+  label = "test-tgw-for-tgwattach"
+  description = "Formae SDK test transit gateway for generic attachment"
+  dnsSupport = "enable"
+  vpnEcmpSupport = "enable"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwattach-tgw-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 TransitGatewayAttachment"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for the attachment
+  testVpc
+
+  // Subnet required for the attachment
+  testSubnet
+
+  // TransitGateway required for the attachment
+  testTgw
+
+  // TransitGatewayAttachment (generic CloudControl attachment) under test
+  new transitgatewayattachment.TransitGatewayAttachment {
+    label = "plugin-sdk-test-tgw-attachment"
+    transitGatewayId = testTgw.res.id
+    vpcId = testVpc.res.vpcId
+    subnetIds {
+      testSubnet.res.subnetId
+    }
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-tgwattach-\(testRunID)" }
+    }
+  }
+}

@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::VPNGateway"
 
+open class VPNGatewayResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden vpnGatewayId: VPNGatewayResolvable = (this) {
+        property = "VPNGatewayId"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "VPNGatewayId"
@@ -31,4 +39,11 @@ open class VPNGateway extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     type: String
+
+    local parent = this
+
+    hidden res: VPNGatewayResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

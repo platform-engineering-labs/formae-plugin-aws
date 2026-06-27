@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::DHCPOptions"
 
+open class DHCPOptionsResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden dhcpOptionsId: DHCPOptionsResolvable = (this) {
+        property = "DhcpOptionsId"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "DhcpOptionsId"
@@ -40,4 +48,11 @@ open class DHCPOptions extends formae.Resource {
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: DHCPOptionsResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

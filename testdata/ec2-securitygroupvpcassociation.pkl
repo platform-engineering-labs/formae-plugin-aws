@@ -1,0 +1,81 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ec2/vpcpeeringconnection.pkl"
+import "@aws/ec2/securitygroupvpcassociation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-securitygroupvpcassociation-\(testRunID)"
+
+// VPC that owns the security group
+local testVpc = new vpc.VPC {
+  label = "test-vpc-owner-for-sgvpcassoc"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+// Second VPC the security group will be associated with - a SG can only be
+// associated with another VPC that is connected to the SG's own VPC, so the
+// two VPCs are wired together with a peering connection.
+local testPeerVpc = new vpc.VPC {
+  label = "test-vpc-target-for-sgvpcassoc"
+  cidrBlock = "10.1.0.0/16"
+  enableDnsSupport = true
+}
+
+local testPeering = new vpcpeeringconnection.VPCPeeringConnection {
+  label = "test-peering-for-sgvpcassoc"
+  vpcId = testVpc.res.vpcId
+  peerVpcId = testPeerVpc.res.vpcId
+}
+
+// Security group in the owner VPC
+local testSg = new securitygroup.SecurityGroup {
+  label = "test-sg-for-sgvpcassoc"
+  groupDescription = "Security group for SecurityGroupVpcAssociation conformance test"
+  groupName = "formae-sdk-test-sgvpcassoc-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 SecurityGroupVpcAssociation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Owner VPC required
+  testVpc
+
+  // Target VPC required
+  testPeerVpc
+
+  // Peering connection so the SG can be associated with the target VPC
+  testPeering
+
+  // Security group required
+  testSg
+
+  // SecurityGroupVpcAssociation under test - associate the SG with the peer VPC
+  new securitygroupvpcassociation.SecurityGroupVpcAssociation {
+    label = "plugin-sdk-test-securitygroupvpcassociation"
+    groupId = testSg.res.groupId
+    vpcId = testPeerVpc.res.vpcId
+  }
+}

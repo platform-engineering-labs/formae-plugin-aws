@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::VPCEndpointService"
 
+open class VPCEndpointServiceResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden serviceId: VPCEndpointServiceResolvable = (this) {
+        property = "ServiceId"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "ServiceId"
@@ -37,4 +45,11 @@ open class VPCEndpointService extends formae.Resource {
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: VPCEndpointServiceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

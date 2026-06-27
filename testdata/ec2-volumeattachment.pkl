@@ -1,0 +1,93 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/instance.pkl"
+import "@aws/ec2/volume.pkl"
+import "@aws/ec2/volumeattachment.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-volumeattachment-\(testRunID)"
+
+// VPC + Subnet so the instance lands in a known AZ (us-east-1a) without
+// depending on a default VPC existing in the account.
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-volumeattach"
+  cidrBlock = "10.232.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-volumeattach"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// EC2 Instance dependency. imageId is a hardcoded Amazon Linux 2023 x86_64 AMI
+// for us-east-1 (resolved from SSM
+// /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64).
+// Refresh if AWS deregisters it.
+local testInstance = new instance.Instance {
+  label = "test-instance-for-volumeattach"
+  imageId = "ami-00948338a4aeec604"
+  instanceType = "t3.micro"
+  subnetId = testSubnet.res.subnetId
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-volumeattach-instance-\(testRunID)" }
+  }
+}
+
+// EBS Volume dependency - must be in the SAME AZ as the instance (us-east-1a).
+local testVolume = new volume.Volume {
+  label = "test-volume-for-volumeattach"
+  availabilityZone = "us-east-1a"
+  size = 1
+  volumeType = "gp3"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-volumeattach-volume-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VolumeAttachment"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required
+  testVpc
+
+  // Subnet required (pins AZ)
+  testSubnet
+
+  // Instance required
+  testInstance
+
+  // Volume required (same AZ as instance)
+  testVolume
+
+  // VolumeAttachment under test
+  new volumeattachment.VolumeAttachment {
+    label = "plugin-sdk-test-volumeattachment"
+    device = "/dev/sdf"
+    instanceId = testInstance.res.instanceId
+    volumeId = testVolume.res.volumeId
+  }
+}

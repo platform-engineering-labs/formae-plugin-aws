@@ -1,0 +1,98 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/ec2/vpcendpointservice.pkl"
+import "@aws/ec2/vpcendpointservicepermissions.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-vpcendpointservicepermissions-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-epspermissions"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+// Two subnets in different AZs for the NLB
+local testSubnetA = new subnet.Subnet {
+  label = "test-subnet-a-for-epspermissions"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnetB = new subnet.Subnet {
+  label = "test-subnet-b-for-epspermissions"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.0.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+// Network Load Balancer fronting the endpoint service
+local testNlb = new loadbalancer.LoadBalancer {
+  label = "test-nlb-for-epspermissions"
+  name = "formae-sdk-test-epsp-nlb-\(testRunID)"
+  scheme = "internal"
+  type = "network"
+  subnets {
+    testSubnetA.res.subnetId
+    testSubnetB.res.subnetId
+  }
+}
+
+// VPC endpoint service whose permissions are under test
+local testEndpointService = new vpcendpointservice.VPCEndpointService {
+  label = "test-endpointservice-for-permissions"
+  acceptanceRequired = false
+  networkLoadBalancerArns {
+    testNlb.res.loadBalancerArn
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VPCEndpointServicePermissions"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required
+  testVpc
+
+  // Subnets required for the NLB
+  testSubnetA
+  testSubnetB
+
+  // NLB required for the endpoint service
+  testNlb
+
+  // Endpoint service required for the permissions
+  testEndpointService
+
+  // VPCEndpointServicePermissions under test
+  new vpcendpointservicepermissions.VPCEndpointServicePermissions {
+    label = "plugin-sdk-test-vpcendpointservicepermissions"
+    serviceId = testEndpointService.res.serviceId
+    allowedPrincipals {
+      "*"
+    }
+  }
+}

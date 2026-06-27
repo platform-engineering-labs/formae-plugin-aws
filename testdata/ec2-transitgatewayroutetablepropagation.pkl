@@ -1,0 +1,110 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/transitgateway.pkl"
+import "@aws/ec2/transitgatewayroutetable.pkl"
+import "@aws/ec2/transitgatewayvpcattachment.pkl"
+import "@aws/ec2/transitgatewayroutetablepropagation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-transitgatewayroutetablepropagation-\(testRunID)"
+
+// VPC dependency - backs the attachment whose routes propagate
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-tgwrtprop"
+  cidrBlock = "10.214.0.0/16"
+  enableDnsSupport = true
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtprop-vpc-\(testRunID)" }
+  }
+}
+
+// Subnet dependency - required by the VPC attachment
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-tgwrtprop"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.214.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// TransitGateway dependency. Default propagation is disabled so the attachment
+// is free to be explicitly propagated to our custom route table.
+local testTgw = new transitgateway.TransitGateway {
+  label = "test-tgw-for-tgwrtprop"
+  description = "Formae SDK test transit gateway for route table propagation"
+  dnsSupport = "enable"
+  vpnEcmpSupport = "enable"
+  defaultRouteTableAssociation = "disable"
+  defaultRouteTablePropagation = "disable"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtprop-tgw-\(testRunID)" }
+  }
+}
+
+// TransitGatewayRouteTable dependency - the propagation target
+local testRouteTable = new transitgatewayroutetable.TransitGatewayRouteTable {
+  label = "test-tgwrt-for-tgwrtprop"
+  transitGatewayId = testTgw.res.id
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtprop-rt-\(testRunID)" }
+  }
+}
+
+// VPC attachment dependency - the attachment being propagated
+local testAttachment = new transitgatewayvpcattachment.TransitGatewayVpcAttachment {
+  label = "test-tgwvpcattach-for-tgwrtprop"
+  transitGatewayId = testTgw.res.id
+  vpcId = testVpc.res.vpcId
+  subnetIds {
+    testSubnet.res.subnetId
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtprop-attach-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 TransitGatewayRouteTablePropagation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required (backs the attachment)
+  testVpc
+
+  // Subnet required (backs the attachment)
+  testSubnet
+
+  // TransitGateway required
+  testTgw
+
+  // Route table required (propagation target)
+  testRouteTable
+
+  // VPC attachment required (the thing being propagated)
+  testAttachment
+
+  // TransitGatewayRouteTablePropagation under test
+  new transitgatewayroutetablepropagation.TransitGatewayRouteTablePropagation {
+    label = "plugin-sdk-test-tgw-rt-propagation"
+    transitGatewayRouteTableId = testRouteTable.res.transitGatewayRouteTableId
+    transitGatewayAttachmentId = testAttachment.res.id
+  }
+}

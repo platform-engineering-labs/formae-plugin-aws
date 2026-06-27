@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::TransitGatewayAttachment"
 
+open class TransitGatewayAttachmentResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: TransitGatewayAttachmentResolvable = (this) {
+        property = "Id"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
@@ -34,4 +42,11 @@ open class TransitGatewayAttachment extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     vpcId: String|formae.Resolvable
+
+    local parent = this
+
+    hidden res: TransitGatewayAttachmentResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

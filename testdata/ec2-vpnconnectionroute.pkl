@@ -1,0 +1,81 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/customergateway.pkl"
+import "@aws/ec2/vpngateway.pkl"
+import "@aws/ec2/vpnconnection.pkl"
+import "@aws/ec2/vpnconnectionroute.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-vpnconnectionroute-\(testRunID)"
+
+// CustomerGateway dependency (dummy unreachable IP - tunnels stay DOWN).
+local testCgw = new customergateway.CustomerGateway {
+  label = "test-cgw-for-vpnconnroute"
+  ipAddress = "203.0.113.1"
+  type = "ipsec.1"
+  bgpAsn = 65000
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vpnconnroute-cgw-\(testRunID)" }
+  }
+}
+
+// VPNGateway dependency.
+local testVgw = new vpngateway.VPNGateway {
+  label = "test-vgw-for-vpnconnroute"
+  type = "ipsec.1"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vpnconnroute-vgw-\(testRunID)" }
+  }
+}
+
+// VPNConnection dependency. staticRoutesOnly = true is REQUIRED for static
+// VPN routes to be accepted.
+local testVpnConn = new vpnconnection.VPNConnection {
+  label = "test-vpnconn-for-route"
+  type = "ipsec.1"
+  staticRoutesOnly = true
+  customerGatewayId = testCgw.res.customerGatewayId
+  vpnGatewayId = testVgw.res.vpnGatewayId
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vpnconnroute-conn-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VPNConnectionRoute"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // CustomerGateway required for VPNConnection
+  testCgw
+
+  // VPNGateway required for VPNConnection
+  testVgw
+
+  // VPNConnection (static routing) required for VPNConnectionRoute
+  testVpnConn
+
+  // VPNConnectionRoute under test
+  new vpnconnectionroute.VPNConnectionRoute {
+    label = "plugin-sdk-test-vpnconnectionroute"
+    destinationCidrBlock = "10.42.0.0/24"
+    vpnConnectionId = testVpnConn.res.vpnConnectionId
+  }
+}

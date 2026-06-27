@@ -1,0 +1,110 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/transitgateway.pkl"
+import "@aws/ec2/transitgatewayroutetable.pkl"
+import "@aws/ec2/transitgatewayvpcattachment.pkl"
+import "@aws/ec2/transitgatewayroutetableassociation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-transitgatewayroutetableassociation-\(testRunID)"
+
+// VPC dependency - backs the attachment to associate
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-tgwrtassoc"
+  cidrBlock = "10.213.0.0/16"
+  enableDnsSupport = true
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtassoc-vpc-\(testRunID)" }
+  }
+}
+
+// Subnet dependency - required by the VPC attachment
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-tgwrtassoc"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.213.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// TransitGateway dependency. Default association is disabled so the attachment
+// is free to be explicitly associated with our custom route table.
+local testTgw = new transitgateway.TransitGateway {
+  label = "test-tgw-for-tgwrtassoc"
+  description = "Formae SDK test transit gateway for route table association"
+  dnsSupport = "enable"
+  vpnEcmpSupport = "enable"
+  defaultRouteTableAssociation = "disable"
+  defaultRouteTablePropagation = "disable"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtassoc-tgw-\(testRunID)" }
+  }
+}
+
+// TransitGatewayRouteTable dependency - the association target
+local testRouteTable = new transitgatewayroutetable.TransitGatewayRouteTable {
+  label = "test-tgwrt-for-tgwrtassoc"
+  transitGatewayId = testTgw.res.id
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtassoc-rt-\(testRunID)" }
+  }
+}
+
+// VPC attachment dependency - the attachment being associated
+local testAttachment = new transitgatewayvpcattachment.TransitGatewayVpcAttachment {
+  label = "test-tgwvpcattach-for-tgwrtassoc"
+  transitGatewayId = testTgw.res.id
+  vpcId = testVpc.res.vpcId
+  subnetIds {
+    testSubnet.res.subnetId
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwrtassoc-attach-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 TransitGatewayRouteTableAssociation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required (backs the attachment)
+  testVpc
+
+  // Subnet required (backs the attachment)
+  testSubnet
+
+  // TransitGateway required
+  testTgw
+
+  // Route table required (association target)
+  testRouteTable
+
+  // VPC attachment required (the thing being associated)
+  testAttachment
+
+  // TransitGatewayRouteTableAssociation under test
+  new transitgatewayroutetableassociation.TransitGatewayRouteTableAssociation {
+    label = "plugin-sdk-test-tgw-rt-association"
+    transitGatewayRouteTableId = testRouteTable.res.transitGatewayRouteTableId
+    transitGatewayAttachmentId = testAttachment.res.id
+  }
+}

@@ -11,6 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::EC2::IPAMScope"
 
+open class IPAMScopeResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden ipamScopeId: IPAMScopeResolvable = (this) {
+        property = "IpamScopeId"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "IpamScopeId"
@@ -28,4 +36,11 @@ open class IPAMScope extends formae.Resource {
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: IPAMScopeResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

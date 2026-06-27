@@ -1,0 +1,67 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/ipam.pkl"
+import "@aws/ec2/ipamresourcediscovery.pkl"
+import "@aws/ec2/ipamresourcediscoveryassociation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-ipamresourcediscoveryassociation-\(testRunID)"
+
+local testIpam = new ipam.IPAM {
+  label = "test-ipam-for-rda"
+  description = "IPAM for IPAMResourceDiscoveryAssociation test"
+  operatingRegions {
+    new { regionName = "us-east-1" }
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-ipam-for-rda-\(testRunID)" }
+  }
+}
+
+local testRd = new ipamresourcediscovery.IPAMResourceDiscovery {
+  label = "test-rd-for-rda"
+  description = "Resource discovery for association test"
+  operatingRegions {
+    new { regionName = "us-east-1" }
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-rd-for-rda-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 IPAMResourceDiscoveryAssociation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // IPAM + a separate resource discovery to associate with it
+  testIpam
+  testRd
+
+  // IPAMResourceDiscoveryAssociation under test
+  new ipamresourcediscoveryassociation.IPAMResourceDiscoveryAssociation {
+    label = "plugin-sdk-test-ipamresourcediscoveryassociation"
+    ipamId = testIpam.res.ipamId
+    ipamResourceDiscoveryId = testRd.res.ipamResourceDiscoveryId
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-ipamrda-\(testRunID)" }
+    }
+  }
+}

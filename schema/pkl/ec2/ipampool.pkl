@@ -15,6 +15,14 @@ typealias AWSService = "ec2"
 
 typealias PublicIpSource = "byoip"|"amazon"
 
+open class IPAMPoolResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden ipamPoolId: IPAMPoolResolvable = (this) {
+        property = "IpamPoolId"
+    }
+}
+
 @aws.SubResourceHint
 open class ProvisionedCidr extends formae.SubResource {
     cidr: String
@@ -84,4 +92,11 @@ open class IPAMPool extends formae.Resource {
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: IPAMPoolResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

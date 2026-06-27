@@ -1,0 +1,109 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/transitgateway.pkl"
+import "@aws/ec2/transitgatewayroutetable.pkl"
+import "@aws/ec2/transitgatewayvpcattachment.pkl"
+import "@aws/ec2/transitgatewayroute.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-transitgatewayroute-\(testRunID)"
+
+// VPC dependency - backs the attachment that the route targets
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-tgwroute"
+  cidrBlock = "10.212.0.0/16"
+  enableDnsSupport = true
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwroute-vpc-\(testRunID)" }
+  }
+}
+
+// Subnet dependency - required by the VPC attachment
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-tgwroute"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.212.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// TransitGateway dependency
+local testTgw = new transitgateway.TransitGateway {
+  label = "test-tgw-for-tgwroute"
+  description = "Formae SDK test transit gateway for route"
+  dnsSupport = "enable"
+  vpnEcmpSupport = "enable"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwroute-tgw-\(testRunID)" }
+  }
+}
+
+// TransitGatewayRouteTable dependency - the route is created in this table
+local testRouteTable = new transitgatewayroutetable.TransitGatewayRouteTable {
+  label = "test-tgwrt-for-tgwroute"
+  transitGatewayId = testTgw.res.id
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwroute-rt-\(testRunID)" }
+  }
+}
+
+// VPC attachment dependency - the route's next hop
+local testAttachment = new transitgatewayvpcattachment.TransitGatewayVpcAttachment {
+  label = "test-tgwvpcattach-for-tgwroute"
+  transitGatewayId = testTgw.res.id
+  vpcId = testVpc.res.vpcId
+  subnetIds {
+    testSubnet.res.subnetId
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-tgwroute-attach-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 TransitGatewayRoute"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required (backs the attachment)
+  testVpc
+
+  // Subnet required (backs the attachment)
+  testSubnet
+
+  // TransitGateway required
+  testTgw
+
+  // Route table required (holds the route)
+  testRouteTable
+
+  // VPC attachment required (route next hop)
+  testAttachment
+
+  // TransitGatewayRoute under test - changed destinationCidrBlock (createOnly)
+  // triggers a replace (delete + recreate of the route)
+  new transitgatewayroute.TransitGatewayRoute {
+    label = "plugin-sdk-test-tgw-route"
+    destinationCidrBlock = "10.251.0.0/16"
+    transitGatewayRouteTableId = testRouteTable.res.transitGatewayRouteTableId
+    transitGatewayAttachmentId = testAttachment.res.id
+  }
+}

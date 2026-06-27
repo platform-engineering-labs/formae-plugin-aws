@@ -1,0 +1,72 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/customergateway.pkl"
+import "@aws/ec2/vpngateway.pkl"
+import "@aws/ec2/vpnconnection.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-vpnconnection-\(testRunID)"
+
+// CustomerGateway dependency - the on-prem side of the tunnel. The dummy
+// public IP (TEST-NET-3, 203.0.113.0/24) never answers, so the tunnels stay
+// DOWN, but the VPNConnection resource itself creates fine.
+local testCgw = new customergateway.CustomerGateway {
+  label = "test-cgw-for-vpnconnection"
+  ipAddress = "203.0.113.1"
+  type = "ipsec.1"
+  bgpAsn = 65000
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vpnconn-cgw-\(testRunID)" }
+  }
+}
+
+// VPNGateway dependency - the AWS side of the tunnel.
+local testVgw = new vpngateway.VPNGateway {
+  label = "test-vgw-for-vpnconnection"
+  type = "ipsec.1"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vpnconn-vgw-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VPNConnection"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // CustomerGateway required for VPNConnection
+  testCgw
+
+  // VPNGateway required for VPNConnection
+  testVgw
+
+  // VPNConnection under test. staticRoutesOnly = true so static routes can be
+  // added (see ec2-vpnconnectionroute.pkl) without BGP coming up.
+  new vpnconnection.VPNConnection {
+    label = "plugin-sdk-test-vpnconnection"
+    type = "ipsec.1"
+    staticRoutesOnly = true
+    customerGatewayId = testCgw.res.customerGatewayId
+    vpnGatewayId = testVgw.res.vpnGatewayId
+    tags {
+      new { key = "Name"; value = "formae-plugin-sdk-test-vpnconnection-\(testRunID)" }
+    }
+  }
+}

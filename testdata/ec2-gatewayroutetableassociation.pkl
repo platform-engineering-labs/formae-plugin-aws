@@ -1,0 +1,77 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/gatewayroutetableassociation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-gatewayroutetableassociation-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-gwrtassoc"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+// InternetGateway - the gateway being associated with the route table
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-gwrtassoc"
+}
+
+// Attach the IGW to the VPC before the gateway route table association
+local testIgwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-igw-attachment-for-gwrtassoc"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = testIgw.res.internetGatewayId
+}
+
+// RouteTable that the gateway will be associated with (edge association)
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-gwrtassoc"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 GatewayRouteTableAssociation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required
+  testVpc
+
+  // IGW required (the gateway)
+  testIgw
+
+  // IGW must be attached to the VPC first
+  testIgwAttachment
+
+  // RouteTable required
+  testRouteTable
+
+  // GatewayRouteTableAssociation under test (edge association)
+  new gatewayroutetableassociation.GatewayRouteTableAssociation {
+    label = "plugin-sdk-test-gatewayroutetableassociation"
+    gatewayId = testIgw.res.internetGatewayId
+    routeTableId = testRouteTable.res.routeTableId
+  }
+}

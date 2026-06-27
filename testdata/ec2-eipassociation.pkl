@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/networkinterface.pkl"
+import "@aws/ec2/eip.pkl"
+import "@aws/ec2/eipassociation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-eipassociation-\(testRunID)"
+
+// VPC + Subnet to host a network interface (lighter than an EC2 Instance for
+// the association target).
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-eipassoc"
+  cidrBlock = "10.233.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnet = new subnet.Subnet {
+  label = "test-subnet-for-eipassoc"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.233.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+// NetworkInterface dependency - the association target.
+local testEni = new networkinterface.NetworkInterface {
+  label = "test-eni-for-eipassoc"
+  subnetId = testSubnet.res.subnetId
+  description = "ENI for EIP association test"
+}
+
+// Elastic IP dependency - the address being associated.
+local testEip = new eip.EIP {
+  label = "test-eip-for-eipassoc"
+  domain = "vpc"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-eipassoc-eip-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 EIPAssociation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required
+  testVpc
+
+  // Subnet required
+  testSubnet
+
+  // NetworkInterface required (association target)
+  testEni
+
+  // EIP required (address to associate)
+  testEip
+
+  // EIPAssociation under test
+  new eipassociation.EIPAssociation {
+    label = "plugin-sdk-test-eipassociation"
+    allocationId = testEip.res.allocationId
+    networkInterfaceId = testEni.res.id
+  }
+}

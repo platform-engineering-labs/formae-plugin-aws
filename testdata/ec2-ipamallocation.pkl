@@ -1,0 +1,80 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/ipam.pkl"
+import "@aws/ec2/ipamscope.pkl"
+import "@aws/ec2/ipampool.pkl"
+import "@aws/ec2/ipamallocation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-ipamallocation-\(testRunID)"
+
+local testIpam = new ipam.IPAM {
+  label = "test-ipam-for-allocation"
+  description = "IPAM for IPAMAllocation test"
+  operatingRegions {
+    new { regionName = "us-east-1" }
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-ipam-for-allocation-\(testRunID)" }
+  }
+}
+
+local testScope = new ipamscope.IPAMScope {
+  label = "test-scope-for-allocation"
+  ipamId = testIpam.res.ipamId
+  description = "Scope for IPAMAllocation test"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-scope-for-allocation-\(testRunID)" }
+  }
+}
+
+// Pool with a provisioned CIDR so there is space to allocate from.
+local testPool = new ipampool.IPAMPool {
+  label = "test-pool-for-allocation"
+  addressFamily = "ipv4"
+  ipamScopeId = testScope.res.ipamScopeId
+  locale = "us-east-1"
+  description = "Pool for IPAMAllocation test"
+  provisionedCidrs {
+    new { cidr = "10.0.0.0/16" }
+  }
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-pool-for-allocation-\(testRunID)" }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 IPAMAllocation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // IPAM + scope + provisioned pool required for the allocation
+  testIpam
+  testScope
+  testPool
+
+  // IPAMAllocation under test (carves a CIDR out of the pool)
+  new ipamallocation.IPAMAllocation {
+    label = "plugin-sdk-test-ipamallocation"
+    ipamPoolId = testPool.res.ipamPoolId
+    cidr = "10.0.0.0/24"
+    description = "Plugin SDK test IPAM allocation"
+  }
+}

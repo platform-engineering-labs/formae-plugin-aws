@@ -1,0 +1,85 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/vpngateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/vpngatewayroutepropagation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-vpngatewayroutepropagation-\(testRunID)"
+
+// VPC dependency - owns the route table and the gateway attachment.
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-vgwrouteprop"
+  cidrBlock = "10.231.0.0/16"
+  enableDnsSupport = true
+}
+
+// VPNGateway dependency.
+local testVgw = new vpngateway.VPNGateway {
+  label = "test-vgw-for-vgwrouteprop"
+  type = "ipsec.1"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vgwrouteprop-vgw-\(testRunID)" }
+  }
+}
+
+// VPCGatewayAttachment attaches the VPN gateway to the VPC. Route propagation
+// requires the gateway to be ATTACHED first - referencing the attachment's
+// vpnGatewayId resolvable creates that create/destroy ordering edge.
+local testVgwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-vgwattach-for-vgwrouteprop"
+  vpcId = testVpc.res.vpcId
+  vpnGatewayId = testVgw.res.vpnGatewayId
+}
+
+// RouteTable dependency - the table whose routes will be propagated to.
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-vgwrouteprop"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VPNGatewayRoutePropagation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required
+  testVpc
+
+  // VPNGateway required
+  testVgw
+
+  // Gateway must be attached to the VPC before propagation
+  testVgwAttachment
+
+  // RouteTable required
+  testRouteTable
+
+  // VPNGatewayRoutePropagation under test
+  new vpngatewayroutepropagation.VPNGatewayRoutePropagation {
+    label = "plugin-sdk-test-vpngatewayroutepropagation"
+    vpnGatewayId = testVgwAttachment.res.vpnGatewayId
+    routeTableIds {
+      testRouteTable.res.routeTableId
+    }
+  }
+}
