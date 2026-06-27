@@ -188,6 +188,11 @@ open class Target extends formae.SubResource {
     type = module.type
     identifier = "Arn"
     discoverable = true
+    parent = "AWS::Events::EventBus"
+    listParam = new formae.ListProperty {
+        parentProperty = "Name"
+        listParameter = "EventBusName"
+    }
 }
 open class Rule extends formae.Resource {
 
