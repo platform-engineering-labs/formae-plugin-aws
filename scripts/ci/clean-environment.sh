@@ -736,6 +736,53 @@ aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "/formae
     fi
 done
 
+# ============================================================================
+# EventBridge (events) Resources (regional)
+# ============================================================================
+# The events conformance fixtures create custom event buses, archives, and
+# rules (all named with the $FORMAE_PREFIX). Deletion order is strict: an
+# archive pins its source bus and a rule pins its bus, while a rule's targets
+# pin the rule. So tear down archives and rules (targets first) before the
+# buses. The default bus is never deleted — only test-prefixed rules on it are.
+
+# Collect test event buses once (used for both rule iteration and bus deletion).
+EVENTS_TEST_BUSES=()
+while IFS= read -r bus_name; do
+    [[ -n "$bus_name" && "$bus_name" == *"$FORMAE_PREFIX"* ]] && EVENTS_TEST_BUSES+=("$bus_name")
+done < <(aws events list-event-buses --region "$REGION" --query "EventBuses[].Name" --output text 2>/dev/null | tr '\t' '\n')
+
+# Delete archives first (an archive pins its source event bus).
+echo "Cleaning EventBridge test archives..."
+aws events list-archives --region "$REGION" \
+    --query "Archives[?contains(ArchiveName, '$FORMAE_PREFIX')].ArchiveName" --output text 2>/dev/null | tr '\t' '\n' | while read -r arch; do
+    if [[ -n "$arch" ]]; then
+        echo "  Deleting EventBridge archive: $arch"
+        aws events delete-archive --archive-name "$arch" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# Delete rules (removing their targets first) on each test bus AND the default
+# bus — a rule that still has targets cannot be deleted.
+echo "Cleaning EventBridge test rules..."
+for bus_name in "${EVENTS_TEST_BUSES[@]}" default; do
+    aws events list-rules --event-bus-name "$bus_name" --region "$REGION" \
+        --query "Rules[?contains(Name, '$FORMAE_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r rule_name; do
+        if [[ -n "$rule_name" ]]; then
+            echo "  Deleting EventBridge rule: $rule_name (bus: $bus_name)"
+            target_ids=$(aws events list-targets-by-rule --rule "$rule_name" --event-bus-name "$bus_name" --region "$REGION" --query "Targets[].Id" --output text 2>/dev/null | tr '\t' ' ')
+            [[ -n "$target_ids" ]] && aws events remove-targets --rule "$rule_name" --event-bus-name "$bus_name" --ids $target_ids --force --region "$REGION" 2>/dev/null || true
+            aws events delete-rule --name "$rule_name" --event-bus-name "$bus_name" --region "$REGION" 2>/dev/null || true
+        fi
+    done
+done
+
+# Delete the test event buses (after their archives and rules are gone).
+echo "Cleaning EventBridge test event buses..."
+for bus_name in "${EVENTS_TEST_BUSES[@]}"; do
+    echo "  Deleting EventBridge event bus: $bus_name"
+    aws events delete-event-bus --name "$bus_name" --region "$REGION" 2>/dev/null || true
+done
+
 # 23a. Delete EC2 flow logs with test prefix (before VPCs)
 echo "Cleaning EC2 test flow logs..."
 aws ec2 describe-flow-logs --region "$REGION" \
