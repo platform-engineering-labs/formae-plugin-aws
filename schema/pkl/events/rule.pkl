@@ -1,0 +1,233 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.events.rule
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::Events::Rule"
+
+open class RuleResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: RuleResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden name: RuleResolvable = (this) {
+        property = "Name"
+    }
+}
+
+@aws.SubResourceHint
+open class InputTransformer extends formae.SubResource {
+    inputPathsMap: Dynamic?
+    inputTemplate: String
+}
+
+@aws.SubResourceHint
+open class RetryPolicy extends formae.SubResource {
+    maximumRetryAttempts: Int?
+    maximumEventAgeInSeconds: Int?
+}
+
+@aws.SubResourceHint
+open class DeadLetterConfig extends formae.SubResource {
+    arn: (String|formae.Resolvable)?
+}
+
+@aws.SubResourceHint
+open class SqsParameters extends formae.SubResource {
+    messageGroupId: String
+}
+
+@aws.SubResourceHint
+open class KinesisParameters extends formae.SubResource {
+    partitionKeyPath: String
+}
+
+@aws.SubResourceHint
+open class HttpParameters extends formae.SubResource {
+    pathParameterValues: Listing<String>?
+    headerParameters: Dynamic?
+    queryStringParameters: Dynamic?
+}
+
+@aws.SubResourceHint
+open class RedshiftDataParameters extends formae.SubResource {
+    database: String
+    dbUser: String?
+    secretManagerArn: (String|formae.Resolvable)?
+    sql: String?
+    sqls: Listing<String>?
+    statementName: String?
+    withEvent: Boolean?
+}
+
+@aws.SubResourceHint
+open class SageMakerPipelineParameter extends formae.SubResource {
+    name: String
+    value: String
+}
+
+@aws.SubResourceHint
+open class SageMakerPipelineParameters extends formae.SubResource {
+    pipelineParameterList: Listing<SageMakerPipelineParameter>?
+}
+
+@aws.SubResourceHint
+open class AppSyncParameters extends formae.SubResource {
+    graphQLOperation: String
+}
+
+@aws.SubResourceHint
+open class RunCommandTarget extends formae.SubResource {
+    key: String
+    values: Listing<String>
+}
+
+@aws.SubResourceHint
+open class RunCommandParameters extends formae.SubResource {
+    runCommandTargets: Listing<RunCommandTarget>
+}
+
+@aws.SubResourceHint
+open class BatchArrayProperties extends formae.SubResource {
+    size: Int?
+}
+
+@aws.SubResourceHint
+open class BatchRetryStrategy extends formae.SubResource {
+    attempts: Int?
+}
+
+@aws.SubResourceHint
+open class BatchParameters extends formae.SubResource {
+    jobDefinition: String
+    jobName: String
+    arrayProperties: BatchArrayProperties?
+    retryStrategy: BatchRetryStrategy?
+}
+
+@aws.SubResourceHint
+open class AwsVpcConfiguration extends formae.SubResource {
+    subnets: Listing<String|formae.Resolvable>
+    securityGroups: Listing<String|formae.Resolvable>?
+    assignPublicIp: String?
+}
+
+@aws.SubResourceHint
+open class NetworkConfiguration extends formae.SubResource {
+    awsVpcConfiguration: AwsVpcConfiguration?
+}
+
+@aws.SubResourceHint
+open class CapacityProviderStrategyItem extends formae.SubResource {
+    capacityProvider: String
+    base: Int?
+    weight: Int?
+}
+
+@aws.SubResourceHint
+open class PlacementStrategy extends formae.SubResource {
+    field: String?
+    type: String?
+}
+
+@aws.SubResourceHint
+open class PlacementConstraint extends formae.SubResource {
+    type: String?
+    expression: String?
+}
+
+@aws.SubResourceHint
+open class EcsParameters extends formae.SubResource {
+    taskDefinitionArn: String|formae.Resolvable
+    taskCount: Int?
+    launchType: String?
+    platformVersion: String?
+    group: String?
+    enableECSManagedTags: Boolean?
+    enableExecuteCommand: Boolean?
+    propagateTags: String?
+    referenceId: String?
+    networkConfiguration: NetworkConfiguration?
+    capacityProviderStrategy: Listing<CapacityProviderStrategyItem>?
+    // NOTE: CloudControl names this property "PlacementStrategies" (plural).
+    placementStrategies: Listing<PlacementStrategy>?
+    placementConstraints: Listing<PlacementConstraint>?
+    tagList: Listing<aws.Tag>?
+}
+
+@aws.SubResourceHint
+open class Target extends formae.SubResource {
+    id: String
+    arn: String|formae.Resolvable
+    roleArn: (String|formae.Resolvable)?
+    input: String?
+    inputPath: String?
+    inputTransformer: InputTransformer?
+    retryPolicy: RetryPolicy?
+    deadLetterConfig: DeadLetterConfig?
+    sqsParameters: SqsParameters?
+    kinesisParameters: KinesisParameters?
+    httpParameters: HttpParameters?
+    redshiftDataParameters: RedshiftDataParameters?
+    sageMakerPipelineParameters: SageMakerPipelineParameters?
+    appSyncParameters: AppSyncParameters?
+    runCommandParameters: RunCommandParameters?
+    batchParameters: BatchParameters?
+    ecsParameters: EcsParameters?
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Arn"
+    discoverable = true
+}
+open class Rule extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    name: String
+
+    @aws.FieldHint
+    description: String?
+
+    @aws.FieldHint { createOnly = true }
+    eventBusName: (String|formae.Resolvable)?
+
+    @aws.FieldHint
+    eventPattern: Dynamic?
+
+    @aws.FieldHint
+    scheduleExpression: String?
+
+    @aws.FieldHint
+    state: String?
+
+    @aws.FieldHint
+    roleArn: (String|formae.Resolvable)?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Id"
+    }
+    targets: Listing<Target>?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: RuleResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
