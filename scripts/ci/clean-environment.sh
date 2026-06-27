@@ -267,6 +267,26 @@ done
 # EC2 Resources (regional) - delete dependents before parents
 # ============================================================================
 
+# 12a. Terminate EC2 instances with test prefix (before volumes/subnets/VPCs)
+# Instances must terminate before their volumes can be deleted (an attached
+# volume can't be deleted, see the EC2 volumes sweep further below) and before
+# the subnet/VPC sweeps, since a running instance plants an ENI that blocks
+# subnet and VPC deletion.
+echo "Cleaning EC2 test instances..."
+INSTANCE_IDS=$(aws ec2 describe-instances --region "$REGION" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || true)
+if [[ -n "$INSTANCE_IDS" ]]; then
+    for inst_id in $INSTANCE_IDS; do
+        echo "  Terminating EC2 instance: $inst_id"
+        aws ec2 terminate-instances --instance-ids "$inst_id" --region "$REGION" 2>/dev/null || true
+    done
+    echo "  Waiting for EC2 instances to terminate..."
+    # shellcheck disable=SC2086
+    aws ec2 wait instance-terminated --instance-ids $INSTANCE_IDS --region "$REGION" 2>/dev/null || true
+fi
+
 # 13. Delete EC2 key pairs with test prefix
 echo "Cleaning EC2 test key pairs..."
 aws ec2 describe-key-pairs --region "$REGION" \
@@ -326,6 +346,19 @@ aws ec2 describe-dhcp-options --region "$REGION" \
     fi
 done
 
+# 17a. Delete EC2 managed prefix lists with test prefix
+# Standalone (customer-owned) prefix lists. Guard on OwnerId!='AWS' so the
+# AWS-managed prefix lists (e.g. com.amazonaws.<region>.s3) can never match.
+echo "Cleaning EC2 test managed prefix lists..."
+aws ec2 describe-managed-prefix-lists --region "$REGION" \
+    --filters "Name=prefix-list-name,Values=$FORMAE_PREFIX*,$SDK_PREFIX*" \
+    --query "PrefixLists[?OwnerId!='AWS'].PrefixListId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pl_id; do
+    if [[ -n "$pl_id" ]]; then
+        echo "  Deleting EC2 managed prefix list: $pl_id"
+        aws ec2 delete-managed-prefix-list --prefix-list-id "$pl_id" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # 18. Detach and delete EC2 internet gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test internet gateways..."
 aws ec2 describe-internet-gateways --region "$REGION" \
@@ -342,6 +375,24 @@ aws ec2 describe-internet-gateways --region "$REGION" \
         aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null || true
     fi
 done
+
+# 18a. Delete EC2 VPN connections with test prefix (before VPN/customer gateways)
+# A live VPN connection blocks deleting the VPN gateway (#19) and customer
+# gateway (#20) it terminates on, so it must go first. Deleting the connection
+# also removes its static routes.
+echo "Cleaning EC2 test VPN connections..."
+VPN_CONN_IDS=$(aws ec2 describe-vpn-connections --region "$REGION" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
+    --query "VpnConnections[].VpnConnectionId" --output text 2>/dev/null || true)
+if [[ -n "$VPN_CONN_IDS" ]]; then
+    for vpn_id in $VPN_CONN_IDS; do
+        echo "  Deleting EC2 VPN connection: $vpn_id"
+        aws ec2 delete-vpn-connection --vpn-connection-id "$vpn_id" --region "$REGION" 2>/dev/null || true
+    done
+    echo "  Waiting for EC2 VPN connections to delete..."
+    # shellcheck disable=SC2086
+    aws ec2 wait vpn-connection-deleted --vpn-connection-ids $VPN_CONN_IDS --region "$REGION" 2>/dev/null || true
+fi
 
 # 19. Detach and delete EC2 VPN gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test VPN gateways..."
@@ -406,13 +457,64 @@ aws ec2 describe-ipams --region "$REGION" \
     --query "Ipams[].IpamId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ipam_id; do
     if [[ -n "$ipam_id" ]]; then
         echo "  Deleting EC2 IPAM: $ipam_id"
-        # Delete non-default IPAM scopes first
+        # An IPAM can't be deleted while pools/allocations exist. Tear the pool
+        # chain down first: for every pool in every scope (default and custom),
+        # release allocations, deprovision provisioned CIDRs, then delete the
+        # pool. These ops are async; the final delete-ipam --cascade is the
+        # safety net for anything that hasn't settled, so each step is
+        # best-effort (|| true / 2>/dev/null).
+        aws ec2 describe-ipam-scopes --region "$REGION" \
+            --filters "Name=ipam-id,Values=$ipam_id" \
+            --query "IpamScopes[].IpamScopeId" --output text 2>/dev/null | tr '\t' '\n' | while read -r any_scope_id; do
+            [[ -z "$any_scope_id" ]] && continue
+            aws ec2 describe-ipam-pools --region "$REGION" \
+                --filters "Name=ipam-scope-id,Values=$any_scope_id" \
+                --query "IpamPools[].IpamPoolId" --output text 2>/dev/null | tr '\t' '\n' | while read -r pool_id; do
+                [[ -z "$pool_id" ]] && continue
+                echo "    Tearing down IPAM pool: $pool_id"
+                # Release manually-created ('custom') allocations; resource
+                # allocations (vpc/subnet/...) free automatically on deprovision.
+                aws ec2 get-ipam-pool-allocations --ipam-pool-id "$pool_id" --region "$REGION" \
+                    --query "IpamPoolAllocations[?ResourceType=='custom'].IpamPoolAllocationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r alloc_id; do
+                    [[ -n "$alloc_id" ]] && aws ec2 release-ipam-pool-allocation --ipam-pool-id "$pool_id" --ipam-pool-allocation-id "$alloc_id" --region "$REGION" 2>/dev/null || true
+                done
+                # Deprovision provisioned CIDRs
+                aws ec2 get-ipam-pool-cidrs --ipam-pool-id "$pool_id" --region "$REGION" \
+                    --query "IpamPoolCidrs[].Cidr" --output text 2>/dev/null | tr '\t' '\n' | while read -r cidr; do
+                    [[ -n "$cidr" ]] && aws ec2 deprovision-ipam-pool-cidr --ipam-pool-id "$pool_id" --cidr "$cidr" --region "$REGION" 2>/dev/null || true
+                done
+                aws ec2 delete-ipam-pool --ipam-pool-id "$pool_id" --region "$REGION" 2>/dev/null || true
+            done
+        done
+        # Delete non-default IPAM scopes
         aws ec2 describe-ipam-scopes --region "$REGION" \
             --filters "Name=ipam-id,Values=$ipam_id" \
             --query "IpamScopes[?!IsDefault].IpamScopeId" --output text 2>/dev/null | tr '\t' '\n' | while read -r scope_id; do
             [[ -n "$scope_id" ]] && aws ec2 delete-ipam-scope --ipam-scope-id "$scope_id" --region "$REGION" 2>/dev/null || true
         done
         aws ec2 delete-ipam --ipam-id "$ipam_id" --region "$REGION" --cascade 2>/dev/null || true
+    fi
+done
+
+# 22a. Delete EC2 custom IPAM resource discoveries with test prefix
+# Custom resource discoveries are created independently of the IPAM and are NOT
+# removed by delete-ipam --cascade. Their associations are torn down with the
+# IPAM (deleted in #22), so by here they should be disassociating; disassociate
+# explicitly as a safety net, then delete the discovery. Skip default
+# (IsDefault) discoveries, which AWS manages alongside their owning IPAM.
+echo "Cleaning EC2 test IPAM resource discoveries..."
+aws ec2 describe-ipam-resource-discoveries --region "$REGION" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --query "IpamResourceDiscoveries[?IsDefault!=\`true\`].IpamResourceDiscoveryId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rd_id; do
+    if [[ -n "$rd_id" ]]; then
+        echo "  Deleting EC2 IPAM resource discovery: $rd_id"
+        # Disassociate any lingering associations first
+        aws ec2 describe-ipam-resource-discovery-associations --region "$REGION" \
+            --filters "Name=ipam-resource-discovery-id,Values=$rd_id" \
+            --query "IpamResourceDiscoveryAssociations[?State!='disassociate-complete'].IpamResourceDiscoveryAssociationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r assoc_id; do
+            [[ -n "$assoc_id" ]] && aws ec2 disassociate-ipam-resource-discovery --ipam-resource-discovery-association-id "$assoc_id" --region "$REGION" 2>/dev/null || true
+        done
+        aws ec2 delete-ipam-resource-discovery --ipam-resource-discovery-id "$rd_id" --region "$REGION" 2>/dev/null || true
     fi
 done
 
@@ -463,6 +565,28 @@ aws rds describe-db-subnet-groups --region "$REGION" \
     if [[ -n "$sg" ]]; then
         echo "  Deleting RDS DB subnet group: $sg"
         aws rds delete-db-subnet-group --db-subnet-group-name "$sg" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# --- EC2 VPC endpoint service configurations (before their NLB + subnets/VPC)
+# An endpoint service is backed by an NLB; the NLB can't be deleted while the
+# service references it, and the service (plus its NLB/subnets) must be gone
+# before the VPC sweep. The fronting NLB itself is reclaimed by the ELBv2
+# load-balancer sweep just below (it matches the test-prefix name), so only the
+# service configuration needs adding here. Reject any active endpoint
+# connections first — they block service deletion.
+echo "Cleaning EC2 test VPC endpoint service configurations..."
+aws ec2 describe-vpc-endpoint-service-configurations --region "$REGION" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --query "ServiceConfigurations[].ServiceId" --output text 2>/dev/null | tr '\t' '\n' | while read -r svc_id; do
+    if [[ -n "$svc_id" ]]; then
+        echo "  Deleting EC2 VPC endpoint service configuration: $svc_id"
+        aws ec2 describe-vpc-endpoint-connections --region "$REGION" \
+            --filters "Name=service-id,Values=$svc_id" \
+            --query "VpcEndpointConnections[?VpcEndpointState!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r conn_id; do
+            [[ -n "$conn_id" ]] && aws ec2 reject-vpc-endpoint-connections --service-id "$svc_id" --vpc-endpoint-ids "$conn_id" --region "$REGION" 2>/dev/null || true
+        done
+        aws ec2 delete-vpc-endpoint-service-configurations --service-ids "$svc_id" --region "$REGION" 2>/dev/null || true
     fi
 done
 
