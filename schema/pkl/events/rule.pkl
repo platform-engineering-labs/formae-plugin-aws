@@ -11,6 +11,8 @@ import "../aws.pkl"
 
 const type = "AWS::Events::Rule"
 
+typealias RuleState = "ENABLED"|"DISABLED"|"ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS"
+
 open class RuleResolvable extends formae.Resolvable {
     hidden type = module.type
 
@@ -212,7 +214,7 @@ open class Rule extends formae.Resource {
     scheduleExpression: String?
 
     @aws.FieldHint
-    state: String?
+    state: RuleState?
 
     @aws.FieldHint
     roleArn: (String|formae.Resolvable)?
