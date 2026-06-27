@@ -19,7 +19,7 @@ const type = "AWS::EC2::TransitGatewayRoute"
 }
 open class TransitGatewayRoute extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     blackhole: Boolean?
 
     @aws.FieldHint{createOnly = true}

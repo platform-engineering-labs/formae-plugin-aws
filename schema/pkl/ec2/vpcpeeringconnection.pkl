@@ -17,10 +17,10 @@ const type = "AWS::EC2::VPCPeeringConnection"
 }
 open class VPCPeeringConnection extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     peerOwnerId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     peerRegion: aws.Region?
 
     @aws.FieldHint{
