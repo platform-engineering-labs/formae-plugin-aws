@@ -18,18 +18,6 @@ local eventBus = new eventbus.EventBus {
   label = "plugin-sdk-test-eventbus"
   name = "formae-plugin-sdk-test-bus-\(testRunID)"
   description = "formae plugin sdk test bus"
-  policy = new Dynamic {
-    Version = "2012-10-17"
-    Statement = new Listing {
-      new Dynamic {
-        Sid = "AllowPutEvents"
-        Effect = "Allow"
-        Principal = new Dynamic { AWS = "*" }
-        Action = "events:PutEvents"
-        Resource = eventBus.res.arn
-      }
-    }
-  }
 }
 
 forma {

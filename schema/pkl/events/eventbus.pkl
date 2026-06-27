@@ -47,7 +47,7 @@ open class EventBus extends formae.Resource {
     @aws.FieldHint { createOnly = true; writeOnly = true }
     eventSourceName: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { updateMethod = "Atomic" }
     policy: Dynamic?
 
     @aws.FieldHint

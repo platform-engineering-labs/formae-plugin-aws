@@ -200,7 +200,7 @@ open class Rule extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     eventBusName: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    @aws.FieldHint { updateMethod = "Atomic" }
     eventPattern: Dynamic?
 
     @aws.FieldHint
