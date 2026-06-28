@@ -61,7 +61,22 @@ open class Role extends formae.Resource {
     @aws.FieldHint
     permissionsBoundary: (String|formae.Resolvable)?
 
-    @aws.FieldHint
+    // Inline policies are replaced wholesale on update. A keyed/positional list
+    // diff descends into each policy's PolicyDocument and mis-renders an edited
+    // statement as an appended one (add /Statement/1), leaving the original in
+    // place and corrupting the document; CloudControl needs the full document to
+    // PutRolePolicy. Atomic emits a single whole-array replace of Policies,
+    // mirroring how assumeRolePolicyDocument and the standalone AWS::IAM::Policy /
+    // AWS::IAM::RolePolicy policyDocument fields are handled.
+    //
+    // Declaring inline `policies` makes formae the exclusive manager of every
+    // inline policy on the role: reconcile replaces the role's inline policies
+    // with exactly this set, removing any not declared here (out-of-band, manual,
+    // or other-tool policies included). A role must use either inline `policies`
+    // or standalone AWS::IAM::RolePolicy resources, not both — mixing them on one
+    // role is unsupported, and under reconcile the standalone-owned policy is
+    // removed.
+    @aws.FieldHint{updateMethod = "Atomic"}
     policies: Listing<RolePolicy>?
 
     @aws.FieldHint{createOnly = true}

@@ -1,0 +1,69 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-role-inline-policy-\(testRunID)"
+
+// An IAM Role carrying a single inline policy, with the Role itself as the
+// resource-under-test (last/leaf/singleton). The role's inline policies round-trip
+// through the custom Read, so a second sync detects no drift — guarding against the
+// phantom "add Policies" that the generic CloudControl read would otherwise produce.
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM Role with an inline policy"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new role.Role {
+    label = "plugin-sdk-test-role-inline-policy"
+    roleName = "formae-plugin-sdk-test-role-inline-\(testRunID)"
+    assumeRolePolicyDocument {
+      ["Version"] = "2012-10-17"
+      ["Statement"] {
+        new {
+          ["Effect"] = "Allow"
+          ["Principal"] {
+            ["Service"] = "lambda.amazonaws.com"
+          }
+          ["Action"] = "sts:AssumeRole"
+        }
+      }
+    }
+    policies {
+      new {
+        policyName = "inline-logs-write"
+        policyDocument {
+          ["Version"] = "2012-10-17"
+          ["Statement"] {
+            new {
+              ["Effect"] = "Allow"
+              ["Action"] = new Listing {
+                "logs:CreateLogGroup"
+                "logs:CreateLogStream"
+                "logs:PutLogEvents"
+              }
+              ["Resource"] = "*"
+            }
+          }
+        }
+      }
+    }
+  }
+}
