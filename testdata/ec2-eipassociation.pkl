@@ -10,6 +10,8 @@ import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 
 import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
 import "@aws/ec2/subnet.pkl"
 import "@aws/ec2/networkinterface.pkl"
 import "@aws/ec2/eip.pkl"
@@ -26,9 +28,24 @@ local testVpc = new vpc.VPC {
   enableDnsSupport = true
 }
 
+// AWS rejects associating an Elastic IP in a VPC with no internet gateway
+// ("Network vpc-... is not attached to any internet gateway"), so the VPC
+// needs an IGW attached before the association is created.
+local testIgw = new internetgateway.InternetGateway {
+  label = "test-igw-for-eipassoc"
+}
+
+local testIgwAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-igwattach-for-eipassoc"
+  vpcId = testVpc.res.vpcId
+  internetGatewayId = testIgw.res.internetGatewayId
+}
+
+// Source the subnet's vpcId from the attachment (same VPC id) so the
+// subnet -> ENI -> association chain is ordered AFTER the IGW attach.
 local testSubnet = new subnet.Subnet {
   label = "test-subnet-for-eipassoc"
-  vpcId = testVpc.res.vpcId
+  vpcId = testIgwAttachment.res.vpcId
   cidrBlock = "10.233.1.0/24"
   availabilityZone = "us-east-1a"
 }
@@ -64,6 +81,10 @@ forma {
 
   // VPC required
   testVpc
+
+  // InternetGateway + attachment required (EIP association needs an IGW)
+  testIgw
+  testIgwAttachment
 
   // Subnet required
   testSubnet

@@ -43,7 +43,7 @@ local testSubnetB = new subnet.Subnet {
 // Network Load Balancer fronting the endpoint service
 local testNlb = new loadbalancer.LoadBalancer {
   label = "test-nlb-for-epspermissions"
-  name = "formae-sdk-test-epsp-nlb-\(testRunID)"
+  name = "formae-test-epsp-nlb-\(testRunID)"
   scheme = "internal"
   type = "network"
   subnets {

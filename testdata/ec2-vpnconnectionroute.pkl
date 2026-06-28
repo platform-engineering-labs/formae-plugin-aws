@@ -18,9 +18,12 @@ local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-ec2-vpnconnectionroute-\(testRunID)"
 
 // CustomerGateway dependency (dummy unreachable IP - tunnels stay DOWN).
+// Distinct IP from ec2-vpnconnection.pkl (.1): a CGW is keyed on
+// (type, ip-address, bgp-asn), so a shared IP collides (AlreadyExists)
+// when both fixtures run in the same parallel batch.
 local testCgw = new customergateway.CustomerGateway {
   label = "test-cgw-for-vpnconnroute"
-  ipAddress = "203.0.113.1"
+  ipAddress = "203.0.113.2"
   type = "ipsec.1"
   bgpAsn = 65000
   tags {
