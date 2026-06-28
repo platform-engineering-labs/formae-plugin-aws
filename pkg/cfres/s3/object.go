@@ -359,7 +359,10 @@ func (o *Object) readWithClient(ctx context.Context, client s3ObjectClient, requ
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-	if err == nil && len(tagging.TagSet) > 0 {
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object tagging for %s/%s: %w", bucket, key, err)
+	}
+	if len(tagging.TagSet) > 0 {
 		var tags []map[string]string
 		for _, tag := range tagging.TagSet {
 			tags = append(tags, map[string]string{

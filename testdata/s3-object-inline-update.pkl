@@ -50,5 +50,9 @@ forma {
     metadata {
       ["env"] = "staging"
     }
+    tags {
+      new { key = "Name"; value = "inline-object" }
+      new { key = "Environment"; value = "staging" }
+    }
   }
 }

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -224,6 +225,62 @@ func TestRead_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
+
+	client.AssertExpectations(t)
+}
+
+func TestRead_TaggingError(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType: aws.String("text/plain"),
+	}, nil)
+
+	client.On("GetObjectTagging", ctx, mock.MatchedBy(func(input *s3.GetObjectTaggingInput) bool {
+		return *input.Bucket == "my-bucket" && *input.Key == "path/to/file.txt"
+	})).Return(
+		(*s3.GetObjectTaggingOutput)(nil),
+		errors.New("AccessDenied: not authorized to perform s3:GetObjectTagging"),
+	)
+
+	o := &Object{}
+	result, err := o.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID: "my-bucket|path/to/file.txt",
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "my-bucket/path/to/file.txt")
+
+	client.AssertExpectations(t)
+}
+
+func TestRead_NoTags(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType: aws.String("text/plain"),
+	}, nil)
+
+	client.On("GetObjectTagging", ctx, mock.Anything).Return(&s3.GetObjectTaggingOutput{
+		TagSet: []s3types.Tag{},
+	}, nil)
+
+	o := &Object{}
+	result, err := o.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID: "my-bucket|path/to/file.txt",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var props map[string]any
+	err = json.Unmarshal([]byte(result.Properties), &props)
+	require.NoError(t, err)
+	_, hasTags := props["Tags"]
+	assert.False(t, hasTags, "Tags should be omitted for a genuinely untagged object")
 
 	client.AssertExpectations(t)
 }
