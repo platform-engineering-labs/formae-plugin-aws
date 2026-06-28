@@ -100,7 +100,11 @@ open class Object extends formae.Resource {
     @aws.FieldHint
     storageClass: StorageClass?
 
-    @aws.FieldHint
+    // S3 applies bucket default encryption (at least AES256) to every object,
+    // so HeadObject returns this even when the forma never set it.
+    @aws.FieldHint {
+        hasProviderDefault = true
+    }
     serverSideEncryption: ServerSideEncryption?
 
     @aws.FieldHint
