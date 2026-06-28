@@ -55,11 +55,17 @@ func (m *Method) Create(ctx context.Context, request *resource.CreateRequest) (*
 }
 
 func (m *Method) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	transformedProperties, err := m.handleLambdaIntegration(ctx, request.DesiredProperties)
-	if err != nil {
-		return nil, err
+	// CloudControl updates apply the patch document, not DesiredProperties, so the
+	// Lambda integration transform has to run on the patch the same way Create
+	// runs it on the properties.
+	if request.PatchDocument != nil {
+		transformedPatch, err := m.transformLambdaIntegrationPatch(*request.PatchDocument)
+		if err != nil {
+			plugin.LoggerFromContext(ctx).Error("ApiGateway::Method: Failed to transform Lambda integration patch", "error", err)
+			return nil, err
+		}
+		request.PatchDocument = &transformedPatch
 	}
-	request.DesiredProperties = transformedProperties
 
 	ccxClient, err := ccx.NewClient(m.cfg)
 	if err != nil {
@@ -122,25 +128,13 @@ func (m *Method) handleLambdaIntegration(ctx context.Context, properties []byte)
 		return properties, nil
 	}
 
-	lambdaArn, hasLambdaArn := integration["LambdaFunctionArn"]
-	if !hasLambdaArn {
+	if _, hasLambdaArn := integration["LambdaFunctionArn"]; !hasLambdaArn {
 		return properties, nil
 	}
 
-	lambdaArnStr, ok := lambdaArn.(string)
-	if !ok {
-		return nil, fmt.Errorf("expected LambdaFunctionArn to be resolved string, got %T", lambdaArn)
+	if err := m.integrationLambdaArnToURI(integration); err != nil {
+		return nil, err
 	}
-
-	region, err := m.extractRegionFromLambdaArn(lambdaArnStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract region from Lambda ARN: %w", err)
-	}
-
-	uri := fmt.Sprintf("arn:aws:apigateway:%s:lambda:path/2015-03-31/functions/%s/invocations",
-		region, lambdaArnStr)
-	delete(integration, "LambdaFunctionArn")
-	integration["Uri"] = uri
 
 	transformedProps, err := json.Marshal(props)
 	if err != nil {
@@ -148,9 +142,83 @@ func (m *Method) handleLambdaIntegration(ctx context.Context, properties []byte)
 	}
 
 	plugin.LoggerFromContext(ctx).Debug("ApiGateway::Method: Transformed Lambda integration",
-		"lambdaArn", lambdaArnStr, "uri", uri)
+		"uri", integration["Uri"])
 
 	return transformedProps, nil
+}
+
+// integrationLambdaArnToURI converts the formae-only LambdaFunctionArn on an
+// Integration into the execute-api invocation Uri CloudControl expects and drops
+// LambdaFunctionArn. When both are set, LambdaFunctionArn wins (the derived Uri
+// overwrites any supplied uri). It is a no-op when LambdaFunctionArn is absent
+// (HTTP/HTTP_PROXY/MOCK integrations), so they pass through untouched.
+func (m *Method) integrationLambdaArnToURI(integration map[string]any) error {
+	lambdaArn, hasLambdaArn := integration["LambdaFunctionArn"]
+	if !hasLambdaArn {
+		return nil
+	}
+
+	lambdaArnStr, ok := lambdaArn.(string)
+	if !ok {
+		return fmt.Errorf("expected LambdaFunctionArn to be resolved string, got %T", lambdaArn)
+	}
+
+	region, err := m.extractRegionFromLambdaArn(lambdaArnStr)
+	if err != nil {
+		return fmt.Errorf("failed to extract region from Lambda ARN: %w", err)
+	}
+
+	integration["Uri"] = fmt.Sprintf("arn:aws:apigateway:%s:lambda:path/2015-03-31/functions/%s/invocations",
+		region, lambdaArnStr)
+	delete(integration, "LambdaFunctionArn")
+
+	return nil
+}
+
+// transformLambdaIntegrationPatch is the write-time Lambda integration transform
+// applied to a CloudControl update patch. The Integration field uses an Atomic
+// update method, so a re-pointed Lambda integration arrives as a single
+// add/replace op at /Integration carrying the whole object; without converting
+// its LambdaFunctionArn to the invocation Uri (as Create does for properties),
+// CloudControl rejects the formae-only field. Ops for other paths, and
+// Integration ops without LambdaFunctionArn (HTTP/HTTP_PROXY/MOCK), pass through.
+func (m *Method) transformLambdaIntegrationPatch(patchDoc string) (string, error) {
+	var ops []map[string]any
+	if err := json.Unmarshal([]byte(patchDoc), &ops); err != nil {
+		return patchDoc, err
+	}
+
+	modified := false
+	for _, op := range ops {
+		if name, _ := op["op"].(string); name != "add" && name != "replace" {
+			continue
+		}
+		if path, _ := op["path"].(string); path != "/Integration" {
+			continue
+		}
+		integration, ok := op["value"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hasLambdaArn := integration["LambdaFunctionArn"]; !hasLambdaArn {
+			continue
+		}
+		if err := m.integrationLambdaArnToURI(integration); err != nil {
+			return patchDoc, err
+		}
+		modified = true
+	}
+
+	if !modified {
+		return patchDoc, nil
+	}
+
+	transformed, err := json.Marshal(ops)
+	if err != nil {
+		return patchDoc, fmt.Errorf("failed to marshal transformed patch: %w", err)
+	}
+
+	return string(transformed), nil
 }
 
 func (m *Method) extractRegionFromLambdaArn(arn string) (string, error) {

@@ -147,6 +147,63 @@ func TestNormalizeIntegrationOnRead_NoIntegration(t *testing.T) {
 	assert.JSONEq(t, in, out)
 }
 
+// transformLambdaIntegrationPatch rewrites the formae-only LambdaFunctionArn
+// inside a JSON Patch document into the CloudControl invocation Uri. Integration
+// uses an Atomic update method, so a re-pointed Lambda integration arrives as a
+// single add/replace op at /Integration carrying the whole object; CloudControl
+// rejects LambdaFunctionArn, so it must be converted just like the write path.
+
+func TestTransformLambdaIntegrationPatch_AtomicReplace(t *testing.T) {
+	m := &Method{}
+	in := `[{"op":"replace","path":"/Integration","value":{"Type":"AWS_PROXY","IntegrationHttpMethod":"POST","LambdaFunctionArn":"arn:aws:lambda:eu-west-1:123456789012:function:Fleet"}}]`
+
+	out, err := m.transformLambdaIntegrationPatch(in)
+
+	require.NoError(t, err)
+	var ops []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &ops))
+	require.Len(t, ops, 1)
+	integration := ops[0]["value"].(map[string]any)
+	assert.Equal(t, "arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-west-1:123456789012:function:Fleet/invocations", integration["Uri"])
+	_, hasArn := integration["LambdaFunctionArn"]
+	assert.False(t, hasArn)
+}
+
+func TestTransformLambdaIntegrationPatch_AtomicAdd(t *testing.T) {
+	m := &Method{}
+	in := `[{"op":"add","path":"/Integration","value":{"Type":"AWS_PROXY","IntegrationHttpMethod":"POST","LambdaFunctionArn":"arn:aws:lambda:eu-west-1:123456789012:function:Fleet"}}]`
+
+	out, err := m.transformLambdaIntegrationPatch(in)
+
+	require.NoError(t, err)
+	var ops []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &ops))
+	integration := ops[0]["value"].(map[string]any)
+	assert.Equal(t, "arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-west-1:123456789012:function:Fleet/invocations", integration["Uri"])
+	_, hasArn := integration["LambdaFunctionArn"]
+	assert.False(t, hasArn)
+}
+
+func TestTransformLambdaIntegrationPatch_HttpIntegrationUntouched(t *testing.T) {
+	m := &Method{}
+	in := `[{"op":"replace","path":"/Integration","value":{"Type":"HTTP_PROXY","Uri":"https://example.com/orders"}}]`
+
+	out, err := m.transformLambdaIntegrationPatch(in)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, in, out)
+}
+
+func TestTransformLambdaIntegrationPatch_OtherOpsUntouched(t *testing.T) {
+	m := &Method{}
+	in := `[{"op":"replace","path":"/OperationName","value":"updated"}]`
+
+	out, err := m.transformLambdaIntegrationPatch(in)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, in, out)
+}
+
 // handleLambdaIntegration makes lambdaFunctionArn win when both it and a uri are
 // set: it derives the invocation Uri from the ARN, overwrites any supplied uri,
 // and drops the convenience field before the CloudControl call.
