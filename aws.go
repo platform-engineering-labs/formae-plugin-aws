@@ -11,13 +11,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 
-	pkgmodel "github.com/platform-engineering-labs/formae/pkg/model"
-	"github.com/platform-engineering-labs/formae/pkg/plugin"
-	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/helper"
+	pkgmodel "github.com/platform-engineering-labs/formae/pkg/model"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
+	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 
 	// Import cfres to trigger init() registration of all provisioners
 	_ "github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres"
@@ -98,6 +98,8 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 			// ACM certificates use the domain name as their natural label
 			// (Name tags are not standard for ACM).
 			"AWS::CertificateManager::Certificate": "$.DomainName",
+			// S3 objects use Key property
+			"AWS::S3::Object": "$.Key",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",
