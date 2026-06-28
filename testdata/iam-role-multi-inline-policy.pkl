@@ -1,0 +1,116 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-role-multi-inline-\(testRunID)"
+
+// An IAM Role carrying several inline policies, declared in a NON-lexicographic
+// order (state-table-rw, stream-read, put-events, dlq-send), with the Role itself
+// as the resource-under-test (last/leaf/singleton). The custom Read returns the
+// inline policies sorted by PolicyName, so its order differs from the declaration
+// order here. Because `policies` is an Atomic field, the diff compares the array
+// order-insensitively (whole-array multiset), so a second sync detects no drift —
+// guarding against an order-dependent phantom "replace Policies" for the common
+// multi-policy configuration.
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM Role with multiple inline policies"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new role.Role {
+    label = "plugin-sdk-test-role-multi-inline"
+    roleName = "formae-plugin-sdk-test-role-multi-\(testRunID)"
+    assumeRolePolicyDocument {
+      ["Version"] = "2012-10-17"
+      ["Statement"] {
+        new {
+          ["Effect"] = "Allow"
+          ["Principal"] {
+            ["Service"] = "lambda.amazonaws.com"
+          }
+          ["Action"] = "sts:AssumeRole"
+        }
+      }
+    }
+    policies {
+      new {
+        policyName = "state-table-rw"
+        policyDocument {
+          ["Version"] = "2012-10-17"
+          ["Statement"] {
+            new {
+              ["Effect"] = "Allow"
+              ["Action"] = new Listing {
+                "dynamodb:GetItem"
+                "dynamodb:PutItem"
+                "dynamodb:UpdateItem"
+              }
+              ["Resource"] = "*"
+            }
+          }
+        }
+      }
+      new {
+        policyName = "stream-read"
+        policyDocument {
+          ["Version"] = "2012-10-17"
+          ["Statement"] {
+            new {
+              ["Effect"] = "Allow"
+              ["Action"] = new Listing {
+                "dynamodb:GetRecords"
+                "dynamodb:GetShardIterator"
+                "dynamodb:DescribeStream"
+              }
+              ["Resource"] = "*"
+            }
+          }
+        }
+      }
+      new {
+        policyName = "put-events"
+        policyDocument {
+          ["Version"] = "2012-10-17"
+          ["Statement"] {
+            new {
+              ["Effect"] = "Allow"
+              ["Action"] = "events:PutEvents"
+              ["Resource"] = "*"
+            }
+          }
+        }
+      }
+      new {
+        policyName = "dlq-send"
+        policyDocument {
+          ["Version"] = "2012-10-17"
+          ["Statement"] {
+            new {
+              ["Effect"] = "Allow"
+              ["Action"] = "sqs:SendMessage"
+              ["Resource"] = "*"
+            }
+          }
+        }
+      }
+    }
+  }
+}
