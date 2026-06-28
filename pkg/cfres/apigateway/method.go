@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin"
@@ -72,7 +73,19 @@ func (m *Method) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 	if err != nil {
 		return nil, err
 	}
-	return ccxClient.ReadResource(ctx, request)
+	result, err := ccxClient.ReadResource(ctx, request)
+	if err != nil || result == nil || result.Properties == "" {
+		return result, err
+	}
+
+	normalized, err := normalizeIntegrationOnRead(result.Properties)
+	if err != nil {
+		// Pass through; CloudControl's representation is the source of truth.
+		plugin.LoggerFromContext(ctx).Warn("ApiGateway::Method: failed to normalize Integration on read; passing through", "error", err)
+		return result, nil
+	}
+	result.Properties = normalized
+	return result, nil
 }
 
 func (m *Method) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
@@ -148,4 +161,68 @@ func (m *Method) extractRegionFromLambdaArn(arn string) (string, error) {
 		return parts[3], nil
 	}
 	return "", fmt.Errorf("invalid Lambda ARN format: %s", arn)
+}
+
+// lambdaInvocationURIPattern matches a Lambda-proxy integration Uri of the form
+// arn:<partition>:apigateway:<region>:lambda:path/2015-03-31/functions/<lambdaArn>/invocations
+// — the exact shape handleLambdaIntegration builds. The single capture group is
+// the full Lambda ARN between /functions/ and /invocations, which preserves any
+// alias/version qualifier (e.g. ...:function:Fn:prod). The partition and region
+// segments are matched generically so aws, aws-us-gov, and aws-cn round-trip.
+var lambdaInvocationURIPattern = regexp.MustCompile(
+	`^arn:[^:]+:apigateway:[^:]+:lambda:path/2015-03-31/functions/(.+)/invocations$`)
+
+// lambdaArnFromInvocationURI is the precise inverse of the Uri builder in
+// handleLambdaIntegration: given a Lambda-proxy invocation Uri it returns the
+// embedded Lambda ARN and true; for any other value (HTTP/HTTP_PROXY uri, empty,
+// malformed) it returns false so the caller leaves the integration untouched.
+func lambdaArnFromInvocationURI(uri string) (string, bool) {
+	matches := lambdaInvocationURIPattern.FindStringSubmatch(uri)
+	if matches == nil {
+		return "", false
+	}
+	return matches[1], true
+}
+
+// reverseLambdaIntegrationURI restores the formae-only LambdaFunctionArn field
+// onto a read-back Integration. LambdaFunctionArn is not a CloudControl property
+// (the write handler converts it to Uri), so a generic read returns only Uri;
+// without this inverse the Atomic Integration compare would diff the
+// desired-only LambdaFunctionArn against the actual-only Uri on every reconcile.
+// Only a Lambda-proxy Uri is rewritten — HTTP integrations (literal uri) and
+// MOCK integrations (no uri) are left as-is, so no drift is inverted.
+func reverseLambdaIntegrationURI(integration map[string]any) {
+	uri, ok := integration["Uri"].(string)
+	if !ok {
+		return
+	}
+	lambdaArn, ok := lambdaArnFromInvocationURI(uri)
+	if !ok {
+		return
+	}
+	integration["LambdaFunctionArn"] = lambdaArn
+	delete(integration, "Uri")
+}
+
+// normalizeIntegrationOnRead applies reverseLambdaIntegrationURI to the
+// Integration block of a CloudControl read-back properties document, returning
+// the re-marshaled JSON. Properties without an Integration object pass through
+// unchanged.
+func normalizeIntegrationOnRead(properties string) (string, error) {
+	var props map[string]any
+	if err := json.Unmarshal([]byte(properties), &props); err != nil {
+		return "", err
+	}
+
+	integration, ok := props["Integration"].(map[string]any)
+	if !ok {
+		return properties, nil
+	}
+	reverseLambdaIntegrationURI(integration)
+
+	normalized, err := json.Marshal(props)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal normalized properties: %w", err)
+	}
+	return string(normalized), nil
 }

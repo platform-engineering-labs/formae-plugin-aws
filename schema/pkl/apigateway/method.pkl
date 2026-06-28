@@ -42,10 +42,16 @@ open class Integration extends formae.SubResource {
     timeoutInMillis: Int?
     type: IntegrationType
 
-    // For Lambda integrations - the handler will convert this to Uri
+    // For Lambda integrations (type AWS / AWS_PROXY): set lambdaFunctionArn to
+    // the function ARN. The plugin builds the execute-api invocation Uri from it
+    // on write and restores lambdaFunctionArn from that Uri on read, so the field
+    // round-trips. If both lambdaFunctionArn and uri are set, lambdaFunctionArn
+    // wins — the derived invocation Uri overwrites the supplied uri.
     lambdaFunctionArn: (String|formae.Resolvable)?
 
-    // For non-Lambda integrations
+    // For non-Lambda integrations (type HTTP / HTTP_PROXY): set uri to the
+    // backend endpoint. Leave lambdaFunctionArn unset — see the precedence note
+    // above.
     uri: (String|formae.Resolvable)?
 }
 

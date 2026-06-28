@@ -1,0 +1,117 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/lambda/func.pkl"
+import "@aws/apigateway/restapi.pkl"
+import "@aws/apigateway/resource.pkl"
+import "@aws/apigateway/method.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-apigateway-method-lambda-\(testRunID)"
+
+// Execution role for the integration target Lambda.
+local lambdaRole = new role.Role {
+  label = "lambda-execution-role"
+  roleName = "formae-sdk-test-meth-lambda-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "lambda.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+}
+
+// Lambda backing the AWS_PROXY integration.
+local testFunction = new func.Function {
+  label = "test-function-for-method"
+  functionName = "formae-sdk-test-meth-lambda-\(testRunID)"
+  role = lambdaRole.res.arn
+  runtime = "python3.12"
+  handler = "index.handler"
+  code = new func.Code {
+    zipFile = """
+      import json
+      def handler(event, context):
+          return {
+              'statusCode': 200,
+              'body': json.dumps({'message': 'hello from formae'})
+          }
+      """
+  }
+  memorySize = 128
+  timeout = 10
+}
+
+// RestApi dependency.
+local testApi = new restapi.RestApi {
+  label = "test-restapi-for-method"
+  name = "formae-sdk-test-meth-lambda-api-\(testRunID)"
+  description = "Test API for Lambda-proxy Method"
+  endpointConfiguration = new restapi.EndpointConfiguration {
+    types = new Listing { "REGIONAL" }
+  }
+}
+
+// Resource dependency - Method needs a resource.
+local testResource = new resource.Resource {
+  label = "test-resource-for-method"
+  restApiId = testApi.res.restApiId
+  parentId = testApi.res.rootResourceId
+  pathPart = "fleet"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ApiGateway Method with a Lambda AWS_PROXY integration"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  lambdaRole
+
+  testFunction
+
+  // Parent RestApi
+  testApi
+
+  // Parent Resource
+  testResource
+
+  // Method under test: a Lambda AWS_PROXY integration. lambdaFunctionArn is the
+  // formae-only convenience field; the plugin builds the invocation Uri on write
+  // and restores lambdaFunctionArn from it on read, so a second simulate shows no
+  // phantom Integration replace.
+  new method.Method {
+    label = "plugin-sdk-test-method-lambda"
+    restApiId = testApi.res.restApiId
+    resourceId = testResource.res.resourceId
+    httpMethod = "GET"
+    authorizationType = "NONE"
+    integration = new method.Integration {
+      type = "AWS_PROXY"
+      integrationHttpMethod = "POST"
+      lambdaFunctionArn = testFunction.res.arn
+    }
+  }
+}
