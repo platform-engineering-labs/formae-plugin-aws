@@ -72,6 +72,25 @@ local testFunction = new func.Function {
   timeout = 10
 }
 
+local testFunction2 = new func.Function {
+  label = "test-function-for-esm-2"
+  functionName = "formae-sdk-test-lambda-esm-2-\(testRunID)"
+  role = lambdaRole.res.arn
+  runtime = "python3.12"
+  handler = "index.handler"
+  code = new func.Code {
+    zipFile = """
+      import json
+      def handler(event, context):
+          for record in event.get('Records', []):
+              print(record['body'])
+          return {'statusCode': 200}
+      """
+  }
+  memorySize = 128
+  timeout = 10
+}
+
 local testQueue = new queue.Queue {
   label = "test-queue-for-esm"
   queueName = "formae-sdk-test-lambda-esm-queue-\(testRunID)"
@@ -93,6 +112,8 @@ forma {
   lambdaRole
 
   testFunction
+
+  testFunction2
 
   testQueue
 

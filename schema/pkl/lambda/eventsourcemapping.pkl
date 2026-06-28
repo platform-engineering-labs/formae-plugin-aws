@@ -128,7 +128,12 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint
     filterCriteria: FilterCriteria?
 
-    @aws.FieldHint{createOnly = true}
+    // FunctionName is not create-only: AWS updates it in place via
+    // UpdateEventSourceMapping (absent from the CloudControl createOnlyProperties).
+    // Prefer the function ARN (e.g. someFunc.res.arn) — CloudControl reads FunctionName
+    // back as the full ARN, so a short name reconciles as an in-place update each pass
+    // until name/ARN field-equivalence lands.
+    @aws.FieldHint
     functionName: String(matches(Regex(#"(arn:(aws[a-zA-Z-]*)?:lambda:)?([a-z]{2}(-gov)?(-iso([a-z])?)?-[a-z]+-\d{1}:)?(\d{12}:)?(function:)?([a-zA-Z0-9-_]+)(:(\$LATEST|[a-zA-Z0-9-_]+))?"#)))|formae.Resolvable
 
     @aws.FieldHint
