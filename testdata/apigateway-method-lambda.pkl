@@ -57,29 +57,6 @@ local testFunction = new func.Function {
   timeout = 10
 }
 
-// Second Lambda the Method is re-pointed to in the -update fixture. Declared
-// here so it pre-exists before the update re-points the Method to it, keeping
-// the update a same-stack re-point rather than a same-changeset create+resolve.
-local testFunctionB = new func.Function {
-  label = "test-function-b-for-method"
-  functionName = "formae-sdk-test-meth-lambda-b-\(testRunID)"
-  role = lambdaRole.res.arn
-  runtime = "python3.12"
-  handler = "index.handler"
-  code = new func.Code {
-    zipFile = """
-      import json
-      def handler(event, context):
-          return {
-              'statusCode': 200,
-              'body': json.dumps({'message': 'hello from formae B'})
-          }
-      """
-  }
-  memorySize = 128
-  timeout = 10
-}
-
 // RestApi dependency.
 local testApi = new restapi.RestApi {
   label = "test-restapi-for-method"
@@ -114,8 +91,6 @@ forma {
   lambdaRole
 
   testFunction
-
-  testFunctionB
 
   // Parent RestApi
   testApi
