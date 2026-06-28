@@ -57,8 +57,9 @@ local testFunction = new func.Function {
   timeout = 10
 }
 
-// Second Lambda the Method is re-pointed to, exercising an Integration update
-// (and the Uri -> lambdaFunctionArn read round-trip on the new target).
+// Second Lambda - same as create (pre-exists). The Method is re-pointed to it
+// below, exercising an Integration update (and the Uri -> lambdaFunctionArn read
+// round-trip on the new target) without a same-changeset create+resolve.
 local testFunctionB = new func.Function {
   label = "test-function-b-for-method"
   functionName = "formae-sdk-test-meth-lambda-b-\(testRunID)"
