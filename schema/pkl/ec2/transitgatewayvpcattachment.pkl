@@ -28,7 +28,7 @@ open class TransitGatewayVpcAttachment extends formae.Resource {
     @aws.FieldHint{writeOnly = true}
     addSubnetIds: Listing<String|formae.Resolvable>?
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     options: Dynamic?
 
     @aws.FieldHint{writeOnly = true}

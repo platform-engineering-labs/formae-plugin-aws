@@ -25,7 +25,7 @@ open class TransitGatewayAttachmentResolvable extends formae.Resolvable {
 }
 open class TransitGatewayAttachment extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{hasProviderDefault = true}
     options: Dynamic?
 
     @aws.FieldHint

@@ -120,19 +120,19 @@ open class VPNConnection extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     customerGatewayId: String|formae.Resolvable
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     enableAcceleration: Boolean?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     localIpv4NetworkCidr: String?
 
     @aws.FieldHint{createOnly = true}
     localIpv6NetworkCidr: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     outsideIpAddressType: String?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     remoteIpv4NetworkCidr: String?
 
     @aws.FieldHint{createOnly = true}
@@ -153,7 +153,7 @@ open class VPNConnection extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     transportTransitGatewayAttachmentId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     tunnelInsideIpVersion: String?
 
     @aws.FieldHint{createOnly = true}
@@ -162,7 +162,7 @@ open class VPNConnection extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     vpnGatewayId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{createOnly = true}
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     vpnTunnelOptionsSpecifications: Listing<VpnTunnelOptionsSpecification>?
 
     local parent = this
