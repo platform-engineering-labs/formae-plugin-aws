@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -257,6 +258,81 @@ func TestUpdate_Success(t *testing.T) {
 	assert.Equal(t, "my-bucket|path/to/file.txt", result.ProgressResult.NativeID)
 
 	client.AssertExpectations(t)
+}
+
+func TestCreate_SetsObjectLockRetainUntilDate(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	retainUntil := "2030-01-01T00:00:00Z"
+	props := map[string]any{
+		"Bucket":                    "my-bucket",
+		"Key":                       "locked.txt",
+		"Content":                   "data",
+		"ObjectLockMode":            "GOVERNANCE",
+		"ObjectLockRetainUntilDate": retainUntil,
+	}
+	propsBytes, _ := json.Marshal(props)
+
+	expected, _ := time.Parse(time.RFC3339, retainUntil)
+	client.On("PutObject", ctx, mock.MatchedBy(func(input *s3.PutObjectInput) bool {
+		return input.ObjectLockMode == s3types.ObjectLockModeGovernance &&
+			input.ObjectLockRetainUntilDate != nil &&
+			input.ObjectLockRetainUntilDate.Equal(expected)
+	})).Return(&s3.PutObjectOutput{}, nil)
+
+	o := &Object{}
+	_, err := o.createWithClient(ctx, client, &resource.CreateRequest{Properties: propsBytes})
+	require.NoError(t, err)
+	client.AssertExpectations(t)
+}
+
+func TestUpdate_SetsObjectLockFields(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	retainUntil := "2030-06-15T12:00:00Z"
+	desired := map[string]any{
+		"Bucket":                    "my-bucket",
+		"Key":                       "locked.txt",
+		"Content":                   "updated",
+		"ObjectLockMode":            "COMPLIANCE",
+		"ObjectLockRetainUntilDate": retainUntil,
+	}
+	desiredBytes, _ := json.Marshal(desired)
+
+	expected, _ := time.Parse(time.RFC3339, retainUntil)
+	client.On("PutObject", ctx, mock.MatchedBy(func(input *s3.PutObjectInput) bool {
+		return input.ObjectLockMode == s3types.ObjectLockModeCompliance &&
+			input.ObjectLockRetainUntilDate != nil &&
+			input.ObjectLockRetainUntilDate.Equal(expected)
+	})).Return(&s3.PutObjectOutput{}, nil)
+
+	o := &Object{}
+	_, err := o.updateWithClient(ctx, client, &resource.UpdateRequest{
+		NativeID:          "my-bucket|locked.txt",
+		DesiredProperties: desiredBytes,
+	})
+	require.NoError(t, err)
+	client.AssertExpectations(t)
+}
+
+func TestCreate_InvalidObjectLockRetainUntilDate_Errors(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	props := map[string]any{
+		"Bucket":                    "my-bucket",
+		"Key":                       "locked.txt",
+		"ObjectLockRetainUntilDate": "not-a-date",
+	}
+	propsBytes, _ := json.Marshal(props)
+
+	o := &Object{}
+	_, err := o.createWithClient(ctx, client, &resource.CreateRequest{Properties: propsBytes})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ObjectLockRetainUntilDate")
+	client.AssertExpectations(t) // PutObject must not be called
 }
 
 func TestDelete_Success(t *testing.T) {

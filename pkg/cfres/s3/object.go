@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -151,6 +152,30 @@ func (o *Object) createWithClient(ctx context.Context, client s3ObjectClient, re
 	}
 	defer closer()
 
+	input, err := buildPutObjectInput(bucket, key, body, props)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = client.PutObject(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to put object: %w", err)
+	}
+
+	nativeID := buildNativeID(bucket, key)
+	return &resource.CreateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCreate,
+			OperationStatus: resource.OperationStatusSuccess,
+			NativeID:        nativeID,
+		},
+	}, nil
+}
+
+// buildPutObjectInput assembles a PutObjectInput from the resolved body and
+// properties, applying every optional object attribute. Shared by Create and
+// Update so the two paths never diverge on which fields they honour.
+func buildPutObjectInput(bucket, key string, body io.Reader, props map[string]any) (*s3.PutObjectInput, error) {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -197,8 +222,11 @@ func (o *Object) createWithClient(ctx context.Context, client s3ObjectClient, re
 		input.ObjectLockMode = s3types.ObjectLockMode(olm)
 	}
 	if olrud, _ := utils.GetStringProperty(props, "ObjectLockRetainUntilDate"); olrud != "" {
-		// Parse ISO 8601 date — left for the SDK to handle via smithy
-		_ = olrud
+		t, err := time.Parse(time.RFC3339, olrud)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ObjectLockRetainUntilDate %q: %w", olrud, err)
+		}
+		input.ObjectLockRetainUntilDate = aws.Time(t)
 	}
 	if md, ok := props["Metadata"]; ok {
 		if mdMap, ok := md.(map[string]any); ok {
@@ -217,19 +245,7 @@ func (o *Object) createWithClient(ctx context.Context, client s3ObjectClient, re
 		}
 	}
 
-	_, err = client.PutObject(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to put object: %w", err)
-	}
-
-	nativeID := buildNativeID(bucket, key)
-	return &resource.CreateResult{
-		ProgressResult: &resource.ProgressResult{
-			Operation:       resource.OperationCreate,
-			OperationStatus: resource.OperationStatusSuccess,
-			NativeID:        nativeID,
-		},
-	}, nil
+	return input, nil
 }
 
 func buildTaggingHeader(tags []any) string {
@@ -395,60 +411,9 @@ func (o *Object) updateWithClient(ctx context.Context, client s3ObjectClient, re
 	}
 	defer closer()
 
-	input := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   body,
-	}
-
-	if ct, _ := utils.GetStringProperty(props, "ContentType"); ct != "" {
-		input.ContentType = aws.String(ct)
-	}
-	if ce, _ := utils.GetStringProperty(props, "ContentEncoding"); ce != "" {
-		input.ContentEncoding = aws.String(ce)
-	}
-	if cl, _ := utils.GetStringProperty(props, "ContentLanguage"); cl != "" {
-		input.ContentLanguage = aws.String(cl)
-	}
-	if cd, _ := utils.GetStringProperty(props, "ContentDisposition"); cd != "" {
-		input.ContentDisposition = aws.String(cd)
-	}
-	if cc, _ := utils.GetStringProperty(props, "CacheControl"); cc != "" {
-		input.CacheControl = aws.String(cc)
-	}
-	if sc, _ := utils.GetStringProperty(props, "StorageClass"); sc != "" {
-		input.StorageClass = s3types.StorageClass(sc)
-	}
-	if sse, _ := utils.GetStringProperty(props, "ServerSideEncryption"); sse != "" {
-		input.ServerSideEncryption = s3types.ServerSideEncryption(sse)
-	}
-	if kmsKey, _ := utils.GetStringProperty(props, "KmsKeyId"); kmsKey != "" {
-		input.SSEKMSKeyId = aws.String(kmsKey)
-	}
-	if ca, _ := utils.GetStringProperty(props, "ChecksumAlgorithm"); ca != "" {
-		input.ChecksumAlgorithm = s3types.ChecksumAlgorithm(ca)
-	}
-	if acl, _ := utils.GetStringProperty(props, "Acl"); acl != "" {
-		input.ACL = s3types.ObjectCannedACL(acl)
-	}
-	if wrl, _ := utils.GetStringProperty(props, "WebsiteRedirectLocation"); wrl != "" {
-		input.WebsiteRedirectLocation = aws.String(wrl)
-	}
-	if md, ok := props["Metadata"]; ok {
-		if mdMap, ok := md.(map[string]any); ok {
-			metadata := make(map[string]string)
-			for k, v := range mdMap {
-				if sv, ok := v.(string); ok {
-					metadata[k] = sv
-				}
-			}
-			input.Metadata = metadata
-		}
-	}
-	if tags, ok := props["Tags"]; ok {
-		if tagList, ok := tags.([]any); ok {
-			input.Tagging = aws.String(buildTaggingHeader(tagList))
-		}
+	input, err := buildPutObjectInput(bucket, key, body, props)
+	if err != nil {
+		return nil, err
 	}
 
 	_, err = client.PutObject(ctx, input)

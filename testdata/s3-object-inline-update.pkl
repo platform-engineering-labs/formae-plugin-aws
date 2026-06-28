@@ -1,0 +1,54 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/object.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-s3-object-inline-\(testRunID)"
+
+local myBucket = new bucket.Bucket {
+  label = "s3-object-inline-test-bucket"
+  bucketName = "formae-plugin-sdk-test-objinl-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for S3 Object (inline content + optional attributes)"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  myBucket
+
+  // Update: new inline content (same key, re-PUT) plus changed optional
+  // attributes — exercises buildPutObjectInput on the Update path.
+  new object.Object {
+    label = "plugin-sdk-test-inline-object"
+    bucket = myBucket.res.bucketName
+    key = "test-artifacts/inline.txt"
+    content = "updated content from formae"
+    contentType = "text/markdown"
+    cacheControl = "max-age=600"
+    contentDisposition = "attachment"
+    metadata {
+      ["env"] = "staging"
+    }
+  }
+}
