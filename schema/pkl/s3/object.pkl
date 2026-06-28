@@ -135,6 +135,8 @@ open class Object extends formae.Resource {
 
     @aws.FieldHint {
         outputTransformation = formae.transform.capitalizeMemberKeys
+        updateMethod = "EntitySet"
+        indexField = "Key"
     }
     tags: Listing<aws.Tag>?
 
