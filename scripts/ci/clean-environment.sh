@@ -422,6 +422,39 @@ aws ec2 describe-customer-gateways --region "$REGION" \
     fi
 done
 
+# 20a. Delete EC2 transit gateway VPC attachments BEFORE their route tables / TGWs.
+# A TGW cannot be deleted while it still has attachments (DependencyViolation), and
+# its non-default route tables cannot be deleted while attachments are associated.
+# This teardown previously ran only later during per-VPC cleanup (after 21b), so the
+# TGW deletes in 21b failed and the gateways leaked, accumulating against the
+# per-account limit. Delete attachments first and wait for them to drain.
+echo "Cleaning EC2 test transit gateway VPC attachments..."
+for tgw_id in $(aws ec2 describe-transit-gateways --region "$REGION" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
+    --query "TransitGateways[].TransitGatewayId" --output text 2>/dev/null); do
+    for att_id in $(aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+        --filters "Name=transit-gateway-id,Values=$tgw_id" "Name=state,Values=available,pending,modifying" \
+        --query "TransitGatewayVpcAttachments[].TransitGatewayAttachmentId" --output text 2>/dev/null); do
+        echo "  Deleting EC2 transit gateway VPC attachment: $att_id"
+        aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$att_id" --region "$REGION" 2>/dev/null || true
+    done
+done
+
+echo "Waiting for test transit gateway attachments to drain..."
+for _ in $(seq 1 30); do
+    pending=0
+    for tgw_id in $(aws ec2 describe-transit-gateways --region "$REGION" \
+        --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
+        --query "TransitGateways[].TransitGatewayId" --output text 2>/dev/null); do
+        n=$(aws ec2 describe-transit-gateway-vpc-attachments --region "$REGION" \
+            --filters "Name=transit-gateway-id,Values=$tgw_id" "Name=state,Values=available,pending,modifying,deleting" \
+            --query "length(TransitGatewayVpcAttachments)" --output text 2>/dev/null)
+        pending=$((pending + ${n:-0}))
+    done
+    [[ "$pending" == "0" ]] && break
+    sleep 10
+done
+
 # 21a. Delete EC2 transit gateway route tables with test prefix (before TGWs)
 echo "Cleaning EC2 test transit gateway route tables..."
 aws ec2 describe-transit-gateways --region "$REGION" \
