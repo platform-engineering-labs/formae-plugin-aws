@@ -1,0 +1,71 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/route53/hostedzone.pkl"
+import "@aws/route53/recordsetgroup.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-route53-recordsetgroup-\(testRunID)"
+local domainName = "sdk-\(testRunID).test-formae.io"
+
+// HostedZone dependency - same as create
+local hz = new hostedzone.HostedZone {
+  label = "test-hosted-zone"
+  name = domainName
+  hostedZoneConfig = new hostedzone.HostedZoneConfig {
+    comment = "SDK test hosted zone for RecordSetGroup tests"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Route53 RecordSetGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // HostedZone required for the RecordSetGroup
+  hz
+
+  // RecordSetGroup with the diff exercised: www TTL 300 -> 600 and an extra
+  // value, the TXT record removed, and a new CNAME record added.
+  new recordsetgroup.RecordSetGroup {
+    label = "plugin-sdk-test-recordsetgroup"
+    hostedZoneId = hz.res.id
+    recordSets = new Listing {
+      new recordsetgroup.RecordSet {
+        name = "www.\(domainName)"
+        type = "A"
+        ttl = 600
+        resourceRecords = new Listing {
+          "192.0.2.1"
+          "192.0.2.2"
+        }
+      }
+      new recordsetgroup.RecordSet {
+        name = "cname.\(domainName)"
+        type = "CNAME"
+        ttl = 300
+        resourceRecords = new Listing {
+          "www.\(domainName)"
+        }
+      }
+    }
+  }
+}
