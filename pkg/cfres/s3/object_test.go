@@ -26,6 +26,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mockReadBack stubs the post-write Read (HeadObject + GetObjectTagging) that
+// createWithClient/updateWithClient now perform to populate ResourceProperties.
+func mockReadBack(client *mockS3ObjectClient, ctx context.Context) {
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{}, nil).Maybe()
+	client.On("GetObjectTagging", ctx, mock.Anything).Return(&s3.GetObjectTaggingOutput{}, nil).Maybe()
+}
+
 func TestBuildNativeID(t *testing.T) {
 	id := buildNativeID("my-bucket", "path/to/key")
 	assert.Equal(t, "my-bucket|path/to/key", id)
@@ -136,6 +143,7 @@ func TestCreate_Success(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	result, err := o.createWithClient(ctx, client, &resource.CreateRequest{
 		Properties: propsBytes,
 	})
@@ -144,6 +152,33 @@ func TestCreate_Success(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, "my-bucket|path/to/file.txt", result.ProgressResult.NativeID)
+
+	client.AssertExpectations(t)
+}
+
+func TestCreate_PopulatesResourcePropertiesFromReadBack(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	props := map[string]any{"Bucket": "my-bucket", "Key": "k.txt", "Content": "x"}
+	propsBytes, _ := json.Marshal(props)
+
+	client.On("PutObject", ctx, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType: aws.String("text/plain"),
+	}, nil)
+	client.On("GetObjectTagging", ctx, mock.Anything).Return(&s3.GetObjectTaggingOutput{
+		TagSet: []s3types.Tag{{Key: aws.String("Name"), Value: aws.String("v")}},
+	}, nil)
+
+	o := &Object{}
+	result, err := o.createWithClient(ctx, client, &resource.CreateRequest{Properties: propsBytes})
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult.ResourceProperties)
+	// The persisted create state must carry the read-back Tags, otherwise the
+	// agent stores a Tags-less version at create time.
+	assert.Contains(t, string(result.ProgressResult.ResourceProperties), `"Tags"`)
+	assert.Contains(t, string(result.ProgressResult.ResourceProperties), "Name")
 
 	client.AssertExpectations(t)
 }
@@ -304,6 +339,7 @@ func TestUpdate_Success(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	result, err := o.updateWithClient(ctx, client, &resource.UpdateRequest{
 		NativeID:          "my-bucket|path/to/file.txt",
 		DesiredProperties: desiredBytes,
@@ -339,6 +375,7 @@ func TestCreate_SetsObjectLockRetainUntilDate(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	_, err := o.createWithClient(ctx, client, &resource.CreateRequest{Properties: propsBytes})
 	require.NoError(t, err)
 	client.AssertExpectations(t)
@@ -366,6 +403,7 @@ func TestUpdate_SetsObjectLockFields(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	_, err := o.updateWithClient(ctx, client, &resource.UpdateRequest{
 		NativeID:          "my-bucket|locked.txt",
 		DesiredProperties: desiredBytes,

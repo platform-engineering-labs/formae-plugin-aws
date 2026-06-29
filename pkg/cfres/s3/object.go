@@ -163,11 +163,20 @@ func (o *Object) createWithClient(ctx context.Context, client s3ObjectClient, re
 	}
 
 	nativeID := buildNativeID(bucket, key)
+	// Read back the created object so the agent persists the actual state
+	// (Tags, ETag, VersionId, ServerSideEncryption, …) as ResourceProperties,
+	// matching what a later sync would store. Without this the create-time
+	// stored state omits read-only/collection fields like Tags.
+	readResult, err := o.readWithClient(ctx, client, &resource.ReadRequest{NativeID: nativeID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read back object after create: %w", err)
+	}
 	return &resource.CreateResult{
 		ProgressResult: &resource.ProgressResult{
-			Operation:       resource.OperationCreate,
-			OperationStatus: resource.OperationStatusSuccess,
-			NativeID:        nativeID,
+			Operation:          resource.OperationCreate,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           nativeID,
+			ResourceProperties: json.RawMessage(readResult.Properties),
 		},
 	}, nil
 }
@@ -425,11 +434,18 @@ func (o *Object) updateWithClient(ctx context.Context, client s3ObjectClient, re
 	}
 
 	nativeID := buildNativeID(bucket, key)
+	// Read back the updated object so the agent persists the actual state as
+	// ResourceProperties (see createWithClient).
+	readResult, err := o.readWithClient(ctx, client, &resource.ReadRequest{NativeID: nativeID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read back object after update: %w", err)
+	}
 	return &resource.UpdateResult{
 		ProgressResult: &resource.ProgressResult{
-			Operation:       resource.OperationUpdate,
-			OperationStatus: resource.OperationStatusSuccess,
-			NativeID:        nativeID,
+			Operation:          resource.OperationUpdate,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           nativeID,
+			ResourceProperties: json.RawMessage(readResult.Properties),
 		},
 	}, nil
 }

@@ -134,7 +134,6 @@ open class Object extends formae.Resource {
     objectLockRetainUntilDate: String?
 
     @aws.FieldHint {
-        outputTransformation = formae.transform.capitalizeMemberKeys
         updateMethod = "EntitySet"
         indexField = "Key"
     }
