@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,13 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// mockReadBack stubs the post-write Read (HeadObject + GetObjectTagging) that
+// createWithClient/updateWithClient now perform to populate ResourceProperties.
+func mockReadBack(client *mockS3ObjectClient, ctx context.Context) {
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{}, nil).Maybe()
+	client.On("GetObjectTagging", ctx, mock.Anything).Return(&s3.GetObjectTaggingOutput{}, nil).Maybe()
+}
 
 func TestBuildNativeID(t *testing.T) {
 	id := buildNativeID("my-bucket", "path/to/key")
@@ -135,6 +143,7 @@ func TestCreate_Success(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	result, err := o.createWithClient(ctx, client, &resource.CreateRequest{
 		Properties: propsBytes,
 	})
@@ -143,6 +152,33 @@ func TestCreate_Success(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, "my-bucket|path/to/file.txt", result.ProgressResult.NativeID)
+
+	client.AssertExpectations(t)
+}
+
+func TestCreate_PopulatesResourcePropertiesFromReadBack(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	props := map[string]any{"Bucket": "my-bucket", "Key": "k.txt", "Content": "x"}
+	propsBytes, _ := json.Marshal(props)
+
+	client.On("PutObject", ctx, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType: aws.String("text/plain"),
+	}, nil)
+	client.On("GetObjectTagging", ctx, mock.Anything).Return(&s3.GetObjectTaggingOutput{
+		TagSet: []s3types.Tag{{Key: aws.String("Name"), Value: aws.String("v")}},
+	}, nil)
+
+	o := &Object{}
+	result, err := o.createWithClient(ctx, client, &resource.CreateRequest{Properties: propsBytes})
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult.ResourceProperties)
+	// The persisted create state must carry the read-back Tags, otherwise the
+	// agent stores a Tags-less version at create time.
+	assert.Contains(t, string(result.ProgressResult.ResourceProperties), `"Tags"`)
+	assert.Contains(t, string(result.ProgressResult.ResourceProperties), "Name")
 
 	client.AssertExpectations(t)
 }
@@ -228,6 +264,62 @@ func TestRead_NotFound(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
+func TestRead_TaggingError(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType: aws.String("text/plain"),
+	}, nil)
+
+	client.On("GetObjectTagging", ctx, mock.MatchedBy(func(input *s3.GetObjectTaggingInput) bool {
+		return *input.Bucket == "my-bucket" && *input.Key == "path/to/file.txt"
+	})).Return(
+		(*s3.GetObjectTaggingOutput)(nil),
+		errors.New("AccessDenied: not authorized to perform s3:GetObjectTagging"),
+	)
+
+	o := &Object{}
+	result, err := o.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID: "my-bucket|path/to/file.txt",
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "my-bucket/path/to/file.txt")
+
+	client.AssertExpectations(t)
+}
+
+func TestRead_NoTags(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	client.On("HeadObject", ctx, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType: aws.String("text/plain"),
+	}, nil)
+
+	client.On("GetObjectTagging", ctx, mock.Anything).Return(&s3.GetObjectTaggingOutput{
+		TagSet: []s3types.Tag{},
+	}, nil)
+
+	o := &Object{}
+	result, err := o.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID: "my-bucket|path/to/file.txt",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var props map[string]any
+	err = json.Unmarshal([]byte(result.Properties), &props)
+	require.NoError(t, err)
+	_, hasTags := props["Tags"]
+	assert.False(t, hasTags, "Tags should be omitted for a genuinely untagged object")
+
+	client.AssertExpectations(t)
+}
+
 func TestUpdate_Success(t *testing.T) {
 	ctx := context.Background()
 	client := &mockS3ObjectClient{}
@@ -247,6 +339,7 @@ func TestUpdate_Success(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	result, err := o.updateWithClient(ctx, client, &resource.UpdateRequest{
 		NativeID:          "my-bucket|path/to/file.txt",
 		DesiredProperties: desiredBytes,
@@ -282,6 +375,7 @@ func TestCreate_SetsObjectLockRetainUntilDate(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	_, err := o.createWithClient(ctx, client, &resource.CreateRequest{Properties: propsBytes})
 	require.NoError(t, err)
 	client.AssertExpectations(t)
@@ -309,6 +403,7 @@ func TestUpdate_SetsObjectLockFields(t *testing.T) {
 	})).Return(&s3.PutObjectOutput{}, nil)
 
 	o := &Object{}
+	mockReadBack(client, ctx)
 	_, err := o.updateWithClient(ctx, client, &resource.UpdateRequest{
 		NativeID:          "my-bucket|locked.txt",
 		DesiredProperties: desiredBytes,
