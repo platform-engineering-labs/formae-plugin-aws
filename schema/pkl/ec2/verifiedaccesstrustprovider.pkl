@@ -23,7 +23,7 @@ open class OidcOptions extends formae.SubResource {
     authorizationEndpoint: (String|formae.Resolvable)?
     clientId: (String|formae.Resolvable)?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
     clientSecret: (String|formae.Resolvable)?
 
     issuer: (String|formae.Resolvable)?

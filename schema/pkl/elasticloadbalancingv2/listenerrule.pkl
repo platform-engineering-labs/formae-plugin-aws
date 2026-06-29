@@ -40,7 +40,7 @@ open class AuthenticateOidcConfig extends formae.SubResource {
     authenticationRequestExtraParams: Mapping<String, Any>?
     authorizationEndpoint: String
     clientId: String
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
     clientSecret: (String|formae.Resolvable)?
     issuer: String
     onUnauthenticatedRequest: String?
