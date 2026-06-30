@@ -372,15 +372,16 @@ open class LaunchTemplate extends formae.Resource {
     @aws.FieldHint{
         writeOnly = true
         requiredOnCreate = true
+        requiredOnUpdate = true
     }
     launchTemplateData: LaunchTemplateData?
 
     @aws.FieldHint{createOnly = true}
     launchTemplateName: String?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
     tagSpecifications: Listing<TagSpecification>?
 
-    @aws.FieldHint{writeOnly = true}
+    @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
     versionDescription: String?
 }
