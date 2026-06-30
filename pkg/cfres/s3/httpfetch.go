@@ -31,10 +31,11 @@ var dialIPGuard = func(ip net.IP) error {
 }
 
 // isDisallowedIP reports whether ip is in a range that must not be dialed
-// (loopback, link-local unicast/multicast, private/RFC-1918, IMDS endpoint).
+// (unspecified 0.0.0.0/::, loopback, link-local unicast/multicast,
+// private/RFC-1918, IMDS endpoint).
 func isDisallowedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() ||
-		ip.Equal(net.ParseIP("169.254.169.254"))
+	return ip.IsUnspecified() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.Equal(net.ParseIP("169.254.169.254"))
 }
 
 func guardURL(raw string) error {

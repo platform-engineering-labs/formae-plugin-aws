@@ -26,7 +26,7 @@ func TestGuardURL_RejectsMetadataIP(t *testing.T) {
 	}
 }
 func TestGuardURL_RejectsLoopbackAndRFC1918(t *testing.T) {
-	for _, u := range []string{"https://127.0.0.1/x", "https://10.0.0.5/x", "https://192.168.1.1/x"} {
+	for _, u := range []string{"https://127.0.0.1/x", "https://10.0.0.5/x", "https://192.168.1.1/x", "https://0.0.0.0/x", "https://[::]/x"} {
 		if err := guardURL(u); err == nil {
 			t.Fatalf("expected %s to be rejected", u)
 		}
