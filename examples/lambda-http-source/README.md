@@ -139,3 +139,25 @@ not force-resent on every reconcile.)
 ```bash
 formae destroy --stack lambda-http-source
 ```
+
+**Note on the versioned bucket.** `destroy` removes every resource except the
+artifacts bucket, which fails with *"bucket not empty - delete all versions"*.
+This is by design: formae will not delete a data store that still holds data, and
+S3 keeps prior **versions** (and a delete-marker) after the object is removed
+because the bucket is versioned. Empty the versions first, then re-run destroy:
+
+```bash
+BUCKET=<your artifacts bucket>; REGION=<your region>
+
+# delete all object versions
+aws s3api delete-objects --bucket "$BUCKET" --region "$REGION" --delete \
+  "$(aws s3api list-object-versions --bucket "$BUCKET" --region "$REGION" \
+     --output json --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}')"
+
+# delete all delete-markers
+aws s3api delete-objects --bucket "$BUCKET" --region "$REGION" --delete \
+  "$(aws s3api list-object-versions --bucket "$BUCKET" --region "$REGION" \
+     --output json --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}')"
+
+formae destroy --stack lambda-http-source   # now the empty bucket is removed
+```
