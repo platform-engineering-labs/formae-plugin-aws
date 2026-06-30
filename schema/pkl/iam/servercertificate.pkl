@@ -11,6 +11,18 @@ import "../aws.pkl"
 
 const type = "AWS::IAM::ServerCertificate"
 
+open class ServerCertificateResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: ServerCertificateResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden serverCertificateName: ServerCertificateResolvable = (this) {
+        property = "ServerCertificateName"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "ServerCertificateName"
@@ -46,4 +58,11 @@ open class ServerCertificate extends formae.Resource {
         indexField = "Key"
     }
     tags: Listing<aws.Tag>?
+
+    hidden parent = this
+
+    hidden res: ServerCertificateResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
