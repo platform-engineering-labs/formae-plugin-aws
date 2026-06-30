@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -573,9 +574,13 @@ func TestResolveBody_HttpSource_HeadersAndExtract(t *testing.T) {
 	}))
 	defer srv.Close()
 	// Override guardURLFn so the http:// test server is not rejected by the https-only check.
-	orig := guardURLFn
+	origGuard := guardURLFn
 	guardURLFn = func(raw string) error { return nil }
-	defer func() { guardURLFn = orig }()
+	defer func() { guardURLFn = origGuard }()
+	// Override dialIPGuard so the loopback httptest server is not blocked at dial time.
+	origDial := dialIPGuard
+	dialIPGuard = func(ip net.IP) error { return nil }
+	defer func() { dialIPGuard = origDial }()
 	props := map[string]any{"Source": map[string]any{
 		"Url":     srv.URL,
 		"Headers": map[string]any{"Authorization": "Bearer tok"},
@@ -608,9 +613,13 @@ func TestResolveBody_HttpSource_ErrorRedactsHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 	// Override guardURLFn so the http:// test server is not rejected by the https-only check.
-	orig := guardURLFn
+	origGuard := guardURLFn
 	guardURLFn = func(raw string) error { return nil }
-	defer func() { guardURLFn = orig }()
+	defer func() { guardURLFn = origGuard }()
+	// Override dialIPGuard so the loopback httptest server is not blocked at dial time.
+	origDial := dialIPGuard
+	dialIPGuard = func(ip net.IP) error { return nil }
+	defer func() { dialIPGuard = origDial }()
 	props := map[string]any{"Source": map[string]any{
 		"Url": srv.URL, "Headers": map[string]any{"Authorization": "Bearer SUPERSECRET"},
 	}}

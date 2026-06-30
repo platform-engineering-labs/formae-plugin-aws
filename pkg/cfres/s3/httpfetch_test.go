@@ -34,16 +34,17 @@ func TestGuardURL_RejectsLoopbackAndRFC1918(t *testing.T) {
 }
 func TestHardenedClient_DropsAuthOnHostChange(t *testing.T) {
 	// stub DNS so guardURL accepts the httptest TLS servers (which bind to loopback)
-	orig := lookupIP
+	origLookup := lookupIP
 	lookupIP = func(host string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("93.184.216.34")}, nil
 	}
-	defer func() { lookupIP = orig }()
+	defer func() { lookupIP = origLookup }()
 
-	// blob server records whether it saw an Authorization header
-	var sawAuth bool
+	// blob server records whether it saw Authorization or X-Api-Key headers
+	var sawAuth, sawAPIKey bool
 	blob := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawAuth = r.Header.Get("Authorization") != ""
+		sawAPIKey = r.Header.Get("X-Api-Key") != ""
 		_, _ = w.Write([]byte("ok"))
 	}))
 	defer blob.Close()
@@ -54,13 +55,17 @@ func TestHardenedClient_DropsAuthOnHostChange(t *testing.T) {
 	defer api.Close()
 
 	client := newHardenedClient(30 * time.Second)
-	// accept self-signed certs from both test servers
+	// Replace transport to accept self-signed test certs. This loses the
+	// DialContext Control hook, but dialIPGuard is not under test here —
+	// header stripping is. lookupIP is already stubbed to return a public IP
+	// so guardURL in CheckRedirect won't reject the loopback hosts.
 	client.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only
 	}
 
 	req, _ := http.NewRequest(http.MethodGet, api.URL, nil)
 	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("X-Api-Key", "secret2")
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("request failed (guard rejected redirect): %v", err)
@@ -68,6 +73,30 @@ func TestHardenedClient_DropsAuthOnHostChange(t *testing.T) {
 	_ = resp.Body.Close()
 	if sawAuth {
 		t.Fatal("Authorization leaked to the redirect target")
+	}
+	if sawAPIKey {
+		t.Fatal("X-Api-Key leaked to the redirect target")
+	}
+}
+
+func TestHardenedClient_BlocksRebindingDial(t *testing.T) {
+	// Do NOT override dialIPGuard — the point is to prove the Control hook
+	// blocks the actual loopback dial even when guardURL would have been fooled
+	// by a DNS-rebinding attack (pre-dial check saw a public IP; actual TCP
+	// connect goes to 127.0.0.1).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("should not reach here"))
+	}))
+	defer srv.Close()
+
+	// Use newHardenedClient without replacing the transport so the DialContext
+	// Control hook remains active.
+	client := newHardenedClient(30 * time.Second)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	_, err := client.Do(req)
+	if err == nil {
+		t.Fatal("expected dial to loopback to be blocked by dialIPGuard")
 	}
 }
 func TestHardenedClient_RejectsDowngradeToHTTP(t *testing.T) {
