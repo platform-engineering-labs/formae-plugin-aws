@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -559,4 +560,62 @@ func TestList_MissingBucketName(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "BucketName")
+}
+
+func TestResolveBody_HttpSource_HeadersAndExtract(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write(zipWith(t, map[string]string{"carys-cars.jar": "JAR"})) // reuse Task 4 helper
+	}))
+	defer srv.Close()
+	// Override guardURLFn so the http:// test server is not rejected by the https-only check.
+	orig := guardURLFn
+	guardURLFn = func(raw string) error { return nil }
+	defer func() { guardURLFn = orig }()
+	props := map[string]any{"Source": map[string]any{
+		"Url":     srv.URL,
+		"Headers": map[string]any{"Authorization": "Bearer tok"},
+		"Extract": "carys-cars.jar",
+	}}
+	reader, closer, err := resolveBodyWithCloser(props)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer()
+	if gotAuth != "Bearer tok" {
+		t.Fatalf("auth header not sent: %q", gotAuth)
+	}
+	b, _ := io.ReadAll(reader)
+	if string(b) != "JAR" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+func TestResolveBody_HttpSource_RejectsHTTP(t *testing.T) {
+	props := map[string]any{"Source": map[string]any{"Url": "http://example.com/x"}}
+	if _, _, err := resolveBodyWithCloser(props); err == nil {
+		t.Fatal("expected http:// rejection")
+	}
+}
+
+func TestResolveBody_HttpSource_ErrorRedactsHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	// Override guardURLFn so the http:// test server is not rejected by the https-only check.
+	orig := guardURLFn
+	guardURLFn = func(raw string) error { return nil }
+	defer func() { guardURLFn = orig }()
+	props := map[string]any{"Source": map[string]any{
+		"Url": srv.URL, "Headers": map[string]any{"Authorization": "Bearer SUPERSECRET"},
+	}}
+	_, _, err := resolveBodyWithCloser(props)
+	if err == nil {
+		t.Fatal("expected 403 error")
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Fatal("error leaked the auth token")
+	}
 }

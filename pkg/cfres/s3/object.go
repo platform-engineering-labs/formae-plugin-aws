@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -68,8 +69,15 @@ func parseNativeID(nativeID string) (bucket, key string, err error) {
 	return parts[0], parts[1], nil
 }
 
+const (
+	maxDownloadBytes    = 256 << 20
+	maxDecompressedBytes = 256 << 20
+	fetchTimeout        = 5 * time.Minute
+)
+
 // resolveBodyWithCloser returns an io.Reader for the object body and a closer function.
 // Exactly one of Content, ContentBase64, or Source may be set. If none is set, returns nil reader.
+// Source may be a plain URL string (legacy) or an HttpSource map with Url/Headers/Extract keys.
 func resolveBodyWithCloser(props map[string]any) (io.Reader, func(), error) {
 	content, hasContent := props["Content"]
 	contentBase64, hasBase64 := props["ContentBase64"]
@@ -102,24 +110,90 @@ func resolveBodyWithCloser(props map[string]any) (io.Reader, func(), error) {
 	}
 
 	if hasSource {
-		sourceStr := source.(string)
-		resp, err := http.Get(sourceStr) //nolint:gosec // Source URL is user-provided infrastructure config
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to fetch source URL %s: %w", sourceStr, err)
+		switch s := source.(type) {
+		case string:
+			return fetchPlainURL(s)
+		case map[string]any:
+			return fetchHTTPSource(s)
+		default:
+			return nil, nil, fmt.Errorf("invalid source type")
 		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return nil, nil, fmt.Errorf("source URL %s returned status %d", sourceStr, resp.StatusCode)
-		}
-		// Buffer into memory so the SDK can determine Content-Length
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to read source URL %s: %w", sourceStr, err)
-		}
-		return bytes.NewReader(data), func() {}, nil
 	}
 
 	return nil, func() {}, nil
+}
+
+// fetchPlainURL fetches a URL using a plain http.Get (legacy string-Source path).
+func fetchPlainURL(sourceStr string) (io.Reader, func(), error) {
+	resp, err := http.Get(sourceStr) //nolint:gosec // Source URL is user-provided infrastructure config
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch source URL %s: %w", sourceStr, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("source URL %s returned status %d", sourceStr, resp.StatusCode)
+	}
+	// Buffer into memory so the SDK can determine Content-Length
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read source URL %s: %w", sourceStr, err)
+	}
+	return bytes.NewReader(data), func() {}, nil
+}
+
+// redactErr strips the URL (including any signed query params or auth tokens)
+// from a *url.Error, returning a sanitised version safe to include in error messages.
+func redactErr(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s request failed: %w", urlErr.Op, urlErr.Err)
+	}
+	return err
+}
+
+// fetchHTTPSource fetches a URL using the hardened HTTP client, optionally adding
+// request headers and extracting a zip member from the response body.
+// Keys follow PascalCase (Url, Headers, Extract) as produced by the PKL schema.
+func fetchHTTPSource(m map[string]any) (io.Reader, func(), error) {
+	rawURL, _ := m["Url"].(string)
+	if err := guardURLFn(rawURL); err != nil {
+		return nil, nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if hdrs, ok := m["Headers"].(map[string]any); ok {
+		for k, v := range hdrs {
+			if vs, ok := v.(string); ok {
+				req.Header.Set(k, vs)
+			}
+		}
+	}
+	resp, err := newHardenedClient(fetchTimeout).Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch source (host %s): %w", req.URL.Host, redactErr(err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		// NEVER include headers or the full URL — status + host only
+		return nil, nil, fmt.Errorf("source fetch returned %d from host %s", resp.StatusCode, req.URL.Host)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed reading source: %w", err)
+	}
+	if int64(len(data)) > maxDownloadBytes {
+		return nil, nil, fmt.Errorf("source exceeds max download size")
+	}
+	if member, ok := m["Extract"].(string); ok && member != "" {
+		out, err := extractZipMember(data, member, maxDecompressedBytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		return bytes.NewReader(out), func() {}, nil
+	}
+	return bytes.NewReader(data), func() {}, nil
 }
 
 func (o *Object) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {

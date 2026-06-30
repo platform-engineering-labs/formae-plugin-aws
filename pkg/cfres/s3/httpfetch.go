@@ -16,6 +16,9 @@ import (
 // lookupIP is the DNS resolver used by guardURL; overridable in tests.
 var lookupIP = net.LookupIP
 
+// guardURLFn is the URL guard used by fetchHTTPSource; overridable in tests.
+var guardURLFn = guardURL
+
 func guardURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
