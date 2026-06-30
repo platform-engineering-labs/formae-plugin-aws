@@ -12,8 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -559,4 +564,136 @@ func TestList_MissingBucketName(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "BucketName")
+}
+
+func TestResolveBody_HttpSource_HeadersAndExtract(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write(zipWith(t, map[string]string{"carys-cars.jar": "JAR"})) // reuse Task 4 helper
+	}))
+	defer srv.Close()
+	// Override guardURLFn so the http:// test server is not rejected by the https-only check.
+	origGuard := guardURLFn
+	guardURLFn = func(raw string) error { return nil }
+	defer func() { guardURLFn = origGuard }()
+	// Override dialIPGuard so the loopback httptest server is not blocked at dial time.
+	origDial := dialIPGuard
+	dialIPGuard = func(ip net.IP) error { return nil }
+	defer func() { dialIPGuard = origDial }()
+	props := map[string]any{"Source": map[string]any{
+		"Url":     srv.URL,
+		"Headers": map[string]any{"Authorization": "Bearer tok"},
+		"Extract": "carys-cars.jar",
+	}}
+	reader, closer, err := resolveBodyWithCloser(props)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer()
+	if gotAuth != "Bearer tok" {
+		t.Fatalf("auth header not sent: %q", gotAuth)
+	}
+	b, _ := io.ReadAll(reader)
+	if string(b) != "JAR" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+func TestResolveBody_HttpSource_RejectsHTTP(t *testing.T) {
+	props := map[string]any{"Source": map[string]any{"Url": "http://example.com/x"}}
+	if _, _, err := resolveBodyWithCloser(props); err == nil {
+		t.Fatal("expected http:// rejection")
+	}
+}
+
+func TestResolveBody_HttpSource_ErrorRedactsHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	// Override guardURLFn so the http:// test server is not rejected by the https-only check.
+	origGuard := guardURLFn
+	guardURLFn = func(raw string) error { return nil }
+	defer func() { guardURLFn = origGuard }()
+	// Override dialIPGuard so the loopback httptest server is not blocked at dial time.
+	origDial := dialIPGuard
+	dialIPGuard = func(ip net.IP) error { return nil }
+	defer func() { dialIPGuard = origDial }()
+	props := map[string]any{"Source": map[string]any{
+		"Url": srv.URL, "Headers": map[string]any{"Authorization": "Bearer SUPERSECRET"},
+	}}
+	_, _, err := resolveBodyWithCloser(props)
+	if err == nil {
+		t.Fatal("expected 403 error")
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Fatal("error leaked the auth token")
+	}
+}
+
+// TestResolveBody_MutualExclusivity_HttpSource asserts that providing both a
+// Content string and a structured HttpSource (Source map) is rejected. The
+// count>1 guard in resolveBodyWithCloser must treat a Source map as one source,
+// so that mixing it with Content triggers the mutual-exclusion error.
+func TestResolveBody_MutualExclusivity_HttpSource(t *testing.T) {
+	props := map[string]any{
+		"Content": "x",
+		"Source":  map[string]any{"Url": "https://example.com/x"},
+	}
+	if _, _, err := resolveBodyWithCloser(props); err == nil {
+		t.Fatal("expected mutual-exclusion error with Content + Source")
+	}
+}
+
+func objectPKLPath() string {
+	_, filename, _, _ := runtime.Caller(0)
+	// pkg/cfres/s3/ -> (repo root)/schema/pkl/s3/object.pkl
+	root := filepath.Join(filepath.Dir(filename), "..", "..", "..", "schema", "pkl", "s3")
+	return filepath.Join(root, "object.pkl")
+}
+
+// TestSchema_SourceIsWriteOnly asserts that the `source` field in object.pkl
+// carries @aws.FieldHint { writeOnly = true } and does NOT carry
+// requiredOnUpdate = true. The writeOnly annotation tells the agent the field
+// is never returned by Read, preventing phantom-redeploy loops on every sync.
+// requiredOnUpdate must stay absent: S3 does not REDACT the source on read
+// (it simply never returns it), so the agent must not treat an absent source
+// field after a Read as a reason to trigger an update.
+//
+// This is a textual test against the PKL source — the same approach used for
+// ECS attachesTo annotations — because running ExtractSchema requires a live
+// pkl CLI subprocess and network access, making it unsuitable for make test-unit.
+func TestSchema_SourceIsWriteOnly(t *testing.T) {
+	content, err := os.ReadFile(objectPKLPath())
+	if err != nil {
+		t.Fatalf("could not read object.pkl: %v", err)
+	}
+	src := string(content)
+
+	// Find the `source` field declaration and its preceding annotation block.
+	lines := strings.Split(src, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, "source:") {
+			continue
+		}
+		// Collect annotation lines immediately preceding this field declaration.
+		// They form a block starting with @aws.FieldHint.
+		annotationBlock := ""
+		for j := i - 1; j >= 0; j-- {
+			trimmed := strings.TrimSpace(lines[j])
+			if trimmed == "" {
+				break
+			}
+			annotationBlock = trimmed + "\n" + annotationBlock
+		}
+		if !strings.Contains(annotationBlock, "writeOnly = true") {
+			t.Errorf("source field: expected @aws.FieldHint { writeOnly = true } before source: declaration, got annotation block:\n%s", annotationBlock)
+		}
+		if strings.Contains(annotationBlock, "requiredOnUpdate") {
+			t.Errorf("source field: requiredOnUpdate must not be set on source — it causes phantom-redeploy loops because S3 never returns the source on Read; annotation block:\n%s", annotationBlock)
+		}
+		return
+	}
+	t.Fatal("source: field declaration not found in object.pkl")
 }

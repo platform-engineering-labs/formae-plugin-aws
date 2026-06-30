@@ -43,6 +43,20 @@ typealias ChecksumAlgorithm = "CRC32"|"CRC32C"|"SHA1"|"SHA256"|"CRC64NVME"
 
 typealias ObjectCannedACL = "private"|"public-read"|"public-read-write"|"authenticated-read"|"aws-exec-read"|"bucket-owner-read"|"bucket-owner-full-control"
 
+@aws.SubResourceHint
+open class HttpSource extends formae.SubResource {
+    /// URL to fetch (must be https://). String or a resolvable.
+    url: (String | formae.Resolvable)
+
+    /// HTTP request headers for the INITIAL request. Values may embed a
+    /// resolvable, e.g. formae.Embed("Bearer \(secret.res.value)").
+    @aws.FieldHint { writeOnly = true }
+    headers: (Mapping<String, String>)?
+
+    /// Extract exactly this member from a downloaded zip; omit to upload verbatim.
+    extract: String?
+}
+
 typealias ObjectLockLegalHoldStatus = "ON"|"OFF"
 
 typealias ObjectLockMode = "GOVERNANCE"|"COMPLIANCE"
@@ -80,7 +94,7 @@ open class Object extends formae.Resource {
     @aws.FieldHint {
         writeOnly = true
     }
-    source: String?
+    source: (String | HttpSource)?
 
     @aws.FieldHint
     contentType: String?
