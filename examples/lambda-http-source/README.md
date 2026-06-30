@@ -39,6 +39,34 @@ publish release vX.Y.Z (asset: handler.zip)
 4. Pick a globally-unique bucket name — edit `bucketName` in `main.pkl`
    (`...-artifacts-changeme`).
 
+## The handler and its release
+
+The function code lives in [`handler/index.mjs`](handler/index.mjs) — a minimal
+Node.js 20 handler that logs the event and returns:
+
+```js
+export const handler = async (event) => {
+  console.log("OrderPlaced received:", JSON.stringify(event.detail ?? event));
+  return { ok: true, orderId: event?.detail?.orderId ?? null };
+};
+```
+
+The forma never sees this code directly — it fetches a **release asset**. So you
+package the handler and publish it as a release, once per version:
+
+```bash
+cd examples/lambda-http-source/handler
+zip ../handler.zip index.mjs
+
+# Publish it as the v1.0.0 release asset of your repo (GitHub CLI shown):
+gh release create v1.0.0 ../handler.zip --repo YOUR_ORG/YOUR_APP --title v1.0.0
+```
+
+That makes `https://github.com/YOUR_ORG/YOUR_APP/releases/download/v1.0.0/handler.zip`
+resolve — which is exactly the URL the `HttpSource` in `main.pkl` is templated to
+build from `app-version`. (For a private repo the download needs a token; see the
+`headers` note in `main.pkl` and the Variants section below.)
+
 ## Deploy
 
 Apply, passing the release version you want to deploy:
@@ -49,8 +77,8 @@ formae apply --properties app-version=1.0.0 examples/lambda-http-source/main.pkl
 
 What happens: the agent creates the versioned bucket, **fetches the release asset
 and uploads it** as `handler-1.0.0.zip` (recording its `VersionId`), creates the
-role / log group / function (with `Code` pointing at that exact object version),
-then the event bus, rule, and invoke permission.
+role and function (with `Code` pointing at that exact object version), then the
+event bus, rule, and invoke permission.
 
 Verify it landed:
 
