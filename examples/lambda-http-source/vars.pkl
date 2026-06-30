@@ -1,0 +1,23 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+import "@formae/formae.pkl"
+import "@aws/aws.pkl"
+
+projectName = "lambda-http-source"
+region = "us-east-1"
+
+stack: formae.Stack = new {
+  label = "lambda-http-source"
+  description = "Event-driven Lambda whose code is fetched from a versioned release artifact"
+}
+
+target: formae.Target = new formae.Target {
+  label = "lambda-http-source-target"
+  config = new aws.Config {
+    region = module.region
+  }
+}
