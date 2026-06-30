@@ -1,0 +1,160 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+/// Event-driven Lambda whose deployment package is delivered by a versioned
+/// release artifact, fetched over HTTPS by the agent (no bytes through the CLI).
+///
+/// Demonstrates, end to end:
+///   * AWS::S3::Object with a structured `HttpSource` — the agent fetches the
+///     deployment zip from a release URL and uploads it to a versioned bucket.
+///   * AWS::Lambda::Function whose `Code.s3ObjectVersion` is the S3 object's
+///     VersionId, so a new release => new VersionId => a genuine redeploy, and
+///     an unchanged re-apply => same VersionId => NO redeploy (no phantom churn).
+///   * AWS::Events::EventBus + AWS::Events::Rule routing matching events to the
+///     Lambda, with an AWS::Lambda::Permission granting EventBridge invoke.
+///
+/// Release loop (see README): publish a release `vX.Y.Z` whose asset is the
+/// handler zip, then `formae apply --properties app-version=X.Y.Z`.
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/object.pkl"
+import "@aws/lambda/func.pkl"
+import "@aws/lambda/permission.pkl"
+import "@aws/iam/role.pkl"
+import "@aws/events/eventbus.pkl"
+import "@aws/events/rule.pkl"
+
+import "vars.pkl"
+
+// The release tag of the deployment package. Required on every apply:
+//   formae apply --properties app-version=1.0.0 examples/lambda-http-source/main.pkl
+// Changing it is the redeploy signal (see the `pkg` object below).
+local appVersion = (new formae.Prop { flag = "app-version"; default = "1.0.0" }).value
+
+// ── Artifact bucket (versioning ON) ─────────────────────────────────────────
+// Versioning must be enabled so each uploaded package gets a distinct VersionId —
+// that VersionId is what drives (and gates) Lambda redeploys.
+//
+// NOTE: S3 bucket names are globally unique. Change this to something you own.
+local artifactsBucket = new bucket.Bucket {
+  label = "ArtifactsBucket"
+  bucketName = "\(vars.projectName)-artifacts-changeme"
+  versioningConfiguration = new bucket.VersioningConfiguration { status = "Enabled" }
+}
+
+// ── Deployment package, fetched from a versioned release asset (HttpSource) ──
+// The agent GETs the URL over HTTPS and uploads the body to S3. The URL is
+// templated from `app-version`, so bumping the property points at a new release
+// => the agent re-fetches => a new S3 VersionId => the Lambda redeploys.
+//
+// This release asset is the deployment zip itself, so no `extract` is needed.
+// (Use `extract = "handler.zip"` only when the URL returns a zip that *wraps*
+//  the artifact, e.g. a GitHub Actions artifact, which is always double-zipped.)
+local pkg = new object.Object {
+  label = "HandlerPackage"
+  bucket = artifactsBucket.res.bucketName
+  key = "handler-\(appVersion).zip"
+  source = new object.HttpSource {
+    url = "https://github.com/YOUR_ORG/YOUR_APP/releases/download/v\(appVersion)/handler.zip"
+
+    // For a PRIVATE repo, send a token. The header value is writeOnly (never
+    // persisted in cleartext); the agent reads the token from its own environment:
+    //
+    // headers = new Mapping<String, String> {
+    //   ["Authorization"] = "Bearer \(read("env:GITHUB_TOKEN"))"
+    // }
+  }
+}
+
+// ── Lambda execution role ───────────────────────────────────────────────────
+local execRole = new role.Role {
+  label = "HandlerRole"
+  roleName = "\(vars.projectName)-handler-role"
+  assumeRolePolicyDocument = new Dynamic {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] { ["Service"] = "lambda.amazonaws.com" }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+  managedPolicyArns { "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }
+}
+
+// ── The function ────────────────────────────────────────────────────────────
+// `Code` is sourced from the S3 object. `s3ObjectVersion = pkg.res.versionId`
+// makes the resolved VersionId the redeploy signal: same package => same
+// VersionId => no diff => no redeploy; new release => new VersionId => redeploy.
+// (The function logs to its default group, /aws/lambda/<functionName>.)
+local handler = new func.Function {
+  label = "Handler"
+  functionName = "\(vars.projectName)-handler"
+  runtime = "nodejs20.x"
+  architectures { "arm64" }
+  handler = "index.handler"
+  role = execRole.res.arn
+  memorySize = 256
+  timeout = 10
+  code = new func.Code {
+    s3Bucket = pkg.res.bucket
+    s3Key = pkg.res.key
+    s3ObjectVersion = pkg.res.versionId
+  }
+}
+
+// ── EventBridge: a custom bus + a rule that routes matching events to the Lambda ─
+local bus = new eventbus.EventBus {
+  label = "AppBus"
+  name = "\(vars.projectName)-bus"
+}
+
+// Fires the Lambda for any "OrderPlaced" event from source "com.example.orders".
+// (A schedule would use `scheduleExpression` instead, but scheduled rules must
+//  live on the default bus; custom buses use event patterns.)
+local routeRule = new rule.Rule {
+  label = "RouteRule"
+  name = "\(vars.projectName)-route"
+  eventBusName = bus.res.name
+  eventPattern = new Dynamic {
+    ["source"] { "com.example.orders" }
+    ["detail-type"] { "OrderPlaced" }
+  }
+  state = "ENABLED"
+  targets {
+    new {
+      id = "handler"
+      arn = handler.res.arn
+    }
+  }
+}
+
+// Allow EventBridge to invoke the function, scoped to this rule.
+local invokePermission = new permission.Permission {
+  label = "EventBridgeInvoke"
+  functionName = handler.res.functionName
+  action = "lambda:InvokeFunction"
+  principal = "events.amazonaws.com"
+  sourceArn = routeRule.res.arn
+}
+
+forma {
+  vars.stack
+  vars.target
+
+  artifactsBucket
+  pkg
+
+  execRole
+  handler
+
+  bus
+  routeRule
+  invokePermission
+}
