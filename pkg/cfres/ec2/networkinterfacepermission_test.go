@@ -191,6 +191,30 @@ func TestNetworkInterfacePermission_Read_NotFound_ByErrorCode(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
+// EC2 returns the not-found code with inconsistent "Id"/"ID" casing across the
+// network-interface family. The lowercase-"Id" form is what a deleted permission
+// yields in practice (this is the out-of-band-delete sync path); classification
+// must be case-insensitive so sync tombstones the resource instead of erroring.
+func TestNetworkInterfacePermission_Read_NotFound_ByErrorCode_LowercaseId(t *testing.T) {
+	ctx := context.Background()
+	client := &mockNetworkInterfacePermissionClient{}
+
+	client.On("DescribeNetworkInterfacePermissions", ctx, mock.Anything).Return(
+		(*ec2sdk.DescribeNetworkInterfacePermissionsOutput)(nil),
+		&fakeNIPAPIError{code: "InvalidNetworkInterfacePermissionId.NotFound"},
+	)
+
+	nip := &NetworkInterfacePermission{}
+	result, err := nip.readWithClient(ctx, client, &resource.ReadRequest{
+		NativeID:     "eni-perm-gone",
+		ResourceType: "AWS::EC2::NetworkInterfacePermission",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
+	client.AssertExpectations(t)
+}
+
 func TestNetworkInterfacePermission_Read_NotFound_EmptyList(t *testing.T) {
 	ctx := context.Background()
 	client := &mockNetworkInterfacePermissionClient{}

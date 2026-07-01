@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -23,6 +24,9 @@ import (
 
 // errCodeNetworkInterfacePermissionNotFound is the EC2 error code returned when
 // a permission id does not exist; it is the only code that maps to NotFound.
+// EC2 is inconsistent about the "Id"/"ID" casing of this family of codes (e.g.
+// InvalidNetworkInterfaceAttachmentId.Malformed vs InvalidNetworkInterfaceID.NotFound),
+// so the match below is case-insensitive.
 const errCodeNetworkInterfacePermissionNotFound = "InvalidNetworkInterfacePermissionID.NotFound"
 
 type networkInterfacePermissionClientInterface interface {
@@ -63,7 +67,7 @@ func parseNetworkInterfacePermissionNativeID(nativeID string) (string, error) {
 func isNetworkInterfacePermissionNotFound(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
-		return apiErr.ErrorCode() == errCodeNetworkInterfacePermissionNotFound
+		return strings.EqualFold(apiErr.ErrorCode(), errCodeNetworkInterfacePermissionNotFound)
 	}
 	return false
 }
