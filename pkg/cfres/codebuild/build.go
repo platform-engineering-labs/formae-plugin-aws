@@ -255,6 +255,16 @@ func resourceNames(repoURI, tag string) (projectName, roleName string) {
 // imageURI returns the mutable registry/repo:tag reference.
 func imageURI(repoURI, tag string) string { return repoURI + ":" + tag }
 
+// accountFromRoleArn extracts the account id from an IAM role ARN
+// (arn:aws:iam::<account>:role/<name>), or "" if the ARN is not in that shape.
+func accountFromRoleArn(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 || parts[2] != "iam" {
+		return ""
+	}
+	return parts[4]
+}
+
 // policyDocument, policyStatement model an IAM policy for JSON marshaling.
 type policyDocument struct {
 	Version   string            `json:"Version"`

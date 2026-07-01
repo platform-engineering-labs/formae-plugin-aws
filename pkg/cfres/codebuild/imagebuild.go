@@ -238,6 +238,13 @@ func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op reso
 	if err != nil {
 		return nil, err
 	}
+	// The CodeBuild project's log group lives in the target account (the account of
+	// the service role), and the inline policy grants logs there; a push target in a
+	// different account would build (if its repository policy allowed the push) but
+	// its role could not create or write that log group. Require the same account.
+	if acct := accountFromRoleArn(roleArn); acct != "" && acct != ref.AccountID {
+		return nil, fmt.Errorf("ImageBuild: ecrRepositoryUri account %q must match the target account %q", ref.AccountID, acct)
+	}
 	if err := a.ensureProject(ctx, cbClient, n, projectName, roleArn); err != nil {
 		return nil, err
 	}

@@ -141,6 +141,32 @@ func TestCreateRejectsCrossRegionRepository(t *testing.T) {
 	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
 }
 
+// TestCreateRejectsCrossAccountRepository asserts a push target in a different
+// account than the target (the account of the service role) is rejected before any
+// build starts: the CodeBuild log group is created in the target account and the
+// role only has permission there.
+func TestCreateRejectsCrossAccountRepository(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	iam := &mockIAMClient{}
+	p := newTestProvisioner(cb, nil, iam)
+
+	iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{}, &iamtypes.NoSuchEntityException{})
+	iam.On("CreateRole", mock.Anything, mock.Anything).Return(&iamsdk.CreateRoleOutput{
+		Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::123456789012:role/formae-imgbuild-x")},
+	}, nil)
+	iam.On("PutRolePolicy", mock.Anything, mock.Anything).Return(&iamsdk.PutRolePolicyOutput{}, nil)
+
+	props, _ := json.Marshal(map[string]any{
+		"EcrRepositoryUri": "999999999999.dkr.ecr.us-east-1.amazonaws.com/formae-agent",
+		"ImageTag":         "0.1.0",
+		"Dockerfile":       "FROM public.ecr.aws/docker/library/alpine:3.20\n",
+	})
+	_, err := p.Create(context.Background(), &resource.CreateRequest{Properties: props})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must match the target account")
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
+}
+
 func TestCreateProjectRetriesOnAssumeRolePropagation(t *testing.T) {
 	cb := &mockCodeBuildClient{}
 	iam := &mockIAMClient{}

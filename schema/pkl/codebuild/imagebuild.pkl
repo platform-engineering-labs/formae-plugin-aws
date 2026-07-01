@@ -44,7 +44,9 @@ typealias ComputeType = "BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GE
 open class ImageBuild extends formae.Resource {
 
     /// ECR repository URI to push to (registry/repo). Resolvable from an
-    /// AWS::ECR::Repository's `repositoryUri`. Part of the resource identity.
+    /// AWS::ECR::Repository's `repositoryUri`. Part of the resource identity. The
+    /// repository must be in the same account and region as the target (where the
+    /// build project and its log group run); a mismatch is rejected.
     @aws.FieldHint { createOnly = true }
     ecrRepositoryUri: (String|formae.Resolvable)
 
