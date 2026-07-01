@@ -1,0 +1,52 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ecr/repository.pkl"
+import "@aws/codebuild/agentimage.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-codebuild-agent-image-\(testRunID)"
+
+// Push target for the built image. emptyOnDelete lets teardown remove the repo
+// even though the build leaves an image behind.
+local testRepo = new repository.Repository {
+  label = "test-ecr-for-agent-image"
+  repositoryName = "formae-plugin-sdk-test-agentimg-\(testRunID)"
+  emptyOnDelete = true
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for CodeBuild AgentImage"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // ECR repository dependency (referenced as a resolvable below).
+  testRepo
+
+  // Resource under test — last, singleton, and a leaf. A cheap public base with
+  // no plugins keeps the build fast while still exercising a real privileged
+  // docker build + push + digest capture.
+  new agentimage.AgentImage {
+    label = "plugin-sdk-test-agent-image"
+    ecrRepositoryUri = testRepo.res.repositoryUri
+    imageTag = "sdk-test-\(testRunID)"
+    baseImage = "public.ecr.aws/docker/library/alpine:3.20"
+    timeoutMinutes = 20
+  }
+}

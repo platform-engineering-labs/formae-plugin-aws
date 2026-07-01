@@ -11,6 +11,22 @@ import "../aws.pkl"
 
 const type = "AWS::ECR::Repository"
 
+open class RepositoryResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: RepositoryResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden repositoryName: RepositoryResolvable = (this) {
+        property = "RepositoryName"
+    }
+
+    hidden repositoryUri: RepositoryResolvable = (this) {
+        property = "RepositoryUri"
+    }
+}
+
 @aws.SubResourceHint
 open class EncryptionConfiguration extends formae.SubResource {
     encryptionType: String
@@ -66,4 +82,11 @@ open class Repository extends formae.Resource {
         hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: RepositoryResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
