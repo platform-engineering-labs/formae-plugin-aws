@@ -4,55 +4,44 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-module aws.codebuild.agentimage
+module aws.codebuild.imagebuild
 
 import "@formae/formae.pkl"
 import "../aws.pkl"
 
-const type = "AWS::CodeBuild::AgentImage"
+const type = "AWS::CodeBuild::ImageBuild"
 
 /// Read-only outputs produced by the build, referenceable as resolvables via
-/// `agentImage.res.*`. `imageRef` (repo@sha256:…) is the immutable, primary
+/// `imageBuild.res.*`. `imageRef` (repo@sha256:…) is the immutable, primary
 /// consumption reference; `imageUri` (repo:tag) is a convenience mutable alias.
-open class AgentImageResolvable extends formae.Resolvable {
+open class ImageBuildResolvable extends formae.Resolvable {
     hidden type = module.type
 
-    hidden imageRef: AgentImageResolvable = (this) {
+    hidden imageRef: ImageBuildResolvable = (this) {
         property = "ImageRef"
     }
 
-    hidden imageDigest: AgentImageResolvable = (this) {
+    hidden imageDigest: ImageBuildResolvable = (this) {
         property = "ImageDigest"
     }
 
-    hidden imageUri: AgentImageResolvable = (this) {
+    hidden imageUri: ImageBuildResolvable = (this) {
         property = "ImageUri"
     }
 
-    hidden imageTag: AgentImageResolvable = (this) {
+    hidden imageTag: ImageBuildResolvable = (this) {
         property = "ImageTag"
     }
 }
 
-typealias PluginChannel = "stable"|"dev"
-
 typealias ComputeType = "BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"
-
-/// A plugin to install into the agent image. `version` is required so builds are
-/// version-pinned; `channel` selects the hub distribution channel.
-@aws.SubResourceHint
-open class Plugin extends formae.SubResource {
-    name: String(matches(Regex(#"^[a-z0-9]+(?:-[a-z0-9]+)*$"#)))
-    version: String(matches(Regex(#"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?$"#)))
-    channel: PluginChannel = "stable"
-}
 
 @aws.ResourceHint {
     type = module.type
     identifier = "ImageRef"
     discoverable = false
 }
-open class AgentImage extends formae.Resource {
+open class ImageBuild extends formae.Resource {
 
     /// ECR repository URI to push to (registry/repo). Resolvable from an
     /// AWS::ECR::Repository's `repositoryUri`. Part of the resource identity.
@@ -63,14 +52,15 @@ open class AgentImage extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     imageTag: String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))
 
-    /// The FROM reference for the generated Dockerfile. SHOULD be digest-pinned
-    /// for reproducibility; the returned digest is the source of truth regardless.
+    /// The full literal Dockerfile content to build. The image is built verbatim
+    /// from this Dockerfile; the returned digest is the source of truth.
     @aws.FieldHint
-    baseImage: String(matches(Regex(#"^[^\s]+$"#)))
+    dockerfile: String(!isEmpty)
 
-    /// Extra or overridden plugins to install; order-insensitive, unique by name.
+    /// Build arguments passed to `docker build --build-arg KEY=VALUE`.
+    /// Order-insensitive; hashed canonically to gate rebuilds.
     @aws.FieldHint
-    plugins: Listing<Plugin>?
+    buildArgs: Mapping<String, String>?
 
     /// CodeBuild compute size for the build project. Defaults to SMALL.
     @aws.FieldHint
@@ -111,7 +101,7 @@ open class AgentImage extends formae.Resource {
 
     local parent = this
 
-    hidden res: AgentImageResolvable = new {
+    hidden res: ImageBuildResolvable = new {
         label = parent.label
         stack = parent.stack?.label
     }

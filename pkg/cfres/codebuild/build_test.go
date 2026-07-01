@@ -40,33 +40,22 @@ func TestParseEcrRepositoryURI(t *testing.T) {
 	}
 }
 
-func TestNormalizeInputDefaultsAndSort(t *testing.T) {
-	n := normalizeInput(agentImageInput{
+func TestNormalizeInputDefaults(t *testing.T) {
+	n := normalizeInput(imageBuildInput{
 		EcrRepositoryURI: "123456789012.dkr.ecr.us-east-1.amazonaws.com/formae-agent",
 		ImageTag:         "0.1.0",
-		BaseImage:        "ghcr.io/platform-engineering-labs/formae:0.87.0",
-		Plugins: []pluginSpec{
-			{Name: "grafana", Version: "0.1.5"},
-			{Name: "aws", Version: "0.1.13", Channel: "dev"},
-		},
+		Dockerfile:       "FROM alpine:3.20\n",
 	})
 	assert.Equal(t, defaultComputeType, n.ComputeType)
 	assert.Equal(t, defaultTimeoutMinutes, n.TimeoutMinutes)
 	assert.Equal(t, defaultBuildEnvimage, n.BuildEnvironmentImage)
-	// Sorted by name; empty channel defaulted to stable.
-	require.Len(t, n.Plugins, 2)
-	assert.Equal(t, "aws", n.Plugins[0].Name)
-	assert.Equal(t, "dev", n.Plugins[0].Channel)
-	assert.Equal(t, "grafana", n.Plugins[1].Name)
-	assert.Equal(t, "stable", n.Plugins[1].Channel)
 }
 
-func validInput() agentImageInput {
-	return agentImageInput{
+func validInput() imageBuildInput {
+	return imageBuildInput{
 		EcrRepositoryURI: "123456789012.dkr.ecr.us-east-1.amazonaws.com/formae-agent",
 		ImageTag:         "0.87.0-custom.1",
-		BaseImage:        "ghcr.io/platform-engineering-labs/formae:0.87.0",
-		Plugins:          []pluginSpec{{Name: "aws", Version: "0.1.13-dev.1", Channel: "dev"}},
+		Dockerfile:       "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\n",
 	}
 }
 
@@ -75,20 +64,16 @@ func TestValidateInputAcceptsValid(t *testing.T) {
 }
 
 func TestValidateInputRejects(t *testing.T) {
-	cases := map[string]func(*agentImageInput){
-		"missing repo":       func(i *agentImageInput) { i.EcrRepositoryURI = "" },
-		"bad repo":           func(i *agentImageInput) { i.EcrRepositoryURI = "not-ecr" },
-		"missing tag":        func(i *agentImageInput) { i.ImageTag = "" },
-		"bad tag":            func(i *agentImageInput) { i.ImageTag = "bad tag!" },
-		"missing base":       func(i *agentImageInput) { i.BaseImage = "" },
-		"base with space":    func(i *agentImageInput) { i.BaseImage = "foo bar" },
-		"bad compute":        func(i *agentImageInput) { i.ComputeType = "HUGE" },
-		"timeout too small":  func(i *agentImageInput) { i.TimeoutMinutes = 1 },
-		"timeout too big":    func(i *agentImageInput) { i.TimeoutMinutes = 999 },
-		"bad plugin name":    func(i *agentImageInput) { i.Plugins = []pluginSpec{{Name: "Bad_Name", Version: "1.0.0"}} },
-		"bad plugin version": func(i *agentImageInput) { i.Plugins = []pluginSpec{{Name: "aws", Version: "latest"}} },
-		"bad plugin channel": func(i *agentImageInput) { i.Plugins = []pluginSpec{{Name: "aws", Version: "1.0.0", Channel: "nightly"}} },
-		"duplicate plugin":   func(i *agentImageInput) { i.Plugins = []pluginSpec{{Name: "aws", Version: "1.0.0"}, {Name: "aws", Version: "1.0.1"}} },
+	cases := map[string]func(*imageBuildInput){
+		"missing repo":      func(i *imageBuildInput) { i.EcrRepositoryURI = "" },
+		"bad repo":          func(i *imageBuildInput) { i.EcrRepositoryURI = "not-ecr" },
+		"missing tag":       func(i *imageBuildInput) { i.ImageTag = "" },
+		"bad tag":           func(i *imageBuildInput) { i.ImageTag = "bad tag!" },
+		"missing dockerfile": func(i *imageBuildInput) { i.Dockerfile = "" },
+		"bad compute":       func(i *imageBuildInput) { i.ComputeType = "HUGE" },
+		"timeout too small": func(i *imageBuildInput) { i.TimeoutMinutes = 1 },
+		"timeout too big":   func(i *imageBuildInput) { i.TimeoutMinutes = 999 },
+		"bad buildArg key":  func(i *imageBuildInput) { i.BuildArgs = map[string]string{"bad key": "v"} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -99,27 +84,12 @@ func TestValidateInputRejects(t *testing.T) {
 	}
 }
 
-func TestGenerateDockerfileNoPlugins(t *testing.T) {
-	df := generateDockerfile("public.ecr.aws/docker/library/alpine:3.20", nil)
-	assert.Equal(t, "FROM public.ecr.aws/docker/library/alpine:3.20\n", df)
-	// No pel-user dance when there is nothing to install.
-	assert.NotContains(t, df, "USER pel")
-	assert.NotContains(t, df, "chown")
-}
+func TestBuildArgsFileSortedAndCanonical(t *testing.T) {
+	assert.Equal(t, "", buildArgsFile(nil))
+	assert.Equal(t, "", buildArgsFile(map[string]string{}))
 
-func TestGenerateDockerfileWithPlugins(t *testing.T) {
-	df := generateDockerfile("ghcr.io/platform-engineering-labs/formae:0.87.0", []pluginSpec{
-		{Name: "aws", Version: "0.1.13-dev.1", Channel: "dev"},
-		{Name: "grafana", Version: "0.1.5", Channel: "stable"},
-	})
-	assert.True(t, strings.HasPrefix(df, "FROM ghcr.io/platform-engineering-labs/formae:0.87.0\n"))
-	assert.Contains(t, df, "USER root\n")
-	assert.Contains(t, df, "RUN formae plugin install --channel dev aws@0.1.13-dev.1\n")
-	assert.Contains(t, df, "RUN formae plugin install --channel stable grafana@0.1.5\n")
-	assert.Contains(t, df, "rm -rf /home/pel/.pel/formae/plugins && chown -R pel:pel /opt/pel")
-	assert.True(t, strings.HasSuffix(df, "USER pel\n"))
-	// root install happens before dropping privileges.
-	assert.Less(t, strings.Index(df, "USER root"), strings.Index(df, "USER pel"))
+	got := buildArgsFile(map[string]string{"ZED": "1", "ALPHA": "2", "BETA": "3"})
+	assert.Equal(t, "ALPHA=2\nBETA=3\nZED=1\n", got)
 }
 
 func TestGenerateBuildspecShape(t *testing.T) {
@@ -131,6 +101,13 @@ func TestGenerateBuildspecShape(t *testing.T) {
 	assert.Contains(t, bs, "docker build --platform linux/amd64")
 	assert.Contains(t, bs, "docker push")
 	assert.Contains(t, bs, "base64 -d > Dockerfile")
+	// Build args are decoded and threaded in as --build-arg flags.
+	assert.Contains(t, bs, "base64 -d > build_args.env")
+	assert.Contains(t, bs, "--build-arg")
+	assert.Contains(t, bs, "$BUILD_ARG_FLAGS")
+	// No formae-agent coupling in the generated build.
+	assert.NotContains(t, bs, "formae plugin install")
+	assert.NotContains(t, bs, "USER pel")
 }
 
 func TestBuildConfigHashStableAndSensitive(t *testing.T) {
@@ -139,12 +116,12 @@ func TestBuildConfigHashStableAndSensitive(t *testing.T) {
 	// Recomputing is stable.
 	assert.Equal(t, h1, computeBuildConfigHash(base))
 
-	// Plugin ordering does not change the hash.
-	reordered := validInput()
-	reordered.Plugins = append([]pluginSpec{{Name: "grafana", Version: "0.1.5"}}, reordered.Plugins...)
-	shuffled := validInput()
-	shuffled.Plugins = []pluginSpec{{Name: "aws", Version: "0.1.13-dev.1", Channel: "dev"}, {Name: "grafana", Version: "0.1.5"}}
-	assert.Equal(t, computeBuildConfigHash(reordered), computeBuildConfigHash(shuffled))
+	// Build-arg ordering does not change the hash (maps are canonicalized).
+	a := validInput()
+	a.BuildArgs = map[string]string{"A": "1", "B": "2"}
+	b := validInput()
+	b.BuildArgs = map[string]string{"B": "2", "A": "1"}
+	assert.Equal(t, computeBuildConfigHash(a), computeBuildConfigHash(b))
 
 	// Non-build-affecting fields do not change the hash.
 	nonBuild := validInput()
@@ -153,16 +130,23 @@ func TestBuildConfigHashStableAndSensitive(t *testing.T) {
 	assert.Equal(t, h1, computeBuildConfigHash(nonBuild))
 
 	// Build-affecting changes DO change the hash.
-	for _, mutate := range []func(*agentImageInput){
-		func(i *agentImageInput) { i.BaseImage = "ghcr.io/platform-engineering-labs/formae:0.88.0" },
-		func(i *agentImageInput) { i.Plugins = []pluginSpec{{Name: "aws", Version: "0.1.14", Channel: "dev"}} },
-		func(i *agentImageInput) { i.Plugins[0].Channel = "stable" },
-		func(i *agentImageInput) { i.ComputeType = "BUILD_GENERAL1_LARGE" },
+	for _, mutate := range []func(*imageBuildInput){
+		func(i *imageBuildInput) { i.Dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.21\n" },
+		func(i *imageBuildInput) { i.BuildArgs = map[string]string{"VERSION": "1.2.3"} },
+		func(i *imageBuildInput) { i.ComputeType = "BUILD_GENERAL1_LARGE" },
+		func(i *imageBuildInput) { i.BuildEnvironmentImage = "aws/codebuild/standard:8.0" },
 	} {
 		in := validInput()
 		mutate(&in)
 		assert.NotEqual(t, h1, computeBuildConfigHash(in))
 	}
+
+	// A build-arg value change changes the hash.
+	v1 := validInput()
+	v1.BuildArgs = map[string]string{"VERSION": "1.0.0"}
+	v2 := validInput()
+	v2.BuildArgs = map[string]string{"VERSION": "2.0.0"}
+	assert.NotEqual(t, computeBuildConfigHash(v1), computeBuildConfigHash(v2))
 }
 
 func TestResourceNamesDeterministicAndBounded(t *testing.T) {
@@ -193,7 +177,7 @@ func TestTrustPolicyIsValidJSON(t *testing.T) {
 func TestInlinePolicyScopedToTargets(t *testing.T) {
 	ref, err := parseEcrRepositoryURI("123456789012.dkr.ecr.us-east-1.amazonaws.com/formae-agent")
 	require.NoError(t, err)
-	pol := buildInlinePolicy(ref, "formae-agentimg-abc123")
+	pol := buildInlinePolicy(ref, "formae-imgbuild-abc123")
 
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(pol), &doc))
@@ -202,7 +186,7 @@ func TestInlinePolicyScopedToTargets(t *testing.T) {
 	assert.Contains(t, pol, "arn:aws:ecr:us-east-1:123456789012:repository/formae-agent")
 	assert.Contains(t, pol, "logs:CreateLogGroup")
 	assert.Contains(t, pol, "logs:PutLogEvents")
-	assert.Contains(t, pol, "arn:aws:logs:us-east-1:123456789012:log-group:/aws/codebuild/formae-agentimg-abc123")
+	assert.Contains(t, pol, "arn:aws:logs:us-east-1:123456789012:log-group:/aws/codebuild/formae-imgbuild-abc123")
 }
 
 func TestImageURI(t *testing.T) {

@@ -10,23 +10,23 @@ import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 
 import "@aws/ecr/repository.pkl"
-import "@aws/codebuild/agentimage.pkl"
+import "@aws/codebuild/imagebuild.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
-local stackName = "plugin-sdk-test-codebuild-agent-image-\(testRunID)"
+local stackName = "plugin-sdk-test-codebuild-image-build-\(testRunID)"
 
-// Push target for the built image. Deleting the AgentImage removes the image it
+// Push target for the built image. Deleting the ImageBuild removes the image it
 // pushed (scoped to its own tag), so this repository is empty by the time the
 // stack tears it down.
 local testRepo = new repository.Repository {
-  label = "test-ecr-for-agent-image"
-  repositoryName = "formae-plugin-sdk-test-agentimg-\(testRunID)"
+  label = "test-ecr-for-image-build"
+  repositoryName = "formae-plugin-sdk-test-imgbuild-\(testRunID)"
 }
 
 forma {
   new formae.Stack {
     label = stackName
-    description = "Plugin SDK test for CodeBuild AgentImage"
+    description = "Plugin SDK test for CodeBuild ImageBuild"
   }
 
   new formae.Target {
@@ -39,14 +39,14 @@ forma {
   // ECR repository dependency (referenced as a resolvable below).
   testRepo
 
-  // Resource under test — last, singleton, and a leaf. A cheap public base with
-  // no plugins keeps the build fast while still exercising a real privileged
-  // docker build + push + digest capture.
-  new agentimage.AgentImage {
-    label = "plugin-sdk-test-agent-image"
+  // Resource under test — last, singleton, and a leaf. A tiny literal Dockerfile
+  // over a cheap public base keeps the build fast while still exercising a real
+  // privileged docker build + push + digest capture.
+  new imagebuild.ImageBuild {
+    label = "plugin-sdk-test-image-build"
     ecrRepositoryUri = testRepo.res.repositoryUri
     imageTag = "sdk-test-\(testRunID)"
-    baseImage = "public.ecr.aws/docker/library/alpine:3.20"
+    dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\n"
     timeoutMinutes = 20
   }
 }

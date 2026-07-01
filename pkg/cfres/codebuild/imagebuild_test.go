@@ -30,8 +30,8 @@ import (
 
 const testRepoURI = "123456789012.dkr.ecr.us-east-1.amazonaws.com/formae-agent"
 
-func newTestProvisioner(cb *mockCodeBuildClient, ecr *mockECRClient, iam *mockIAMClient) *AgentImage {
-	return &AgentImage{
+func newTestProvisioner(cb *mockCodeBuildClient, ecr *mockECRClient, iam *mockIAMClient) *ImageBuild {
+	return &ImageBuild{
 		cfg:              &config.Config{Region: "us-east-1"},
 		codeBuildFactory: func(*config.Config) (codeBuildClientInterface, error) { return cb, nil },
 		ecrFactory:       func(*config.Config) (ecrClientInterface, error) { return ecr, nil },
@@ -46,8 +46,8 @@ func createProps(t *testing.T) json.RawMessage {
 	js, err := json.Marshal(map[string]any{
 		"EcrRepositoryUri": testRepoURI,
 		"ImageTag":         "0.87.0-custom.1",
-		"BaseImage":        "ghcr.io/platform-engineering-labs/formae:0.87.0",
-		"Plugins":          []map[string]any{{"Name": "aws", "Version": "0.1.13-dev.1", "Channel": "dev"}},
+		"Dockerfile":       "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\n",
+		"BuildArgs":        map[string]string{"VERSION": "1.2.3"},
 	})
 	require.NoError(t, err)
 	return js
@@ -88,6 +88,7 @@ func TestCreateCreatesRoleProjectAndStartsBuild(t *testing.T) {
 		envByName[aws.ToString(e.Name)] = aws.ToString(e.Value)
 	}
 	assert.NotEmpty(t, envByName[dockerfileEnvVar])
+	assert.NotEmpty(t, envByName[buildArgsEnvVar])
 	assert.Equal(t, testRepoURI+":0.87.0-custom.1", envByName[imageURIEnvVar])
 
 	iam.AssertExpectations(t)
@@ -108,7 +109,7 @@ func TestCreateWithByoRoleSkipsRoleManagement(t *testing.T) {
 	props, _ := json.Marshal(map[string]any{
 		"EcrRepositoryUri": testRepoURI,
 		"ImageTag":         "0.1.0",
-		"BaseImage":        "public.ecr.aws/docker/library/alpine:3.20",
+		"Dockerfile":       "FROM public.ecr.aws/docker/library/alpine:3.20\n",
 		"ServiceRoleArn":   "arn:aws:iam::123456789012:role/my-own-role",
 	})
 	_, err := p.Create(context.Background(), &resource.CreateRequest{Properties: props})
@@ -165,7 +166,7 @@ func TestStatusSucceededReturnsOutputs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
 
-	var out agentImageOutputs
+	var out imageBuildOutputs
 	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
 	assert.Equal(t, "sha256:deadbeef", out.ImageDigest)
 	assert.Equal(t, testRepoURI+"@sha256:deadbeef", out.ImageRef)
@@ -228,7 +229,7 @@ func TestReadFoundAndNotFound(t *testing.T) {
 	res, err := p.Read(context.Background(), &resource.ReadRequest{NativeID: encodeNativeID(testRepoURI, "0.1.0"), ResourceType: resourceType})
 	require.NoError(t, err)
 	assert.Empty(t, res.ErrorCode)
-	var out agentImageOutputs
+	var out imageBuildOutputs
 	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out))
 	assert.Equal(t, "sha256:cafe", out.ImageDigest)
 	assert.Equal(t, testRepoURI+"@sha256:cafe", out.ImageRef)
@@ -247,10 +248,9 @@ func TestUpdateNoopWhenHashUnchangedAndDigestPresent(t *testing.T) {
 	desiredJSON, _ := json.Marshal(map[string]any{
 		"EcrRepositoryUri": desired.EcrRepositoryURI,
 		"ImageTag":         desired.ImageTag,
-		"BaseImage":        desired.BaseImage,
-		"Plugins":          []map[string]any{{"Name": "aws", "Version": "0.1.13-dev.1", "Channel": "dev"}},
+		"Dockerfile":       desired.Dockerfile,
 	})
-	prior := agentImageOutputs{BuildConfigHash: computeBuildConfigHash(desired), ImageDigest: "sha256:cafe", ImageRef: desired.EcrRepositoryURI + "@sha256:cafe"}
+	prior := imageBuildOutputs{BuildConfigHash: computeBuildConfigHash(desired), ImageDigest: "sha256:cafe", ImageRef: desired.EcrRepositoryURI + "@sha256:cafe"}
 	priorJSON, _ := json.Marshal(prior)
 
 	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
@@ -287,9 +287,9 @@ func TestUpdateRebuildsWhenHashChanges(t *testing.T) {
 	desiredJSON, _ := json.Marshal(map[string]any{
 		"EcrRepositoryUri": testRepoURI,
 		"ImageTag":         "0.1.0",
-		"BaseImage":        "ghcr.io/platform-engineering-labs/formae:0.88.0",
+		"Dockerfile":       "FROM public.ecr.aws/docker/library/alpine:3.21\n",
 	})
-	priorJSON, _ := json.Marshal(agentImageOutputs{BuildConfigHash: "stale-hash", ImageDigest: "sha256:old"})
+	priorJSON, _ := json.Marshal(imageBuildOutputs{BuildConfigHash: "stale-hash", ImageDigest: "sha256:old"})
 
 	res, err := p.Update(context.Background(), &resource.UpdateRequest{
 		NativeID:          encodeNativeID(testRepoURI, "0.1.0"),
@@ -315,10 +315,9 @@ func TestUpdateRebuildsWhenTagDrifted(t *testing.T) {
 	desiredJSON, _ := json.Marshal(map[string]any{
 		"EcrRepositoryUri": desired.EcrRepositoryURI,
 		"ImageTag":         desired.ImageTag,
-		"BaseImage":        desired.BaseImage,
-		"Plugins":          []map[string]any{{"Name": "aws", "Version": "0.1.13-dev.1", "Channel": "dev"}},
+		"Dockerfile":       desired.Dockerfile,
 	})
-	prior := agentImageOutputs{BuildConfigHash: computeBuildConfigHash(desired), ImageDigest: "sha256:original"}
+	prior := imageBuildOutputs{BuildConfigHash: computeBuildConfigHash(desired), ImageDigest: "sha256:original"}
 	priorJSON, _ := json.Marshal(prior)
 
 	// The tag now resolves to a different image than the one we built.

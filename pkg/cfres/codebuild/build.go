@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-// Package codebuild implements the AWS::CodeBuild::AgentImage custom provisioner:
-// a synthetic, imperative-during-apply resource that builds and pushes a custom
-// formae agent image via AWS CodeBuild and returns the pushed image's immutable
-// digest reference as computed outputs. It is not a CloudControl passthrough.
+// Package codebuild implements the AWS::CodeBuild::ImageBuild custom provisioner:
+// a synthetic, imperative-during-apply resource that builds and pushes a container
+// image from a caller-supplied Dockerfile via AWS CodeBuild and returns the pushed
+// image's immutable digest reference as computed outputs. It is not a CloudControl
+// passthrough.
 package codebuild
 
 import (
@@ -18,24 +19,25 @@ import (
 	"strings"
 )
 
-// generatorVersion is bumped whenever the generated Dockerfile or buildspec
-// changes shape, so that a generator change forces a rebuild via the build-config
-// hash even when the user's inputs are identical.
-const generatorVersion = "1"
+// generatorVersion is bumped whenever the generated buildspec changes shape, so
+// that a generator change forces a rebuild via the build-config hash even when the
+// user's inputs are identical.
+const generatorVersion = "2"
 
 const (
-	defaultComputeType      = "BUILD_GENERAL1_SMALL"
-	defaultTimeoutMinutes   = 30
-	defaultBuildEnvimage    = "aws/codebuild/standard:7.0"
-	resourceNamePrefix      = "formae-agentimg-"
-	dockerfileEnvVar        = "DOCKERFILE_B64"
-	imageURIEnvVar          = "IMAGE_URI"
-	ecrRepositoryURIEnvVar  = "ECR_REPOSITORY_URI"
-	ecrRegistryEnvVar       = "ECR_REGISTRY"
-	exportedDigestVar       = "IMAGE_DIGEST"
-	exportedImageRefVar     = "IMAGE_REF"
-	exportedImageURIVar     = "IMAGE_URI"
-	inlinePolicyName        = "formae-agentimage-build"
+	defaultComputeType     = "BUILD_GENERAL1_SMALL"
+	defaultTimeoutMinutes  = 30
+	defaultBuildEnvimage   = "aws/codebuild/standard:7.0"
+	resourceNamePrefix     = "formae-imgbuild-"
+	dockerfileEnvVar       = "DOCKERFILE_B64"
+	buildArgsEnvVar        = "BUILD_ARGS_B64"
+	imageURIEnvVar         = "IMAGE_URI"
+	ecrRepositoryURIEnvVar = "ECR_REPOSITORY_URI"
+	ecrRegistryEnvVar      = "ECR_REGISTRY"
+	exportedDigestVar      = "IMAGE_DIGEST"
+	exportedImageRefVar    = "IMAGE_REF"
+	exportedImageURIVar    = "IMAGE_URI"
+	inlinePolicyName       = "formae-imagebuild-build"
 )
 
 var (
@@ -47,34 +49,25 @@ var (
 
 	ecrRepositoryURIPattern = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/(.+)$`)
 	imageTagPattern         = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-	baseImagePattern        = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
-	pluginNamePattern       = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-	pluginVersionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?$`)
+	buildArgKeyPattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
-// pluginSpec is one plugin to install into the image.
-type pluginSpec struct {
-	Name    string `json:"Name"`
-	Version string `json:"Version"`
-	Channel string `json:"Channel,omitempty"`
-}
-
-// agentImageInput mirrors the Pkl schema's input fields (capitalized to match the
+// imageBuildInput mirrors the Pkl schema's input fields (capitalized to match the
 // plugin wire format's output-key transformation).
-type agentImageInput struct {
-	EcrRepositoryURI      string       `json:"EcrRepositoryUri"`
-	ImageTag              string       `json:"ImageTag"`
-	BaseImage             string       `json:"BaseImage"`
-	Plugins               []pluginSpec `json:"Plugins,omitempty"`
-	ComputeType           string       `json:"ComputeType,omitempty"`
-	TimeoutMinutes        int          `json:"TimeoutMinutes,omitempty"`
-	ServiceRoleArn        string       `json:"ServiceRoleArn,omitempty"`
-	BuildEnvironmentImage string       `json:"BuildEnvironmentImage,omitempty"`
+type imageBuildInput struct {
+	EcrRepositoryURI      string            `json:"EcrRepositoryUri"`
+	ImageTag              string            `json:"ImageTag"`
+	Dockerfile            string            `json:"Dockerfile"`
+	BuildArgs             map[string]string `json:"BuildArgs,omitempty"`
+	ComputeType           string            `json:"ComputeType,omitempty"`
+	TimeoutMinutes        int               `json:"TimeoutMinutes,omitempty"`
+	ServiceRoleArn        string            `json:"ServiceRoleArn,omitempty"`
+	BuildEnvironmentImage string            `json:"BuildEnvironmentImage,omitempty"`
 }
 
-// agentImageOutputs is the computed read-only state persisted in ResourceProperties
+// imageBuildOutputs is the computed read-only state persisted in ResourceProperties
 // and surfaced as the resource's resolvable outputs.
-type agentImageOutputs struct {
+type imageBuildOutputs struct {
 	ImageRef        string `json:"ImageRef,omitempty"`
 	ImageDigest     string `json:"ImageDigest,omitempty"`
 	ImageURI        string `json:"ImageUri,omitempty"`
@@ -112,10 +105,9 @@ func parseEcrRepositoryURI(uri string) (ecrRepositoryRef, error) {
 	}, nil
 }
 
-// normalizeInput fills in defaults and sorts plugins by name so that build-affecting
-// inputs have a canonical form (the build-config hash and Dockerfile are
-// order-insensitive over plugins).
-func normalizeInput(in agentImageInput) agentImageInput {
+// normalizeInput fills in defaults so that build-affecting inputs have a canonical
+// form.
+func normalizeInput(in imageBuildInput) imageBuildInput {
 	out := in
 	if out.ComputeType == "" {
 		out.ComputeType = defaultComputeType
@@ -126,15 +118,6 @@ func normalizeInput(in agentImageInput) agentImageInput {
 	if out.BuildEnvironmentImage == "" {
 		out.BuildEnvironmentImage = defaultBuildEnvimage
 	}
-	plugins := make([]pluginSpec, len(in.Plugins))
-	copy(plugins, in.Plugins)
-	for i := range plugins {
-		if plugins[i].Channel == "" {
-			plugins[i].Channel = "stable"
-		}
-	}
-	sort.SliceStable(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
-	out.Plugins = plugins
 	return out
 }
 
@@ -142,7 +125,7 @@ func normalizeInput(in agentImageInput) agentImageInput {
 // build. The forma is operator-authored, so this is breakage-prevention, not an
 // attacker boundary — but a strict check turns a silently-broken build into an
 // immediate, actionable error.
-func validateInput(in agentImageInput) error {
+func validateInput(in imageBuildInput) error {
 	if in.EcrRepositoryURI == "" {
 		return fmt.Errorf("ecrRepositoryUri is required")
 	}
@@ -155,11 +138,8 @@ func validateInput(in agentImageInput) error {
 	if !imageTagPattern.MatchString(in.ImageTag) {
 		return fmt.Errorf("invalid imageTag %q", in.ImageTag)
 	}
-	if in.BaseImage == "" {
-		return fmt.Errorf("baseImage is required")
-	}
-	if !baseImagePattern.MatchString(in.BaseImage) {
-		return fmt.Errorf("invalid baseImage %q", in.BaseImage)
+	if in.Dockerfile == "" {
+		return fmt.Errorf("dockerfile is required")
 	}
 	if in.ComputeType != "" {
 		if _, ok := computeTypes[in.ComputeType]; !ok {
@@ -169,52 +149,39 @@ func validateInput(in agentImageInput) error {
 	if in.TimeoutMinutes != 0 && (in.TimeoutMinutes < 5 || in.TimeoutMinutes > 60) {
 		return fmt.Errorf("timeoutMinutes must be between 5 and 60, got %d", in.TimeoutMinutes)
 	}
-	seen := make(map[string]struct{}, len(in.Plugins))
-	for _, p := range in.Plugins {
-		if !pluginNamePattern.MatchString(p.Name) {
-			return fmt.Errorf("invalid plugin name %q", p.Name)
+	for k := range in.BuildArgs {
+		if !buildArgKeyPattern.MatchString(k) {
+			return fmt.Errorf("invalid buildArg key %q", k)
 		}
-		if !pluginVersionPattern.MatchString(p.Version) {
-			return fmt.Errorf("invalid plugin version %q for %q", p.Version, p.Name)
-		}
-		if p.Channel != "" && p.Channel != "stable" && p.Channel != "dev" {
-			return fmt.Errorf("invalid plugin channel %q for %q", p.Channel, p.Name)
-		}
-		if _, dup := seen[p.Name]; dup {
-			return fmt.Errorf("duplicate plugin %q", p.Name)
-		}
-		seen[p.Name] = struct{}{}
 	}
 	return nil
 }
 
-// generateDockerfile synthesizes the Dockerfile from the base image plus plugins,
-// mirroring the prod formae-agent image build: plugins install as root, then the
-// per-user plugin cache is cleared and /opt/pel is chowned back to the pel user
-// before dropping privileges. With no plugins the base image is rebuilt/retagged
-// unchanged, so the root/ownership dance (which is specific to a formae base) is
-// omitted.
-func generateDockerfile(baseImage string, plugins []pluginSpec) string {
+// buildArgsFile renders the build args as a newline-separated KEY=VALUE list,
+// sorted by key for a canonical form. It is base64-encoded and passed to the
+// buildspec, which decodes it and turns each line into a `--build-arg` flag; this
+// keeps operator-supplied values out of any unescaped shell context.
+func buildArgsFile(args map[string]string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	var b strings.Builder
-	fmt.Fprintf(&b, "FROM %s\n", baseImage)
-	if len(plugins) > 0 {
-		b.WriteString("USER root\n")
-		for _, p := range plugins {
-			channel := p.Channel
-			if channel == "" {
-				channel = "stable"
-			}
-			fmt.Fprintf(&b, "RUN formae plugin install --channel %s %s@%s\n", channel, p.Name, p.Version)
-		}
-		b.WriteString("RUN rm -rf /home/pel/.pel/formae/plugins && chown -R pel:pel /opt/pel\n")
-		b.WriteString("USER pel\n")
+	for _, k := range keys {
+		b.WriteString(k + "=" + args[k] + "\n")
 	}
 	return b.String()
 }
 
 // buildspec is the static CodeBuild buildspec. All build-varying values arrive as
-// environment variables; the Dockerfile is materialized from a base64 env var so
-// operator-supplied values never land in an unescaped shell context.
+// environment variables; the Dockerfile and build args are materialized from
+// base64 env vars so operator-supplied values never land in an unescaped shell
+// context. Build args are read as KEY=VALUE lines and passed as repeated
+// --build-arg flags.
 const buildspec = `version: 0.2
 env:
   exported-variables:
@@ -225,10 +192,12 @@ phases:
   pre_build:
     commands:
       - printf '%s' "$` + dockerfileEnvVar + `" | base64 -d > Dockerfile
+      - printf '%s' "$` + buildArgsEnvVar + `" | base64 -d > build_args.env
+      - BUILD_ARG_FLAGS=""; while IFS= read -r line; do [ -n "$line" ] && BUILD_ARG_FLAGS="$BUILD_ARG_FLAGS --build-arg $line"; done < build_args.env
       - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$` + ecrRegistryEnvVar + `"
   build:
     commands:
-      - docker build --platform linux/amd64 -t "$` + imageURIEnvVar + `" .
+      - docker build --platform linux/amd64 $BUILD_ARG_FLAGS -t "$` + imageURIEnvVar + `" .
       - docker push "$` + imageURIEnvVar + `"
   post_build:
     commands:
@@ -244,15 +213,20 @@ func generateBuildspec() string { return buildspec }
 // computeBuildConfigHash hashes exactly the build-affecting inputs plus the
 // generator version. timeoutMinutes and serviceRoleArn affect whether a build
 // succeeds but not what is built, so they are excluded.
-func computeBuildConfigHash(in agentImageInput) string {
+func computeBuildConfigHash(in imageBuildInput) string {
 	n := normalizeInput(in)
 	var b strings.Builder
 	b.WriteString("v=" + generatorVersion + "\n")
-	b.WriteString("base=" + n.BaseImage + "\n")
+	b.WriteString("dockerfile=" + n.Dockerfile + "\n")
 	b.WriteString("compute=" + n.ComputeType + "\n")
 	b.WriteString("env=" + n.BuildEnvironmentImage + "\n")
-	for _, p := range n.Plugins {
-		b.WriteString("plugin=" + p.Name + "@" + p.Version + "#" + p.Channel + "\n")
+	keys := make([]string, 0, len(n.BuildArgs))
+	for k := range n.BuildArgs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString("arg=" + k + "=" + n.BuildArgs[k] + "\n")
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
@@ -281,9 +255,9 @@ type policyDocument struct {
 }
 
 type policyStatement struct {
-	Effect    string          `json:"Effect"`
-	Action    []string        `json:"Action,omitempty"`
-	Resource  any             `json:"Resource,omitempty"`
+	Effect    string           `json:"Effect"`
+	Action    []string         `json:"Action,omitempty"`
+	Resource  any              `json:"Resource,omitempty"`
 	Principal *policyPrincipal `json:"Principal,omitempty"`
 }
 

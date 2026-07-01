@@ -29,7 +29,7 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
-const resourceType = "AWS::CodeBuild::AgentImage"
+const resourceType = "AWS::CodeBuild::ImageBuild"
 
 // pollDeadlineBuffer is added to the build timeout to derive the engine's async
 // poll deadline, so the plugin gives CodeBuild the full build timeout (plus
@@ -65,9 +65,9 @@ type iamClientInterface interface {
 	DeleteRole(ctx context.Context, params *iamsdk.DeleteRoleInput, optFns ...func(*iamsdk.Options)) (*iamsdk.DeleteRoleOutput, error)
 }
 
-// AgentImage is the synthetic build-during-apply provisioner for the custom
-// formae agent image.
-type AgentImage struct {
+// ImageBuild is the synthetic build-during-apply provisioner that builds and
+// pushes a container image from a caller-supplied Dockerfile.
+type ImageBuild struct {
 	cfg *config.Config
 
 	codeBuildFactory func(*config.Config) (codeBuildClientInterface, error)
@@ -78,7 +78,7 @@ type AgentImage struct {
 	sleep func(time.Duration)
 }
 
-var _ prov.Provisioner = &AgentImage{}
+var _ prov.Provisioner = &ImageBuild{}
 
 func init() {
 	registry.Register(resourceType,
@@ -91,7 +91,7 @@ func init() {
 			resource.OperationList,
 		},
 		func(cfg *config.Config) prov.Provisioner {
-			return &AgentImage{
+			return &ImageBuild{
 				cfg:              cfg,
 				codeBuildFactory: defaultCodeBuildFactory,
 				ecrFactory:       defaultEcrFactory,
@@ -183,10 +183,10 @@ func decodeRequestID(requestID string) (requestState, error) {
 
 // ── Create ──────────────────────────────────────────────────────
 
-func (a *AgentImage) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	var in agentImageInput
+func (a *ImageBuild) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
+	var in imageBuildInput
 	if err := json.Unmarshal(request.Properties, &in); err != nil {
-		return nil, fmt.Errorf("AgentImage: invalid Properties: %w", err)
+		return nil, fmt.Errorf("ImageBuild: invalid Properties: %w", err)
 	}
 	pr, err := a.startBuild(ctx, in, resource.OperationCreate)
 	if err != nil {
@@ -197,14 +197,14 @@ func (a *AgentImage) Create(ctx context.Context, request *resource.CreateRequest
 
 // startBuild validates inputs, ensures the internal role and project exist, kicks
 // off a build, and returns an InProgress ProgressResult carrying the poll state.
-func (a *AgentImage) startBuild(ctx context.Context, in agentImageInput, op resource.Operation) (*resource.ProgressResult, error) {
+func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op resource.Operation) (*resource.ProgressResult, error) {
 	if err := validateInput(in); err != nil {
-		return nil, fmt.Errorf("AgentImage: %w", err)
+		return nil, fmt.Errorf("ImageBuild: %w", err)
 	}
 	n := normalizeInput(in)
 	ref, err := parseEcrRepositoryURI(n.EcrRepositoryURI)
 	if err != nil {
-		return nil, fmt.Errorf("AgentImage: %w", err)
+		return nil, fmt.Errorf("ImageBuild: %w", err)
 	}
 	projectName, roleName := resourceNames(ref.URI, n.ImageTag)
 
@@ -225,12 +225,11 @@ func (a *AgentImage) startBuild(ctx context.Context, in agentImageInput, op reso
 		return nil, err
 	}
 
-	dockerfile := generateDockerfile(n.BaseImage, n.Plugins)
-	buildID, err := a.dispatchBuild(ctx, cbClient, projectName, ref, n.ImageTag, dockerfile)
+	buildID, err := a.dispatchBuild(ctx, cbClient, projectName, ref, n.ImageTag, n.Dockerfile, n.BuildArgs)
 	if err != nil {
 		return nil, err
 	}
-	plugin.LoggerFromContext(ctx).Info("AgentImage: build started",
+	plugin.LoggerFromContext(ctx).Info("ImageBuild: build started",
 		"project", projectName, "buildId", buildID, "imageUri", imageURI(ref.URI, n.ImageTag))
 
 	deadline := a.now().Add(time.Duration(n.TimeoutMinutes)*time.Minute + pollDeadlineBuffer)
@@ -253,7 +252,7 @@ func (a *AgentImage) startBuild(ctx context.Context, in agentImageInput, op reso
 // ensureRole adopts a BYO role when serviceRoleArn is set, otherwise idempotently
 // creates the internal role and (re)writes its inline policy. It returns the role
 // ARN CodeBuild should assume.
-func (a *AgentImage) ensureRole(ctx context.Context, client iamClientInterface, in agentImageInput, ref ecrRepositoryRef, roleName, projectName string) (string, error) {
+func (a *ImageBuild) ensureRole(ctx context.Context, client iamClientInterface, in imageBuildInput, ref ecrRepositoryRef, roleName, projectName string) (string, error) {
 	if in.ServiceRoleArn != "" {
 		// BYO role: the plugin never creates, mutates, or deletes it.
 		return in.ServiceRoleArn, nil
@@ -268,14 +267,14 @@ func (a *AgentImage) ensureRole(ctx context.Context, client iamClientInterface, 
 		createOut, cerr := client.CreateRole(ctx, &iamsdk.CreateRoleInput{
 			RoleName:                 aws.String(roleName),
 			AssumeRolePolicyDocument: aws.String(buildTrustPolicy()),
-			Description:              aws.String("formae-managed CodeBuild service role for building a custom agent image"),
+			Description:              aws.String("formae-managed CodeBuild service role for building a container image"),
 		})
 		if cerr != nil {
-			return "", fmt.Errorf("AgentImage: creating service role: %w", cerr)
+			return "", fmt.Errorf("ImageBuild: creating service role: %w", cerr)
 		}
 		roleArn = aws.ToString(createOut.Role.Arn)
 	default:
-		return "", fmt.Errorf("AgentImage: getting service role: %w", err)
+		return "", fmt.Errorf("ImageBuild: getting service role: %w", err)
 	}
 
 	if _, err := client.PutRolePolicy(ctx, &iamsdk.PutRolePolicyInput{
@@ -283,7 +282,7 @@ func (a *AgentImage) ensureRole(ctx context.Context, client iamClientInterface, 
 		PolicyName:     aws.String(inlinePolicyName),
 		PolicyDocument: aws.String(buildInlinePolicy(ref, projectName)),
 	}); err != nil {
-		return "", fmt.Errorf("AgentImage: putting role policy: %w", err)
+		return "", fmt.Errorf("ImageBuild: putting role policy: %w", err)
 	}
 	return roleArn, nil
 }
@@ -291,10 +290,10 @@ func (a *AgentImage) ensureRole(ctx context.Context, client iamClientInterface, 
 // ensureProject creates or updates the internal CodeBuild project. A freshly
 // created role can lag IAM propagation, so project creation retries briefly on the
 // CodeBuild "cannot assume role" error.
-func (a *AgentImage) ensureProject(ctx context.Context, client codeBuildClientInterface, in agentImageInput, projectName, roleArn string) error {
+func (a *ImageBuild) ensureProject(ctx context.Context, client codeBuildClientInterface, in imageBuildInput, projectName, roleArn string) error {
 	getOut, err := client.BatchGetProjects(ctx, &codebuildsdk.BatchGetProjectsInput{Names: []string{projectName}})
 	if err != nil {
-		return fmt.Errorf("AgentImage: looking up build project: %w", err)
+		return fmt.Errorf("ImageBuild: looking up build project: %w", err)
 	}
 	exists := len(getOut.Projects) > 0
 
@@ -322,7 +321,7 @@ func (a *AgentImage) ensureProject(ctx context.Context, client codeBuildClientIn
 			TimeoutInMinutes: timeout,
 		})
 		if err != nil {
-			return fmt.Errorf("AgentImage: updating build project: %w", err)
+			return fmt.Errorf("ImageBuild: updating build project: %w", err)
 		}
 		return nil
 	}
@@ -345,7 +344,7 @@ func (a *AgentImage) ensureProject(ctx context.Context, client codeBuildClientIn
 			return nil
 		}
 		if attempt >= maxAttempts || !isAssumeRolePropagationError(err) {
-			return fmt.Errorf("AgentImage: creating build project: %w", err)
+			return fmt.Errorf("ImageBuild: creating build project: %w", err)
 		}
 		a.sleep(3 * time.Second)
 	}
@@ -353,28 +352,29 @@ func (a *AgentImage) ensureProject(ctx context.Context, client codeBuildClientIn
 
 // dispatchBuild starts the build with the per-build environment overrides and
 // returns the build id.
-func (a *AgentImage) dispatchBuild(ctx context.Context, client codeBuildClientInterface, projectName string, ref ecrRepositoryRef, tag, dockerfile string) (string, error) {
+func (a *ImageBuild) dispatchBuild(ctx context.Context, client codeBuildClientInterface, projectName string, ref ecrRepositoryRef, tag, dockerfile string, buildArgs map[string]string) (string, error) {
 	out, err := client.StartBuild(ctx, &codebuildsdk.StartBuildInput{
 		ProjectName: aws.String(projectName),
 		EnvironmentVariablesOverride: []codebuildtypes.EnvironmentVariable{
 			{Name: aws.String(dockerfileEnvVar), Value: aws.String(base64.StdEncoding.EncodeToString([]byte(dockerfile))), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
+			{Name: aws.String(buildArgsEnvVar), Value: aws.String(base64.StdEncoding.EncodeToString([]byte(buildArgsFile(buildArgs)))), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 			{Name: aws.String(imageURIEnvVar), Value: aws.String(imageURI(ref.URI, tag)), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 			{Name: aws.String(ecrRepositoryURIEnvVar), Value: aws.String(ref.URI), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 			{Name: aws.String(ecrRegistryEnvVar), Value: aws.String(ref.Registry), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("AgentImage: starting build: %w", err)
+		return "", fmt.Errorf("ImageBuild: starting build: %w", err)
 	}
 	if out.Build == nil || out.Build.Id == nil {
-		return "", fmt.Errorf("AgentImage: StartBuild did not return a build id")
+		return "", fmt.Errorf("ImageBuild: StartBuild did not return a build id")
 	}
 	return aws.ToString(out.Build.Id), nil
 }
 
 // ── Status ──────────────────────────────────────────────────────
 
-func (a *AgentImage) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
+func (a *ImageBuild) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
 	state, err := decodeRequestID(request.RequestID)
 	if err != nil {
 		return nil, err
@@ -390,10 +390,10 @@ func (a *AgentImage) Status(ctx context.Context, request *resource.StatusRequest
 	}
 	out, err := client.BatchGetBuilds(ctx, &codebuildsdk.BatchGetBuildsInput{Ids: []string{state.BuildID}})
 	if err != nil {
-		return nil, fmt.Errorf("AgentImage: getting build status: %w", err)
+		return nil, fmt.Errorf("ImageBuild: getting build status: %w", err)
 	}
 	if len(out.Builds) == 0 {
-		return nil, fmt.Errorf("AgentImage: build %q not found", state.BuildID)
+		return nil, fmt.Errorf("ImageBuild: build %q not found", state.BuildID)
 	}
 	build := out.Builds[0]
 
@@ -436,14 +436,14 @@ func (a *AgentImage) Status(ctx context.Context, request *resource.StatusRequest
 // buildOutputsFromExports reads the digest reference exported by the buildspec and
 // assembles the resource outputs. The digest is authoritative for this specific
 // push, so it does not depend on a later tag lookup.
-func buildOutputsFromExports(exports []codebuildtypes.ExportedEnvironmentVariable, state requestState) (agentImageOutputs, error) {
+func buildOutputsFromExports(exports []codebuildtypes.ExportedEnvironmentVariable, state requestState) (imageBuildOutputs, error) {
 	values := make(map[string]string, len(exports))
 	for _, e := range exports {
 		values[aws.ToString(e.Name)] = aws.ToString(e.Value)
 	}
 	digest := values[exportedDigestVar]
 	if digest == "" {
-		return agentImageOutputs{}, fmt.Errorf("build succeeded but did not export %s", exportedDigestVar)
+		return imageBuildOutputs{}, fmt.Errorf("build succeeded but did not export %s", exportedDigestVar)
 	}
 	ref := values[exportedImageRefVar]
 	if ref == "" {
@@ -453,7 +453,7 @@ func buildOutputsFromExports(exports []codebuildtypes.ExportedEnvironmentVariabl
 	if uri == "" {
 		uri = imageURI(state.RepoURI, state.Tag)
 	}
-	return agentImageOutputs{
+	return imageBuildOutputs{
 		ImageRef:        ref,
 		ImageDigest:     digest,
 		ImageURI:        uri,
@@ -464,7 +464,7 @@ func buildOutputsFromExports(exports []codebuildtypes.ExportedEnvironmentVariabl
 
 // ── Read ────────────────────────────────────────────────────────
 
-func (a *AgentImage) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
+func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	repoURI, tag, err := parseNativeID(request.NativeID)
 	if err != nil {
 		return nil, err
@@ -485,13 +485,13 @@ func (a *AgentImage) Read(ctx context.Context, request *resource.ReadRequest) (*
 		if isECRImageNotFound(err) {
 			return &resource.ReadResult{ResourceType: request.ResourceType, ErrorCode: resource.OperationErrorCodeNotFound}, nil
 		}
-		return nil, fmt.Errorf("AgentImage: describing image: %w", err)
+		return nil, fmt.Errorf("ImageBuild: describing image: %w", err)
 	}
 	if len(out.ImageDetails) == 0 || aws.ToString(out.ImageDetails[0].ImageDigest) == "" {
 		return &resource.ReadResult{ResourceType: request.ResourceType, ErrorCode: resource.OperationErrorCodeNotFound}, nil
 	}
 	digest := aws.ToString(out.ImageDetails[0].ImageDigest)
-	outputs := agentImageOutputs{
+	outputs := imageBuildOutputs{
 		ImageRef:    ref.URI + "@" + digest,
 		ImageDigest: digest,
 		ImageURI:    imageURI(ref.URI, tag),
@@ -506,18 +506,18 @@ func (a *AgentImage) Read(ctx context.Context, request *resource.ReadRequest) (*
 
 // ── Update ──────────────────────────────────────────────────────
 
-func (a *AgentImage) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	var desired agentImageInput
+func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	var desired imageBuildInput
 	if err := json.Unmarshal(request.DesiredProperties, &desired); err != nil {
-		return nil, fmt.Errorf("AgentImage: invalid DesiredProperties: %w", err)
+		return nil, fmt.Errorf("ImageBuild: invalid DesiredProperties: %w", err)
 	}
-	var prior agentImageOutputs
+	var prior imageBuildOutputs
 	if len(request.PriorProperties) > 0 {
 		_ = json.Unmarshal(request.PriorProperties, &prior)
 	}
 
 	if err := validateInput(desired); err != nil {
-		return nil, fmt.Errorf("AgentImage: %w", err)
+		return nil, fmt.Errorf("ImageBuild: %w", err)
 	}
 	newHash := computeBuildConfigHash(desired)
 
@@ -552,7 +552,7 @@ func (a *AgentImage) Update(ctx context.Context, request *resource.UpdateRequest
 // resolves to the recorded digest. It is false when the tag is missing or has been
 // moved to a different image out of band (either forces a rebuild), or when the
 // recorded digest is empty.
-func (a *AgentImage) tagMatchesDigest(ctx context.Context, nativeID, digest string) (bool, error) {
+func (a *ImageBuild) tagMatchesDigest(ctx context.Context, nativeID, digest string) (bool, error) {
 	if digest == "" {
 		return false, nil
 	}
@@ -576,7 +576,7 @@ func (a *AgentImage) tagMatchesDigest(ctx context.Context, nativeID, digest stri
 		if isECRImageNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("AgentImage: checking pushed tag: %w", err)
+		return false, fmt.Errorf("ImageBuild: checking pushed tag: %w", err)
 	}
 	if len(out.ImageDetails) == 0 {
 		return false, nil
@@ -586,7 +586,7 @@ func (a *AgentImage) tagMatchesDigest(ctx context.Context, nativeID, digest stri
 
 // ── Delete ──────────────────────────────────────────────────────
 
-func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
+func (a *ImageBuild) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
 	repoURI, tag, err := parseNativeID(request.NativeID)
 	if err != nil {
 		return nil, err
@@ -608,7 +608,7 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 	// An already-gone project is success: a partially-completed delete must be
 	// retryable through to cleaning up the pushed image and role below.
 	if _, err := cbClient.DeleteProject(ctx, &codebuildsdk.DeleteProjectInput{Name: aws.String(projectName)}); err != nil && !isCodeBuildNotFound(err) {
-		return nil, fmt.Errorf("AgentImage: deleting build project: %w", err)
+		return nil, fmt.Errorf("ImageBuild: deleting build project: %w", err)
 	}
 
 	// Remove the image this resource pushed so the push-target repository is left
@@ -629,10 +629,10 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 			RoleName:   aws.String(roleName),
 			PolicyName: aws.String(inlinePolicyName),
 		}); err != nil && !isIAMNotFound(err) {
-			return nil, fmt.Errorf("AgentImage: deleting role policy: %w", err)
+			return nil, fmt.Errorf("ImageBuild: deleting role policy: %w", err)
 		}
 		if _, err := iamClient.DeleteRole(ctx, &iamsdk.DeleteRoleInput{RoleName: aws.String(roleName)}); err != nil && !isIAMNotFound(err) {
-			return nil, fmt.Errorf("AgentImage: deleting role: %w", err)
+			return nil, fmt.Errorf("ImageBuild: deleting role: %w", err)
 		}
 	}
 
@@ -652,10 +652,10 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 // (an in-place update) leaves the prior digest behind as an untagged image; those
 // orphaned digests are not pruned here, so a co-managed repository that has been
 // rebuilt in place may still hold untagged images at teardown.
-func (a *AgentImage) deletePushedImage(ctx context.Context, repoURI, tag string) error {
+func (a *ImageBuild) deletePushedImage(ctx context.Context, repoURI, tag string) error {
 	ref, err := parseEcrRepositoryURI(repoURI)
 	if err != nil {
-		return fmt.Errorf("AgentImage: %w", err)
+		return fmt.Errorf("ImageBuild: %w", err)
 	}
 	client, err := a.ecrFactory(a.cfg)
 	if err != nil {
@@ -665,7 +665,7 @@ func (a *AgentImage) deletePushedImage(ctx context.Context, repoURI, tag string)
 		RepositoryName: aws.String(ref.RepoName),
 		ImageIds:       []ecrtypes.ImageIdentifier{{ImageTag: aws.String(tag)}},
 	}); err != nil && !isECRImageNotFound(err) {
-		return fmt.Errorf("AgentImage: deleting pushed image: %w", err)
+		return fmt.Errorf("ImageBuild: deleting pushed image: %w", err)
 	}
 	return nil
 }
@@ -676,10 +676,10 @@ func (a *AgentImage) deletePushedImage(ctx context.Context, repoURI, tag string)
 // other lookup error (e.g. a BYO deployment that grants the agent no IAM access) is
 // also treated as "not ours to delete" so teardown is never blocked, but is logged
 // so an orphaned internally-managed role stays observable.
-func (a *AgentImage) internalRoleExists(ctx context.Context, client iamClientInterface, roleName string) bool {
+func (a *ImageBuild) internalRoleExists(ctx context.Context, client iamClientInterface, roleName string) bool {
 	if _, err := client.GetRole(ctx, &iamsdk.GetRoleInput{RoleName: aws.String(roleName)}); err != nil {
 		if !isIAMNotFound(err) {
-			plugin.LoggerFromContext(ctx).Warn("AgentImage: skipping internal role cleanup; role lookup failed",
+			plugin.LoggerFromContext(ctx).Warn("ImageBuild: skipping internal role cleanup; role lookup failed",
 				"role", roleName, "error", err.Error())
 		}
 		return false
@@ -689,7 +689,7 @@ func (a *AgentImage) internalRoleExists(ctx context.Context, client iamClientInt
 
 // stopInFlightBuilds best-effort stops any running build for the project so the
 // project can be deleted. Any error here is non-fatal to the delete.
-func (a *AgentImage) stopInFlightBuilds(ctx context.Context, client codeBuildClientInterface, projectName string) {
+func (a *ImageBuild) stopInFlightBuilds(ctx context.Context, client codeBuildClientInterface, projectName string) {
 	listOut, err := client.ListBuildsForProject(ctx, &codebuildsdk.ListBuildsForProjectInput{ProjectName: aws.String(projectName)})
 	if err != nil || len(listOut.Ids) == 0 {
 		return
@@ -705,7 +705,7 @@ func (a *AgentImage) stopInFlightBuilds(ctx context.Context, client codeBuildCli
 	}
 }
 
-func (a *AgentImage) List(_ context.Context, _ *resource.ListRequest) (*resource.ListResult, error) {
+func (a *ImageBuild) List(_ context.Context, _ *resource.ListRequest) (*resource.ListResult, error) {
 	// discoverable = false: the build resource has no listable inventory.
 	return &resource.ListResult{NativeIDs: []string{}}, nil
 }
