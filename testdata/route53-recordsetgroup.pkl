@@ -56,12 +56,18 @@ forma {
           "192.0.2.1"
         }
       }
+      // Second record type in the batch. Deliberately AAAA (not TXT): a TXT
+      // value must be quote-wrapped, and formae's extract-to-pkl serialization
+      // mangles embedded quotes in listing elements (PLA-108), which fails the
+      // extract round-trip for reasons unrelated to this provisioner. The
+      // provisioner treats all simple record types uniformly, so AAAA gives
+      // clean multi-type coverage.
       new recordsetgroup.RecordSet {
-        name = "txt.\(domainName)"
-        type = "TXT"
+        name = "ipv6.\(domainName)"
+        type = "AAAA"
         ttl = 300
         resourceRecords = new Listing {
-          "\"formae-sdk-test\""
+          "2001:db8::1"
         }
       }
     }

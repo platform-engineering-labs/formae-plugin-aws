@@ -44,11 +44,11 @@ forma {
   hz
 
   // RecordSetGroup update: the (name, type) membership is unchanged (www/A and
-  // txt/TXT, same as create) so the NativeID — which encodes the managed record
-  // set — stays stable, and the update is an in-place UPSERT. The mutable values
-  // change: www's TTL 300 -> 600 with an extra address, and the TXT value is
-  // rewritten. (Adding/removing a record changes the group's identity and is a
-  // replace, not an update; that path is covered by unit tests.)
+  // ipv6/AAAA, same as create) so the NativeID — which encodes the managed
+  // record set — stays stable, and the update is an in-place UPSERT. The mutable
+  // values change: www's TTL 300 -> 600 with an extra address, and the AAAA
+  // value is rewritten. (Adding/removing a record changes the group's identity
+  // and is a replace, not an update; that path is covered by unit tests.)
   new recordsetgroup.RecordSetGroup {
     label = "plugin-sdk-test-recordsetgroup"
     hostedZoneId = hz.res.id
@@ -63,11 +63,11 @@ forma {
         }
       }
       new recordsetgroup.RecordSet {
-        name = "txt.\(domainName)"
-        type = "TXT"
+        name = "ipv6.\(domainName)"
+        type = "AAAA"
         ttl = 300
         resourceRecords = new Listing {
-          "\"formae-sdk-test-updated\""
+          "2001:db8::2"
         }
       }
     }
