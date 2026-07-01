@@ -25,7 +25,7 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.25-0.20260528030337-9ae690b3715c
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.2.3-0.20260528030337-9ae690b3715c
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.0
 	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.5-0.20260528030337-9ae690b3715c
 	github.com/stretchr/testify v1.11.1
 )
