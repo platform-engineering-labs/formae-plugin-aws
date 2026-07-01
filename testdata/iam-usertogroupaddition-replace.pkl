@@ -1,0 +1,63 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/group.pkl"
+import "@aws/iam/user.pkl"
+import "@aws/iam/usertogroupaddition.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-usertogroupaddition-\(testRunID)"
+
+// Group dependency
+local parentGroup = new group.Group {
+  label = "test-group-for-membership"
+  groupName = "formae-plugin-sdk-test-utga-group-\(testRunID)"
+  path = "/"
+}
+
+// Original user dependency
+local memberUser = new user.User {
+  label = "test-user-for-membership"
+  userName = "formae-plugin-sdk-test-utga-user-\(testRunID)"
+}
+
+// Second user: the membership now points here, which is a createOnly change on
+// userName and therefore exercises the replace (delete then create) path.
+local secondUser = new user.User {
+  label = "second-test-user-for-membership"
+  userName = "formae-plugin-sdk-test-utga-user2-\(testRunID)"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM UserToGroupAddition (replace)"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  parentGroup
+  memberUser
+  secondUser
+
+  // UserToGroupAddition under test, now targeting the second user (createOnly
+  // change → replace).
+  new usertogroupaddition.UserToGroupAddition {
+    label = "plugin-sdk-test-usertogroupaddition"
+    groupName = parentGroup.res.groupName
+    userName = secondUser.res.userName
+  }
+}
