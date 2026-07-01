@@ -73,6 +73,10 @@ forma {
     label = "plugin-sdk-test-route"
     routeTableId = testRouteTable.res.routeTableId
     destinationCidrBlock = "0.0.0.0/0"
-    gatewayId = testIgw.res.internetGatewayId
+    // Reference the gateway through the VPC attachment (not the raw IGW) so the
+    // route is ordered after the IGW is attached to the VPC — AWS rejects a
+    // route to an unattached gateway. Same InternetGatewayId value, but it adds
+    // the create/destroy ordering edge (per VPCGatewayAttachmentResolvable docs).
+    gatewayId = testAttachment.res.internetGatewayId
   }
 }
