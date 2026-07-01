@@ -177,7 +177,7 @@ func TestNetworkInterfacePermission_Read_NotFound_ByErrorCode(t *testing.T) {
 
 	client.On("DescribeNetworkInterfacePermissions", ctx, mock.Anything).Return(
 		(*ec2sdk.DescribeNetworkInterfacePermissionsOutput)(nil),
-		&fakeNIPAPIError{code: "InvalidNetworkInterfacePermissionID.NotFound"},
+		&fakeNIPAPIError{code: "InvalidPermissionID.NotFound"},
 	)
 
 	nip := &NetworkInterfacePermission{}
@@ -201,7 +201,7 @@ func TestNetworkInterfacePermission_Read_NotFound_ByErrorCode_LowercaseId(t *tes
 
 	client.On("DescribeNetworkInterfacePermissions", ctx, mock.Anything).Return(
 		(*ec2sdk.DescribeNetworkInterfacePermissionsOutput)(nil),
-		&fakeNIPAPIError{code: "InvalidNetworkInterfacePermissionId.NotFound"},
+		&fakeNIPAPIError{code: "InvalidPermissionId.NotFound"},
 	)
 
 	nip := &NetworkInterfacePermission{}
@@ -290,7 +290,7 @@ func TestNetworkInterfacePermission_Delete_IdempotentWhenGone(t *testing.T) {
 	// Read-before-delete reports it is already gone.
 	client.On("DescribeNetworkInterfacePermissions", ctx, mock.Anything).Return(
 		(*ec2sdk.DescribeNetworkInterfacePermissionsOutput)(nil),
-		&fakeNIPAPIError{code: "InvalidNetworkInterfacePermissionID.NotFound"},
+		&fakeNIPAPIError{code: "InvalidPermissionID.NotFound"},
 	)
 
 	nip := &NetworkInterfacePermission{}

@@ -23,11 +23,12 @@ import (
 )
 
 // errCodeNetworkInterfacePermissionNotFound is the EC2 error code returned when
-// a permission id does not exist; it is the only code that maps to NotFound.
-// EC2 is inconsistent about the "Id"/"ID" casing of this family of codes (e.g.
-// InvalidNetworkInterfaceAttachmentId.Malformed vs InvalidNetworkInterfaceID.NotFound),
-// so the match below is case-insensitive.
-const errCodeNetworkInterfacePermissionNotFound = "InvalidNetworkInterfacePermissionID.NotFound"
+// a network interface permission id does not exist; it is the only code that
+// maps to NotFound. AWS returns the short "InvalidPermissionID.NotFound" for
+// this resource (not "InvalidNetworkInterfacePermissionID.NotFound"), matching
+// what the Terraform AWS provider checks. EC2 is also inconsistent about the
+// "Id"/"ID" casing of these codes, so the match below is case-insensitive.
+const errCodeNetworkInterfacePermissionNotFound = "InvalidPermissionID.NotFound"
 
 type networkInterfacePermissionClientInterface interface {
 	CreateNetworkInterfacePermission(ctx context.Context, params *ec2sdk.CreateNetworkInterfacePermissionInput, optFns ...func(*ec2sdk.Options)) (*ec2sdk.CreateNetworkInterfacePermissionOutput, error)
