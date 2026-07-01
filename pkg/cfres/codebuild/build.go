@@ -180,8 +180,11 @@ func buildArgsFile(args map[string]string) string {
 // buildspec is the static CodeBuild buildspec. All build-varying values arrive as
 // environment variables; the Dockerfile and build args are materialized from
 // base64 env vars so operator-supplied values never land in an unescaped shell
-// context. Build args are read as KEY=VALUE lines and passed as repeated
-// --build-arg flags.
+// context. Build args are read as KEY=VALUE lines into the shell's positional
+// parameters and passed as quoted --build-arg flags, so a value containing spaces
+// survives intact. The ECR repository is required to be in the build project's own
+// region, so $AWS_REGION is the correct login region. The computed image reference
+// is exported so CodeBuild's exported-variables collects it after post_build.
 const buildspec = `version: 0.2
 env:
   exported-variables:
@@ -193,17 +196,21 @@ phases:
     commands:
       - printf '%s' "$` + dockerfileEnvVar + `" | base64 -d > Dockerfile
       - printf '%s' "$` + buildArgsEnvVar + `" | base64 -d > build_args.env
-      - BUILD_ARG_FLAGS=""; while IFS= read -r line; do [ -n "$line" ] && BUILD_ARG_FLAGS="$BUILD_ARG_FLAGS --build-arg $line"; done < build_args.env
       - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$` + ecrRegistryEnvVar + `"
   build:
     commands:
-      - docker build --platform linux/amd64 $BUILD_ARG_FLAGS -t "$` + imageURIEnvVar + `" .
+      - |
+        set --
+        while IFS= read -r line; do
+          [ -n "$line" ] && set -- "$@" --build-arg "$line"
+        done < build_args.env
+        docker build --platform linux/amd64 "$@" -t "$` + imageURIEnvVar + `" .
       - docker push "$` + imageURIEnvVar + `"
   post_build:
     commands:
-      - ` + exportedDigestVar + `="$(docker inspect --format='{{index .RepoDigests 0}}' "$` + imageURIEnvVar + `" | cut -d@ -f2)"
-      - ` + exportedImageRefVar + `="$` + ecrRepositoryURIEnvVar + `@$` + exportedDigestVar + `"
-      - ` + exportedImageURIVar + `="$` + imageURIEnvVar + `"
+      - export ` + exportedDigestVar + `="$(docker inspect --format='{{index .RepoDigests 0}}' "$` + imageURIEnvVar + `" | cut -d@ -f2)"
+      - export ` + exportedImageRefVar + `="$` + ecrRepositoryURIEnvVar + `@$` + exportedDigestVar + `"
+      - export ` + exportedImageURIVar + `="$` + imageURIEnvVar + `"
 `
 
 // generateBuildspec returns the buildspec. It is static; kept as a function so the

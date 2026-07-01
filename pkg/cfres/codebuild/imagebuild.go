@@ -22,11 +22,11 @@ import (
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/smithy-go"
 
-	"github.com/platform-engineering-labs/formae/pkg/plugin"
-	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
+	"github.com/platform-engineering-labs/formae/pkg/plugin"
+	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
 const resourceType = "AWS::CodeBuild::ImageBuild"
@@ -205,6 +205,14 @@ func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op reso
 	ref, err := parseEcrRepositoryURI(n.EcrRepositoryURI)
 	if err != nil {
 		return nil, fmt.Errorf("ImageBuild: %w", err)
+	}
+	// The CodeBuild project, its IAM role, its log group, and the ECR API clients
+	// all run in the target's region, and the internal role's inline policy is
+	// scoped to the target account. The push target must therefore be an ECR
+	// repository in that same region (v1 also assumes the same account); a
+	// cross-region repository would build but then fail to log or to be read/deleted.
+	if a.cfg.Region != "" && ref.Region != a.cfg.Region {
+		return nil, fmt.Errorf("ImageBuild: ecrRepositoryUri region %q must match the target region %q", ref.Region, a.cfg.Region)
 	}
 	projectName, roleName := resourceNames(ref.URI, n.ImageTag)
 

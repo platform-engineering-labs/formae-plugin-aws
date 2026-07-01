@@ -65,15 +65,15 @@ func TestValidateInputAcceptsValid(t *testing.T) {
 
 func TestValidateInputRejects(t *testing.T) {
 	cases := map[string]func(*imageBuildInput){
-		"missing repo":      func(i *imageBuildInput) { i.EcrRepositoryURI = "" },
-		"bad repo":          func(i *imageBuildInput) { i.EcrRepositoryURI = "not-ecr" },
-		"missing tag":       func(i *imageBuildInput) { i.ImageTag = "" },
-		"bad tag":           func(i *imageBuildInput) { i.ImageTag = "bad tag!" },
+		"missing repo":       func(i *imageBuildInput) { i.EcrRepositoryURI = "" },
+		"bad repo":           func(i *imageBuildInput) { i.EcrRepositoryURI = "not-ecr" },
+		"missing tag":        func(i *imageBuildInput) { i.ImageTag = "" },
+		"bad tag":            func(i *imageBuildInput) { i.ImageTag = "bad tag!" },
 		"missing dockerfile": func(i *imageBuildInput) { i.Dockerfile = "" },
-		"bad compute":       func(i *imageBuildInput) { i.ComputeType = "HUGE" },
-		"timeout too small": func(i *imageBuildInput) { i.TimeoutMinutes = 1 },
-		"timeout too big":   func(i *imageBuildInput) { i.TimeoutMinutes = 999 },
-		"bad buildArg key":  func(i *imageBuildInput) { i.BuildArgs = map[string]string{"bad key": "v"} },
+		"bad compute":        func(i *imageBuildInput) { i.ComputeType = "HUGE" },
+		"timeout too small":  func(i *imageBuildInput) { i.TimeoutMinutes = 1 },
+		"timeout too big":    func(i *imageBuildInput) { i.TimeoutMinutes = 999 },
+		"bad buildArg key":   func(i *imageBuildInput) { i.BuildArgs = map[string]string{"bad key": "v"} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -101,10 +101,16 @@ func TestGenerateBuildspecShape(t *testing.T) {
 	assert.Contains(t, bs, "docker build --platform linux/amd64")
 	assert.Contains(t, bs, "docker push")
 	assert.Contains(t, bs, "base64 -d > Dockerfile")
-	// Build args are decoded and threaded in as --build-arg flags.
+	// Build args are decoded and threaded in as quoted --build-arg flags via the
+	// shell's positional parameters, so a value with spaces survives intact.
 	assert.Contains(t, bs, "base64 -d > build_args.env")
 	assert.Contains(t, bs, "--build-arg")
-	assert.Contains(t, bs, "$BUILD_ARG_FLAGS")
+	assert.Contains(t, bs, `set -- "$@" --build-arg "$line"`)
+	assert.Contains(t, bs, `docker build --platform linux/amd64 "$@"`)
+	// Computed outputs are exported so CodeBuild's exported-variables collects them
+	// after post_build.
+	assert.Contains(t, bs, "export IMAGE_DIGEST=")
+	assert.Contains(t, bs, "export IMAGE_REF=")
 	// No formae-agent coupling in the generated build.
 	assert.NotContains(t, bs, "formae plugin install")
 	assert.NotContains(t, bs, "USER pel")

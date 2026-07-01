@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
+	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
 const testRepoURI = "123456789012.dkr.ecr.us-east-1.amazonaws.com/formae-agent"
@@ -120,6 +120,25 @@ func TestCreateWithByoRoleSkipsRoleManagement(t *testing.T) {
 	iam.AssertNotCalled(t, "PutRolePolicy", mock.Anything, mock.Anything)
 	createInput := cb.Calls[1].Arguments.Get(1).(*codebuildsdk.CreateProjectInput)
 	assert.Equal(t, "arn:aws:iam::123456789012:role/my-own-role", aws.ToString(createInput.ServiceRole))
+}
+
+// TestCreateRejectsCrossRegionRepository asserts a push target whose ECR region
+// differs from the target region is rejected up front (the build project, its log
+// group, and the ECR clients all run in the target region), before any build starts.
+func TestCreateRejectsCrossRegionRepository(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	iam := &mockIAMClient{}
+	p := newTestProvisioner(cb, nil, iam) // target region us-east-1
+
+	props, _ := json.Marshal(map[string]any{
+		"EcrRepositoryUri": "123456789012.dkr.ecr.us-west-2.amazonaws.com/formae-agent",
+		"ImageTag":         "0.1.0",
+		"Dockerfile":       "FROM public.ecr.aws/docker/library/alpine:3.20\n",
+	})
+	_, err := p.Create(context.Background(), &resource.CreateRequest{Properties: props})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must match the target region")
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
 }
 
 func TestCreateProjectRetriesOnAssumeRolePropagation(t *testing.T) {
