@@ -106,7 +106,10 @@ func TestGenerateBuildspecShape(t *testing.T) {
 	assert.Contains(t, bs, "base64 -d > build_args.env")
 	assert.Contains(t, bs, "--build-arg")
 	assert.Contains(t, bs, `set -- "$@" --build-arg "$line"`)
-	assert.Contains(t, bs, `docker build --platform linux/amd64 "$@"`)
+	// The image is built from an isolated empty context with the Dockerfile passed
+	// via -f, so neither the Dockerfile nor build_args.env is in the build context.
+	assert.Contains(t, bs, "mkdir -p build-context")
+	assert.Contains(t, bs, `docker build --platform linux/amd64 "$@" -f Dockerfile -t "$IMAGE_URI" build-context`)
 	// Computed outputs are exported so CodeBuild's exported-variables collects them
 	// after post_build.
 	assert.Contains(t, bs, "export IMAGE_DIGEST=")

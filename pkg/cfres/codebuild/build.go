@@ -182,9 +182,13 @@ func buildArgsFile(args map[string]string) string {
 // base64 env vars so operator-supplied values never land in an unescaped shell
 // context. Build args are read as KEY=VALUE lines into the shell's positional
 // parameters and passed as quoted --build-arg flags, so a value containing spaces
-// survives intact. The ECR repository is required to be in the build project's own
-// region, so $AWS_REGION is the correct login region. The computed image reference
-// is exported so CodeBuild's exported-variables collects it after post_build.
+// survives intact. The image is built from an empty build-context directory with the
+// Dockerfile supplied via -f, so the generated Dockerfile and build_args.env (which
+// hold operator-supplied values) are never part of the build context and cannot be
+// captured by a broad COPY in the Dockerfile. The ECR repository is required to be in
+// the build project's own region, so $AWS_REGION is the correct login region. The
+// computed image reference is exported so CodeBuild's exported-variables collects it
+// after post_build.
 const buildspec = `version: 0.2
 env:
   exported-variables:
@@ -196,6 +200,7 @@ phases:
     commands:
       - printf '%s' "$` + dockerfileEnvVar + `" | base64 -d > Dockerfile
       - printf '%s' "$` + buildArgsEnvVar + `" | base64 -d > build_args.env
+      - mkdir -p build-context
       - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$` + ecrRegistryEnvVar + `"
   build:
     commands:
@@ -204,7 +209,7 @@ phases:
         while IFS= read -r line; do
           [ -n "$line" ] && set -- "$@" --build-arg "$line"
         done < build_args.env
-        docker build --platform linux/amd64 "$@" -t "$` + imageURIEnvVar + `" .
+        docker build --platform linux/amd64 "$@" -f Dockerfile -t "$` + imageURIEnvVar + `" build-context
       - docker push "$` + imageURIEnvVar + `"
   post_build:
     commands:
