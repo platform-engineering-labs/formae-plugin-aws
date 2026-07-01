@@ -1,0 +1,83 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/vpngateway.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/vpngatewayroutepropagation.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ec2-vpngatewayroutepropagation-\(testRunID)"
+
+// VPC dependency
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-vgwpropagation"
+  cidrBlock = "10.0.0.0/16"
+  enableDnsSupport = true
+}
+
+// VPNGateway - the propagating gateway
+local testVgw = new vpngateway.VPNGateway {
+  label = "test-vgw-for-vgwpropagation"
+  type = "ipsec.1"
+  tags {
+    new { key = "Name"; value = "formae-plugin-sdk-test-vgw-\(testRunID)" }
+  }
+}
+
+// VPCGatewayAttachment - attach the VGW to the VPC before propagation is enabled,
+// and (via the resolvable) detach only after it is disabled.
+local testAttachment = new vpcgatewayattachment.VPCGatewayAttachment {
+  label = "test-vgw-attachment-for-vgwpropagation"
+  vpcId = testVpc.res.vpcId
+  vpnGatewayId = testVgw.res.vpnGatewayId
+}
+
+// RouteTable - the propagation target
+local testRouteTable = new routetable.RouteTable {
+  label = "test-routetable-for-vgwpropagation"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for EC2 VPNGatewayRoutePropagation"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // VPC required for the gateway attachment and route table
+  testVpc
+
+  // VPNGateway that propagates routes
+  testVgw
+
+  // Attach VGW to VPC before enabling propagation
+  testAttachment
+
+  // RouteTable that receives propagated routes
+  testRouteTable
+
+  // VPNGatewayRoutePropagation under test - references the attachment's resolvable
+  // so the VGW is attached before propagation is enabled.
+  new vpngatewayroutepropagation.VPNGatewayRoutePropagation {
+    label = "plugin-sdk-test-vgwpropagation"
+    routeTableId = testRouteTable.res.routeTableId
+    vpnGatewayId = testAttachment.res.vpnGatewayId
+  }
+}
