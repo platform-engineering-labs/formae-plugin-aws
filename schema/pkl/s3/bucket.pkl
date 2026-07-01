@@ -667,7 +667,6 @@ open class Bucket extends formae.Resource {
     replicationConfiguration: ReplicationConfiguration?
 
     @aws.FieldHint {
-        outputTransformation = formae.transform.capitalizeMemberKeys
         updateMethod = "EntitySet"
         indexField = "Key"
     }

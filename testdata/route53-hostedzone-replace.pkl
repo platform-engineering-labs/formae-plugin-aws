@@ -34,5 +34,8 @@ forma {
     hostedZoneConfig = new hostedzone.HostedZoneConfig {
       comment = "SDK test hosted zone - updated"
     }
+    tags {
+      new { key = "Environment"; value = "updated" }
+    }
   }
 }

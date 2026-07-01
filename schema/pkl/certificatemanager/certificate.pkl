@@ -111,7 +111,6 @@ open class Certificate extends formae.Resource {
     validationMethod: CertValidationMethodType?
 
     @aws.FieldHint {
-        outputTransformation = formae.transform.capitalizeMemberKeys
         updateMethod = "EntitySet"
         indexField = "Key"
         hasProviderDefault = true
