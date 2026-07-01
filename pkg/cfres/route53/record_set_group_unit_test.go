@@ -268,6 +268,11 @@ func TestRecordSetGroup_Read_AssemblesAndSorts(t *testing.T) {
 	require.Len(t, props.RecordSets, 2)
 	assert.Equal(t, "a.example.com", props.RecordSets[0]["Name"], "records should be sorted by name")
 	assert.Equal(t, "b.example.com", props.RecordSets[1]["Name"])
+	// HostedZoneId belongs to the group, not to each record. The declared
+	// RecordSet shape carries no per-record HostedZoneId, so emitting one reads
+	// back as unexpected drift.
+	assert.NotContains(t, props.RecordSets[0], "HostedZoneId", "per-record entries must not carry HostedZoneId")
+	assert.NotContains(t, props.RecordSets[1], "HostedZoneId", "per-record entries must not carry HostedZoneId")
 }
 
 func TestRecordSetGroup_Read_NotFoundWhenNonePresent(t *testing.T) {

@@ -549,7 +549,12 @@ func (r *RecordSetGroup) readWithClient(ctx context.Context, client recordSetGro
 	recordSets := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
 		if rrs, present := liveByKey[key]; present {
-			recordSets = append(recordSets, buildReadProperties(rrs, hostedZoneID, key.Name, key.Type))
+			rec := buildReadProperties(rrs, hostedZoneID, key.Name, key.Type)
+			// HostedZoneId lives on the group (set below), not on each record.
+			// The singular helper adds a per-record copy; drop it so the read
+			// matches the declared record shape and doesn't read as drift.
+			delete(rec, "HostedZoneId")
+			recordSets = append(recordSets, rec)
 		}
 	}
 	if len(recordSets) == 0 {
