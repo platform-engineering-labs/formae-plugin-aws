@@ -18,9 +18,9 @@ const type = "AWS::IAM::UserToGroupAddition"
 }
 open class UserToGroupAddition extends formae.Resource {
 
-    @aws.FieldHint
+    @aws.FieldHint{createOnly = true}
     groupName: String|formae.Resolvable
 
-    @aws.FieldHint
-    users: Listing<String>
+    @aws.FieldHint{createOnly = true}
+    userName: String|formae.Resolvable
 }
