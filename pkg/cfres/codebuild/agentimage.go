@@ -52,6 +52,7 @@ type codeBuildClientInterface interface {
 // ecrClientInterface is the subset of the ECR API this resource uses.
 type ecrClientInterface interface {
 	DescribeImages(ctx context.Context, params *ecrsdk.DescribeImagesInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.DescribeImagesOutput, error)
+	BatchDeleteImage(ctx context.Context, params *ecrsdk.BatchDeleteImageInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.BatchDeleteImageOutput, error)
 }
 
 // iamClientInterface is the subset of the IAM API this resource uses to manage the
@@ -603,6 +604,14 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 		return nil, fmt.Errorf("AgentImage: deleting build project: %w", err)
 	}
 
+	// Remove the image this resource pushed so the push-target repository is left
+	// empty and can itself be torn down. Deletion is scoped to exactly the tag this
+	// resource created, so it never touches images pushed by anything else. An
+	// already-gone image or repository is success.
+	if err := a.deletePushedImage(ctx, repoURI, tag); err != nil {
+		return nil, err
+	}
+
 	// The internal role name is distinct from any BYO ARN, so an unconditional
 	// best-effort delete never touches a caller-owned role: a BYO deployment has
 	// no role by this name, so DeleteRole is a no-op (NotFound → success).
@@ -621,6 +630,28 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 		OperationStatus: resource.OperationStatusSuccess,
 		NativeID:        request.NativeID,
 	}}, nil
+}
+
+// deletePushedImage removes the image this resource pushed, referenced by its tag,
+// from the target repository. A missing image or repository is treated as success
+// (nothing left to remove); any other ECR error is surfaced so a repository that
+// cannot be emptied does not silently block its own teardown.
+func (a *AgentImage) deletePushedImage(ctx context.Context, repoURI, tag string) error {
+	ref, err := parseEcrRepositoryURI(repoURI)
+	if err != nil {
+		return fmt.Errorf("AgentImage: %w", err)
+	}
+	client, err := a.ecrFactory(a.cfg)
+	if err != nil {
+		return err
+	}
+	if _, err := client.BatchDeleteImage(ctx, &ecrsdk.BatchDeleteImageInput{
+		RepositoryName: aws.String(ref.RepoName),
+		ImageIds:       []ecrtypes.ImageIdentifier{{ImageTag: aws.String(tag)}},
+	}); err != nil && !isECRImageNotFound(err) {
+		return fmt.Errorf("AgentImage: deleting pushed image: %w", err)
+	}
+	return nil
 }
 
 // stopInFlightBuilds best-effort stops any running build for the project so the

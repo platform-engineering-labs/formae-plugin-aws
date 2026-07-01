@@ -15,12 +15,12 @@ import "@aws/codebuild/agentimage.pkl"
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-codebuild-agent-image-\(testRunID)"
 
-// Push target for the built image. emptyOnDelete lets teardown remove the repo
-// even though the build leaves an image behind.
+// Push target for the built image. Deleting the AgentImage removes the image it
+// pushed (scoped to its own tag), so this repository is empty by the time the
+// stack tears it down.
 local testRepo = new repository.Repository {
   label = "test-ecr-for-agent-image"
   repositoryName = "formae-plugin-sdk-test-agentimg-\(testRunID)"
-  emptyOnDelete = true
 }
 
 forma {

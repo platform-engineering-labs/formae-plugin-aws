@@ -68,6 +68,11 @@ func (m *mockECRClient) DescribeImages(ctx context.Context, input *ecrsdk.Descri
 	return args.Get(0).(*ecrsdk.DescribeImagesOutput), args.Error(1)
 }
 
+func (m *mockECRClient) BatchDeleteImage(ctx context.Context, input *ecrsdk.BatchDeleteImageInput, _ ...func(*ecrsdk.Options)) (*ecrsdk.BatchDeleteImageOutput, error) {
+	args := m.Called(ctx, input)
+	return args.Get(0).(*ecrsdk.BatchDeleteImageOutput), args.Error(1)
+}
+
 type mockIAMClient struct {
 	mock.Mock
 }
