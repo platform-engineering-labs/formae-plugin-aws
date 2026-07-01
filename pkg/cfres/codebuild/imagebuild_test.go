@@ -318,6 +318,73 @@ func TestUpdateRebuildsWhenHashChanges(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
 	cb.AssertCalled(t, "UpdateProject", mock.Anything, mock.Anything)
+
+	// The rebuild carries the prior digest forward so Status can prune it.
+	state, err := decodeRequestID(res.ProgressResult.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:old", state.PriorDigest)
+}
+
+// TestStatusSucceededPrunesPriorDigestOnRebuild asserts that once an in-place
+// rebuild succeeds, the now-untagged prior manifest is pruned so the repository
+// stays empty enough to tear down.
+func TestStatusSucceededPrunesPriorDigestOnRebuild(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr, nil)
+
+	cb.On("BatchGetBuilds", mock.Anything, mock.Anything).Return(&codebuildsdk.BatchGetBuildsOutput{
+		Builds: []codebuildtypes.Build{{
+			Id:          aws.String("proj:build-9"),
+			BuildStatus: codebuildtypes.StatusTypeSucceeded,
+			ExportedEnvironmentVariables: []codebuildtypes.ExportedEnvironmentVariable{
+				{Name: aws.String(exportedDigestVar), Value: aws.String("sha256:new")},
+			},
+		}},
+	}, nil)
+	// The prior digest is now untagged, so it is pruned.
+	ecr.On("DescribeImages", mock.Anything, mock.MatchedBy(func(in *ecrsdk.DescribeImagesInput) bool {
+		return len(in.ImageIds) == 1 && aws.ToString(in.ImageIds[0].ImageDigest) == "sha256:old"
+	})).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:old")}},
+	}, nil)
+	ecr.On("BatchDeleteImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.BatchDeleteImageInput) bool {
+		return len(in.ImageIds) == 1 && aws.ToString(in.ImageIds[0].ImageDigest) == "sha256:old"
+	})).Return(&ecrsdk.BatchDeleteImageOutput{}, nil)
+
+	state := requestState{Operation: string(resource.OperationUpdate), BuildID: "proj:build-9", RepoURI: testRepoURI, Tag: "0.1.0", Deadline: time.Date(2026, 7, 1, 1, 0, 0, 0, time.UTC), BuildConfigHash: "h", PriorDigest: "sha256:old"}
+	res, err := p.Status(context.Background(), &resource.StatusRequest{RequestID: encodeRequestID(state)})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	ecr.AssertCalled(t, "BatchDeleteImage", mock.Anything, mock.Anything)
+}
+
+// TestStatusSucceededSkipsPruneWhenPriorStillTagged asserts the prune leaves a
+// prior digest alone when it is still referenced by another tag, so an identical
+// image shared in the repository is never deleted out from under its owner.
+func TestStatusSucceededSkipsPruneWhenPriorStillTagged(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr, nil)
+
+	cb.On("BatchGetBuilds", mock.Anything, mock.Anything).Return(&codebuildsdk.BatchGetBuildsOutput{
+		Builds: []codebuildtypes.Build{{
+			Id:          aws.String("proj:build-9"),
+			BuildStatus: codebuildtypes.StatusTypeSucceeded,
+			ExportedEnvironmentVariables: []codebuildtypes.ExportedEnvironmentVariable{
+				{Name: aws.String(exportedDigestVar), Value: aws.String("sha256:new")},
+			},
+		}},
+	}, nil)
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:old"), ImageTags: []string{"other-tag"}}},
+	}, nil)
+
+	state := requestState{Operation: string(resource.OperationUpdate), BuildID: "proj:build-9", RepoURI: testRepoURI, Tag: "0.1.0", Deadline: time.Date(2026, 7, 1, 1, 0, 0, 0, time.UTC), BuildConfigHash: "h", PriorDigest: "sha256:old"}
+	res, err := p.Status(context.Background(), &resource.StatusRequest{RequestID: encodeRequestID(state)})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	ecr.AssertNotCalled(t, "BatchDeleteImage", mock.Anything, mock.Anything)
 }
 
 // TestUpdateRebuildsWhenTagDrifted asserts the no-op skip only fires when the
@@ -510,13 +577,14 @@ func TestNativeIDAndRequestIDRoundTrip(t *testing.T) {
 	_, _, err = parseNativeID("no-separator")
 	assert.Error(t, err)
 
-	state := requestState{Operation: "Create", BuildID: "proj:b-1", RepoURI: testRepoURI, Tag: "0.1.0", Deadline: time.Date(2026, 7, 1, 0, 30, 0, 0, time.UTC), BuildConfigHash: "abc"}
+	state := requestState{Operation: "Create", BuildID: "proj:b-1", RepoURI: testRepoURI, Tag: "0.1.0", Deadline: time.Date(2026, 7, 1, 0, 30, 0, 0, time.UTC), BuildConfigHash: "abc", PriorDigest: "sha256:old"}
 	got, err := decodeRequestID(encodeRequestID(state))
 	require.NoError(t, err)
 	assert.Equal(t, state.BuildID, got.BuildID)
 	assert.Equal(t, state.RepoURI, got.RepoURI)
 	assert.Equal(t, state.Tag, got.Tag)
 	assert.Equal(t, state.BuildConfigHash, got.BuildConfigHash)
+	assert.Equal(t, state.PriorDigest, got.PriorDigest)
 	assert.True(t, state.Deadline.Equal(got.Deadline))
 
 	_, err = decodeRequestID("too|few")

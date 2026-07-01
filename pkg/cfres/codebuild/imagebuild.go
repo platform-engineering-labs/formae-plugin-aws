@@ -141,7 +141,11 @@ func parseNativeID(nativeID string) (repoURI, tag string, err error) {
 }
 
 // requestState is what a build's RequestID carries so Status can poll the exact
-// build and reconstruct the outputs without any other persisted state.
+// build and reconstruct the outputs without any other persisted state. PriorDigest
+// is the digest this resource previously had under the same tag (empty on Create);
+// once the new build succeeds Status prunes it so an in-place rebuild does not leave
+// the old manifest behind as an untagged image. None of the fields can contain '|'
+// (a repository URI, a tag, an RFC3339 time, a hex hash, and a sha256: digest).
 type requestState struct {
 	Operation       string
 	BuildID         string
@@ -149,6 +153,7 @@ type requestState struct {
 	Tag             string
 	Deadline        time.Time
 	BuildConfigHash string
+	PriorDigest     string
 }
 
 func encodeRequestID(s requestState) string {
@@ -159,12 +164,13 @@ func encodeRequestID(s requestState) string {
 		s.Tag,
 		s.Deadline.UTC().Format(time.RFC3339),
 		s.BuildConfigHash,
+		s.PriorDigest,
 	}, "|")
 }
 
 func decodeRequestID(requestID string) (requestState, error) {
-	parts := strings.SplitN(requestID, "|", 6)
-	if len(parts) != 6 {
+	parts := strings.SplitN(requestID, "|", 7)
+	if len(parts) != 7 {
 		return requestState{}, fmt.Errorf("invalid RequestID %q", requestID)
 	}
 	deadline, err := time.Parse(time.RFC3339, parts[4])
@@ -178,6 +184,7 @@ func decodeRequestID(requestID string) (requestState, error) {
 		Tag:             parts[3],
 		Deadline:        deadline,
 		BuildConfigHash: parts[5],
+		PriorDigest:     parts[6],
 	}, nil
 }
 
@@ -188,7 +195,7 @@ func (a *ImageBuild) Create(ctx context.Context, request *resource.CreateRequest
 	if err := json.Unmarshal(request.Properties, &in); err != nil {
 		return nil, fmt.Errorf("ImageBuild: invalid Properties: %w", err)
 	}
-	pr, err := a.startBuild(ctx, in, resource.OperationCreate)
+	pr, err := a.startBuild(ctx, in, resource.OperationCreate, "")
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +204,9 @@ func (a *ImageBuild) Create(ctx context.Context, request *resource.CreateRequest
 
 // startBuild validates inputs, ensures the internal role and project exist, kicks
 // off a build, and returns an InProgress ProgressResult carrying the poll state.
-func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op resource.Operation) (*resource.ProgressResult, error) {
+// priorDigest is the digest currently recorded under the tag (empty on Create); it
+// is carried through so Status can prune it once the new build succeeds.
+func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op resource.Operation, priorDigest string) (*resource.ProgressResult, error) {
 	if err := validateInput(in); err != nil {
 		return nil, fmt.Errorf("ImageBuild: %w", err)
 	}
@@ -248,6 +257,7 @@ func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op reso
 		Tag:             n.ImageTag,
 		Deadline:        deadline,
 		BuildConfigHash: computeBuildConfigHash(n),
+		PriorDigest:     priorDigest,
 	}
 	return &resource.ProgressResult{
 		Operation:       op,
@@ -419,6 +429,13 @@ func (a *ImageBuild) Status(ctx context.Context, request *resource.StatusRequest
 			pr.StatusMessage = err.Error()
 			return &resource.StatusResult{ProgressResult: pr}, nil
 		}
+		// An in-place rebuild moved the tag to a new digest and left the prior
+		// manifest untagged; prune it so a co-managed repository stays empty enough
+		// to tear down. Best-effort: the build already succeeded, so a prune failure
+		// is logged, not surfaced.
+		if state.PriorDigest != "" && state.PriorDigest != outputs.ImageDigest {
+			a.prunePriorDigest(ctx, state.RepoURI, state.PriorDigest)
+		}
 		js, _ := json.Marshal(outputs)
 		pr.OperationStatus = resource.OperationStatusSuccess
 		pr.ResourceProperties = js
@@ -549,7 +566,7 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 		}
 	}
 
-	pr, err := a.startBuild(ctx, desired, resource.OperationUpdate)
+	pr, err := a.startBuild(ctx, desired, resource.OperationUpdate, prior.ImageDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -656,10 +673,11 @@ func (a *ImageBuild) Delete(ctx context.Context, request *resource.DeleteRequest
 // (nothing left to remove); any other ECR error is surfaced so a repository that
 // cannot be emptied does not silently block its own teardown.
 //
-// This removes only the image currently under the tag. Rebuilding to the same tag
-// (an in-place update) leaves the prior digest behind as an untagged image; those
-// orphaned digests are not pruned here, so a co-managed repository that has been
-// rebuilt in place may still hold untagged images at teardown.
+// This removes the image currently under the tag. In-place rebuilds prune their own
+// prior digest as the new build succeeds (see prunePriorDigest), so a normal
+// build/rebuild/delete cycle leaves the repository empty. A tag moved out of band
+// would delete whatever it now points at (the recorded push digest is not available
+// at delete time — the request carries only the repository URI and tag).
 func (a *ImageBuild) deletePushedImage(ctx context.Context, repoURI, tag string) error {
 	ref, err := parseEcrRepositoryURI(repoURI)
 	if err != nil {
@@ -676,6 +694,45 @@ func (a *ImageBuild) deletePushedImage(ctx context.Context, repoURI, tag string)
 		return fmt.Errorf("ImageBuild: deleting pushed image: %w", err)
 	}
 	return nil
+}
+
+// prunePriorDigest best-effort removes the manifest a prior build pushed under the
+// same tag, which an in-place rebuild left untagged. It deletes the manifest only
+// when it currently carries no tags, so a digest still referenced by another tag
+// (e.g. an identical image pushed elsewhere in the repository) is left untouched.
+// The rebuild already succeeded, so any failure here is logged, not surfaced.
+func (a *ImageBuild) prunePriorDigest(ctx context.Context, repoURI, digest string) {
+	log := plugin.LoggerFromContext(ctx)
+	ref, err := parseEcrRepositoryURI(repoURI)
+	if err != nil {
+		log.Warn("ImageBuild: skipping prior-digest prune; invalid repository uri", "error", err.Error())
+		return
+	}
+	client, err := a.ecrFactory(a.cfg)
+	if err != nil {
+		log.Warn("ImageBuild: skipping prior-digest prune; ecr client unavailable", "error", err.Error())
+		return
+	}
+	out, err := client.DescribeImages(ctx, &ecrsdk.DescribeImagesInput{
+		RepositoryName: aws.String(ref.RepoName),
+		ImageIds:       []ecrtypes.ImageIdentifier{{ImageDigest: aws.String(digest)}},
+	})
+	if err != nil {
+		if !isECRImageNotFound(err) {
+			log.Warn("ImageBuild: skipping prior-digest prune; describe failed", "digest", digest, "error", err.Error())
+		}
+		return
+	}
+	// Leave the manifest if it is still referenced by any tag.
+	if len(out.ImageDetails) > 0 && len(out.ImageDetails[0].ImageTags) > 0 {
+		return
+	}
+	if _, err := client.BatchDeleteImage(ctx, &ecrsdk.BatchDeleteImageInput{
+		RepositoryName: aws.String(ref.RepoName),
+		ImageIds:       []ecrtypes.ImageIdentifier{{ImageDigest: aws.String(digest)}},
+	}); err != nil && !isECRImageNotFound(err) {
+		log.Warn("ImageBuild: pruning prior digest failed", "digest", digest, "error", err.Error())
+	}
 }
 
 // internalRoleExists reports whether the internally-managed service role is present
