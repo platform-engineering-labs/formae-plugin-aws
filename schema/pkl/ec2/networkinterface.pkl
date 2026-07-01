@@ -39,6 +39,14 @@ open class PrivateIpAddressSpecification extends formae.SubResource {
     privateIpAddress: String
 }
 
+open class NetworkInterfaceResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: NetworkInterfaceResolvable = (this) {
+        property = "Id"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
@@ -99,4 +107,11 @@ open class NetworkInterface extends formae.Resource {
         hasProviderDefault = true
     }
     tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: NetworkInterfaceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

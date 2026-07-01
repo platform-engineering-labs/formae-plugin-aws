@@ -63,11 +63,7 @@ forma {
   // proves Update is correctly never registered for this all-createOnly type.
   new networkinterfacepermission.NetworkInterfacePermission {
     label = "plugin-sdk-test-eni-perm"
-    networkInterfaceId = new formae.Resolvable {
-      label = testEni.label
-      type = "AWS::EC2::NetworkInterface"
-      property = "Id"
-    }
+    networkInterfaceId = testEni.res.id
     awsAccountId = "123456789012"
     permission = "EIP-ASSOCIATE"
   }

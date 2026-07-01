@@ -64,11 +64,7 @@ forma {
   // grant (enforced at attach time), so it has no real blast radius.
   new networkinterfacepermission.NetworkInterfacePermission {
     label = "plugin-sdk-test-eni-perm"
-    networkInterfaceId = new formae.Resolvable {
-      label = testEni.label
-      type = "AWS::EC2::NetworkInterface"
-      property = "Id"
-    }
+    networkInterfaceId = testEni.res.id
     awsAccountId = "123456789012"
     permission = "INSTANCE-ATTACH"
   }
