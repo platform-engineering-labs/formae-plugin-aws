@@ -67,7 +67,10 @@ open class RecordSet extends formae.SubResource {
     region: aws.Region?
     resourceRecords: Listing<String>?
     setIdentifier: String?
-    ttl: String?
+    @aws.FieldHint {
+        outputField = "TTL"
+    }
+    ttl: Number?
     type: String
     weight: Int?
 }

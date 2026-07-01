@@ -1,0 +1,75 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/route53/hostedzone.pkl"
+import "@aws/route53/recordsetgroup.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-route53-recordsetgroup-\(testRunID)"
+local domainName = "sdk-\(testRunID).test-formae.io"
+
+// HostedZone dependency - the RecordSetGroup lives in this zone
+local hz = new hostedzone.HostedZone {
+  label = "test-hosted-zone"
+  name = domainName
+  hostedZoneConfig = new hostedzone.HostedZoneConfig {
+    comment = "SDK test hosted zone for RecordSetGroup tests"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Route53 RecordSetGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // HostedZone required for the RecordSetGroup
+  hz
+
+  // RecordSetGroup under test - a batch of two simple records changed atomically
+  new recordsetgroup.RecordSetGroup {
+    label = "plugin-sdk-test-recordsetgroup"
+    hostedZoneId = hz.res.id
+    recordSets = new Listing {
+      new recordsetgroup.RecordSet {
+        name = "www.\(domainName)"
+        type = "A"
+        ttl = 300
+        resourceRecords = new Listing {
+          "192.0.2.1"
+        }
+      }
+      // Second record type in the batch. Deliberately AAAA (not TXT): a TXT
+      // value must be quote-wrapped, and formae's extract-to-pkl serialization
+      // mangles embedded quotes in listing elements (PLA-108), which fails the
+      // extract round-trip for reasons unrelated to this provisioner. The
+      // provisioner treats all simple record types uniformly, so AAAA gives
+      // clean multi-type coverage.
+      new recordsetgroup.RecordSet {
+        name = "ipv6.\(domainName)"
+        type = "AAAA"
+        ttl = 300
+        resourceRecords = new Listing {
+          "2001:db8::1"
+        }
+      }
+    }
+  }
+}
