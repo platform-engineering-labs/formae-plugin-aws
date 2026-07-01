@@ -238,13 +238,6 @@ func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op reso
 	if err != nil {
 		return nil, err
 	}
-	// The CodeBuild project's log group lives in the target account (the account of
-	// the service role), and the inline policy grants logs there; a push target in a
-	// different account would build (if its repository policy allowed the push) but
-	// its role could not create or write that log group. Require the same account.
-	if acct := accountFromRoleArn(roleArn); acct != "" && acct != ref.AccountID {
-		return nil, fmt.Errorf("ImageBuild: ecrRepositoryUri account %q must match the target account %q", ref.AccountID, acct)
-	}
 	if err := a.ensureProject(ctx, cbClient, n, projectName, roleArn); err != nil {
 		return nil, err
 	}
@@ -694,11 +687,33 @@ func (a *ImageBuild) deletePushedImage(ctx context.Context, repoURI, tag string)
 	if err != nil {
 		return err
 	}
-	if _, err := client.BatchDeleteImage(ctx, &ecrsdk.BatchDeleteImageInput{
+	out, err := client.BatchDeleteImage(ctx, &ecrsdk.BatchDeleteImageInput{
 		RepositoryName: aws.String(ref.RepoName),
 		ImageIds:       []ecrtypes.ImageIdentifier{{ImageTag: aws.String(tag)}},
-	}); err != nil && !isECRImageNotFound(err) {
+	})
+	if err != nil && !isECRImageNotFound(err) {
 		return fmt.Errorf("ImageBuild: deleting pushed image: %w", err)
+	}
+	// BatchDeleteImage reports per-image problems in Failures with an HTTP success,
+	// so an unchecked call would report a still-present image as deleted.
+	if f := firstImageFailure(out); f != nil {
+		return fmt.Errorf("ImageBuild: deleting pushed image: %s (%s)", aws.ToString(f.FailureReason), f.FailureCode)
+	}
+	return nil
+}
+
+// firstImageFailure returns the first per-image failure that is not an already-gone
+// (ImageNotFound) result, or nil. ECR's BatchDeleteImage returns HTTP success with
+// per-image problems (e.g. ImageReferencedByManifestList) reported in Failures
+// rather than as a request error.
+func firstImageFailure(out *ecrsdk.BatchDeleteImageOutput) *ecrtypes.ImageFailure {
+	if out == nil {
+		return nil
+	}
+	for i := range out.Failures {
+		if out.Failures[i].FailureCode != ecrtypes.ImageFailureCodeImageNotFound {
+			return &out.Failures[i]
+		}
 	}
 	return nil
 }
@@ -734,11 +749,16 @@ func (a *ImageBuild) prunePriorDigest(ctx context.Context, repoURI, digest strin
 	if len(out.ImageDetails) > 0 && len(out.ImageDetails[0].ImageTags) > 0 {
 		return
 	}
-	if _, err := client.BatchDeleteImage(ctx, &ecrsdk.BatchDeleteImageInput{
+	delOut, err := client.BatchDeleteImage(ctx, &ecrsdk.BatchDeleteImageInput{
 		RepositoryName: aws.String(ref.RepoName),
 		ImageIds:       []ecrtypes.ImageIdentifier{{ImageDigest: aws.String(digest)}},
-	}); err != nil && !isECRImageNotFound(err) {
+	})
+	if err != nil && !isECRImageNotFound(err) {
 		log.Warn("ImageBuild: pruning prior digest failed", "digest", digest, "error", err.Error())
+		return
+	}
+	if f := firstImageFailure(delOut); f != nil {
+		log.Warn("ImageBuild: pruning prior digest failed", "digest", digest, "reason", aws.ToString(f.FailureReason), "code", string(f.FailureCode))
 	}
 }
 

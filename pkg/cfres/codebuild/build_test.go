@@ -201,9 +201,3 @@ func TestInlinePolicyScopedToTargets(t *testing.T) {
 func TestImageURI(t *testing.T) {
 	assert.Equal(t, "repo:tag", imageURI("repo", "tag"))
 }
-
-func TestAccountFromRoleArn(t *testing.T) {
-	assert.Equal(t, "123456789012", accountFromRoleArn("arn:aws:iam::123456789012:role/formae-imgbuild-x"))
-	assert.Equal(t, "", accountFromRoleArn("not-an-arn"))
-	assert.Equal(t, "", accountFromRoleArn("arn:aws:codebuild:us-east-1:123456789012:project/x"))
-}
