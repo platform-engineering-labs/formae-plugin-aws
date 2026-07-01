@@ -59,7 +59,6 @@ open class EmailIdentity extends formae.Resource {
     dkimSigning: ses.DkimSigningAttributes?
 
     @aws.FieldHint {
-        outputTransformation = formae.transform.capitalizeMemberKeys
         updateMethod = "EntitySet"
         indexField = "Key"
     }

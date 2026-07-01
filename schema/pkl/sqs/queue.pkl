@@ -102,7 +102,6 @@ open class Queue extends formae.Resource {
     sqsManagedSseEnabled: Boolean? = true
 
     @aws.FieldHint {
-        outputTransformation = formae.transform.capitalizeMemberKeys
         updateMethod = "EntitySet"
         indexField = "Key"
     }
