@@ -301,6 +301,77 @@ func TestUpdateRebuildsWhenHashChanges(t *testing.T) {
 	cb.AssertCalled(t, "UpdateProject", mock.Anything, mock.Anything)
 }
 
+// TestUpdateRebuildsWhenTagDrifted asserts the no-op skip only fires when the
+// declared tag still resolves to the recorded digest. If the tag was moved to a
+// different image out of band, an Update rebuilds rather than reporting success
+// against a stale reference.
+func TestUpdateRebuildsWhenTagDrifted(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	iam := &mockIAMClient{}
+	p := newTestProvisioner(cb, ecr, iam)
+
+	desired := validInput()
+	desiredJSON, _ := json.Marshal(map[string]any{
+		"EcrRepositoryUri": desired.EcrRepositoryURI,
+		"ImageTag":         desired.ImageTag,
+		"BaseImage":        desired.BaseImage,
+		"Plugins":          []map[string]any{{"Name": "aws", "Version": "0.1.13-dev.1", "Channel": "dev"}},
+	})
+	prior := agentImageOutputs{BuildConfigHash: computeBuildConfigHash(desired), ImageDigest: "sha256:original"}
+	priorJSON, _ := json.Marshal(prior)
+
+	// The tag now resolves to a different image than the one we built.
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:drifted")}},
+	}, nil)
+	iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{
+		Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::123456789012:role/formae-agentimg-x")},
+	}, nil)
+	iam.On("PutRolePolicy", mock.Anything, mock.Anything).Return(&iamsdk.PutRolePolicyOutput{}, nil)
+	cb.On("BatchGetProjects", mock.Anything, mock.Anything).Return(&codebuildsdk.BatchGetProjectsOutput{
+		Projects: []codebuildtypes.Project{{Name: aws.String("p")}},
+	}, nil)
+	cb.On("UpdateProject", mock.Anything, mock.Anything).Return(&codebuildsdk.UpdateProjectOutput{}, nil)
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-3")},
+	}, nil)
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag),
+		PriorProperties:   priorJSON,
+		DesiredProperties: desiredJSON,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	cb.AssertCalled(t, "StartBuild", mock.Anything, mock.Anything)
+}
+
+// TestDeleteToleratesMissingProject asserts an already-deleted CodeBuild project
+// does not abort the delete: the pushed image and IAM role are still cleaned up so
+// a partially-completed delete can be retried to success.
+func TestDeleteToleratesMissingProject(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	iam := &mockIAMClient{}
+	p := newTestProvisioner(cb, ecr, iam)
+
+	cb.On("ListBuildsForProject", mock.Anything, mock.Anything).Return(&codebuildsdk.ListBuildsForProjectOutput{}, nil)
+	cb.On("DeleteProject", mock.Anything, mock.Anything).Return(&codebuildsdk.DeleteProjectOutput{}, &codebuildtypes.ResourceNotFoundException{})
+	ecr.On("BatchDeleteImage", mock.Anything, mock.Anything).Return(&ecrsdk.BatchDeleteImageOutput{}, nil)
+	iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{
+		Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::123456789012:role/formae-agentimg-x")},
+	}, nil)
+	iam.On("DeleteRolePolicy", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRolePolicyOutput{}, nil)
+	iam.On("DeleteRole", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRoleOutput{}, nil)
+
+	res, err := p.Delete(context.Background(), &resource.DeleteRequest{NativeID: encodeNativeID(testRepoURI, "0.1.0")})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	ecr.AssertCalled(t, "BatchDeleteImage", mock.Anything, mock.Anything)
+	iam.AssertCalled(t, "DeleteRole", mock.Anything, mock.Anything)
+}
+
 func TestDeleteStopsBuildAndCleansUp(t *testing.T) {
 	cb := &mockCodeBuildClient{}
 	ecr := &mockECRClient{}
@@ -314,6 +385,9 @@ func TestDeleteStopsBuildAndCleansUp(t *testing.T) {
 	cb.On("StopBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StopBuildOutput{}, nil)
 	cb.On("DeleteProject", mock.Anything, mock.Anything).Return(&codebuildsdk.DeleteProjectOutput{}, nil)
 	ecr.On("BatchDeleteImage", mock.Anything, mock.Anything).Return(&ecrsdk.BatchDeleteImageOutput{}, nil)
+	iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{
+		Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::123456789012:role/formae-agentimg-x")},
+	}, nil)
 	iam.On("DeleteRolePolicy", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRolePolicyOutput{}, nil)
 	iam.On("DeleteRole", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRoleOutput{}, nil)
 
@@ -322,6 +396,7 @@ func TestDeleteStopsBuildAndCleansUp(t *testing.T) {
 	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
 	cb.AssertCalled(t, "StopBuild", mock.Anything, mock.Anything)
 	cb.AssertCalled(t, "DeleteProject", mock.Anything, mock.Anything)
+	iam.AssertCalled(t, "DeleteRole", mock.Anything, mock.Anything)
 }
 
 // TestDeleteRemovesPushedImage asserts Delete empties the target repository of the
@@ -335,6 +410,9 @@ func TestDeleteRemovesPushedImage(t *testing.T) {
 
 	cb.On("ListBuildsForProject", mock.Anything, mock.Anything).Return(&codebuildsdk.ListBuildsForProjectOutput{}, nil)
 	cb.On("DeleteProject", mock.Anything, mock.Anything).Return(&codebuildsdk.DeleteProjectOutput{}, nil)
+	iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{
+		Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::123456789012:role/formae-agentimg-x")},
+	}, nil)
 	iam.On("DeleteRolePolicy", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRolePolicyOutput{}, nil)
 	iam.On("DeleteRole", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRoleOutput{}, nil)
 	ecr.On("BatchDeleteImage", mock.Anything, mock.MatchedBy(func(input *ecrsdk.BatchDeleteImageInput) bool {
@@ -358,12 +436,50 @@ func TestDeleteToleratesMissingRepositoryAndRole(t *testing.T) {
 	cb.On("ListBuildsForProject", mock.Anything, mock.Anything).Return(&codebuildsdk.ListBuildsForProjectOutput{}, nil)
 	cb.On("DeleteProject", mock.Anything, mock.Anything).Return(&codebuildsdk.DeleteProjectOutput{}, nil)
 	ecr.On("BatchDeleteImage", mock.Anything, mock.Anything).Return(&ecrsdk.BatchDeleteImageOutput{}, &ecrtypes.RepositoryNotFoundException{})
-	iam.On("DeleteRolePolicy", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRolePolicyOutput{}, &iamtypes.NoSuchEntityException{})
-	iam.On("DeleteRole", mock.Anything, mock.Anything).Return(&iamsdk.DeleteRoleOutput{}, &iamtypes.NoSuchEntityException{})
+	// The internal role is already gone: it is not looked up as present, so no
+	// deletion is attempted, and teardown still succeeds.
+	iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{}, &iamtypes.NoSuchEntityException{})
 
 	res, err := p.Delete(context.Background(), &resource.DeleteRequest{NativeID: encodeNativeID(testRepoURI, "0.1.0")})
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	iam.AssertNotCalled(t, "DeleteRole", mock.Anything, mock.Anything)
+}
+
+// TestDeleteSkipsInternalRoleForByo asserts that when the internally-named service
+// role does not exist — the case for a BYO-role deployment, whose role has a
+// caller-owned ARN and which may not grant the agent any IAM access — Delete leaves
+// IAM entirely untouched (never deleting a caller-owned role) and still tears down
+// the project and pushed image. A lookup that itself fails with AccessDenied is
+// treated the same: nothing of ours to remove, teardown proceeds.
+func TestDeleteSkipsInternalRoleForByo(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		getRoleErr error
+	}{
+		{"role-absent", &iamtypes.NoSuchEntityException{}},
+		{"no-iam-access", &smithyAPIError{code: "AccessDenied", msg: "not authorized to perform: iam:GetRole"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cb := &mockCodeBuildClient{}
+			ecr := &mockECRClient{}
+			iam := &mockIAMClient{}
+			p := newTestProvisioner(cb, ecr, iam)
+
+			cb.On("ListBuildsForProject", mock.Anything, mock.Anything).Return(&codebuildsdk.ListBuildsForProjectOutput{}, nil)
+			cb.On("DeleteProject", mock.Anything, mock.Anything).Return(&codebuildsdk.DeleteProjectOutput{}, nil)
+			ecr.On("BatchDeleteImage", mock.Anything, mock.Anything).Return(&ecrsdk.BatchDeleteImageOutput{}, nil)
+			iam.On("GetRole", mock.Anything, mock.Anything).Return(&iamsdk.GetRoleOutput{}, tc.getRoleErr)
+
+			res, err := p.Delete(context.Background(), &resource.DeleteRequest{NativeID: encodeNativeID(testRepoURI, "0.1.0")})
+			require.NoError(t, err)
+			assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+			iam.AssertNotCalled(t, "DeleteRolePolicy", mock.Anything, mock.Anything)
+			iam.AssertNotCalled(t, "DeleteRole", mock.Anything, mock.Anything)
+			cb.AssertCalled(t, "DeleteProject", mock.Anything, mock.Anything)
+			ecr.AssertCalled(t, "BatchDeleteImage", mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestNativeIDAndRequestIDRoundTrip(t *testing.T) {

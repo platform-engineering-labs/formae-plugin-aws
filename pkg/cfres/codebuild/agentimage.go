@@ -521,14 +521,14 @@ func (a *AgentImage) Update(ctx context.Context, request *resource.UpdateRequest
 	}
 	newHash := computeBuildConfigHash(desired)
 
-	// Rebuild only when the build-affecting inputs changed, or the recorded digest
-	// is no longer present in ECR.
+	// Rebuild only when the build-affecting inputs changed, or the declared tag no
+	// longer resolves to the recorded digest in ECR (missing, or moved out of band).
 	if prior.BuildConfigHash != "" && prior.BuildConfigHash == newHash {
-		present, err := a.digestPresent(ctx, request.NativeID, prior.ImageDigest)
+		matches, err := a.tagMatchesDigest(ctx, request.NativeID, prior.ImageDigest)
 		if err != nil {
 			return nil, err
 		}
-		if present {
+		if matches {
 			outputs := prior
 			outputs.ImageTag = desired.ImageTag
 			js, _ := json.Marshal(outputs)
@@ -548,13 +548,15 @@ func (a *AgentImage) Update(ctx context.Context, request *resource.UpdateRequest
 	return &resource.UpdateResult{ProgressResult: pr}, nil
 }
 
-// digestPresent reports whether the recorded digest still exists in the target
-// repository. A missing digest (or empty recorded digest) forces a rebuild.
-func (a *AgentImage) digestPresent(ctx context.Context, nativeID, digest string) (bool, error) {
+// tagMatchesDigest reports whether the declared tag in the target repository still
+// resolves to the recorded digest. It is false when the tag is missing or has been
+// moved to a different image out of band (either forces a rebuild), or when the
+// recorded digest is empty.
+func (a *AgentImage) tagMatchesDigest(ctx context.Context, nativeID, digest string) (bool, error) {
 	if digest == "" {
 		return false, nil
 	}
-	repoURI, _, err := parseNativeID(nativeID)
+	repoURI, tag, err := parseNativeID(nativeID)
 	if err != nil {
 		return false, err
 	}
@@ -568,15 +570,18 @@ func (a *AgentImage) digestPresent(ctx context.Context, nativeID, digest string)
 	}
 	out, err := client.DescribeImages(ctx, &ecrsdk.DescribeImagesInput{
 		RepositoryName: aws.String(ref.RepoName),
-		ImageIds:       []ecrtypes.ImageIdentifier{{ImageDigest: aws.String(digest)}},
+		ImageIds:       []ecrtypes.ImageIdentifier{{ImageTag: aws.String(tag)}},
 	})
 	if err != nil {
 		if isECRImageNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("AgentImage: checking recorded digest: %w", err)
+		return false, fmt.Errorf("AgentImage: checking pushed tag: %w", err)
 	}
-	return len(out.ImageDetails) > 0, nil
+	if len(out.ImageDetails) == 0 {
+		return false, nil
+	}
+	return aws.ToString(out.ImageDetails[0].ImageDigest) == digest, nil
 }
 
 // ── Delete ──────────────────────────────────────────────────────
@@ -600,7 +605,9 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 	// Stop any in-flight build for the project before deleting it.
 	a.stopInFlightBuilds(ctx, cbClient, projectName)
 
-	if _, err := cbClient.DeleteProject(ctx, &codebuildsdk.DeleteProjectInput{Name: aws.String(projectName)}); err != nil {
+	// An already-gone project is success: a partially-completed delete must be
+	// retryable through to cleaning up the pushed image and role below.
+	if _, err := cbClient.DeleteProject(ctx, &codebuildsdk.DeleteProjectInput{Name: aws.String(projectName)}); err != nil && !isCodeBuildNotFound(err) {
 		return nil, fmt.Errorf("AgentImage: deleting build project: %w", err)
 	}
 
@@ -612,17 +619,21 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 		return nil, err
 	}
 
-	// The internal role name is distinct from any BYO ARN, so an unconditional
-	// best-effort delete never touches a caller-owned role: a BYO deployment has
-	// no role by this name, so DeleteRole is a no-op (NotFound → success).
-	if _, err := iamClient.DeleteRolePolicy(ctx, &iamsdk.DeleteRolePolicyInput{
-		RoleName:   aws.String(roleName),
-		PolicyName: aws.String(inlinePolicyName),
-	}); err != nil && !isIAMNotFound(err) {
-		return nil, fmt.Errorf("AgentImage: deleting role policy: %w", err)
-	}
-	if _, err := iamClient.DeleteRole(ctx, &iamsdk.DeleteRoleInput{RoleName: aws.String(roleName)}); err != nil && !isIAMNotFound(err) {
-		return nil, fmt.Errorf("AgentImage: deleting role: %w", err)
+	// Only remove the service role when it exists under this plugin's deterministic
+	// internal name. A BYO-role deployment never creates that role (its role has a
+	// caller-owned ARN), so the lookup misses and the caller's role is left
+	// untouched per the schema contract — and a BYO deployment that does not grant
+	// the agent IAM access does not fail teardown on an AccessDenied delete.
+	if a.internalRoleExists(ctx, iamClient, roleName) {
+		if _, err := iamClient.DeleteRolePolicy(ctx, &iamsdk.DeleteRolePolicyInput{
+			RoleName:   aws.String(roleName),
+			PolicyName: aws.String(inlinePolicyName),
+		}); err != nil && !isIAMNotFound(err) {
+			return nil, fmt.Errorf("AgentImage: deleting role policy: %w", err)
+		}
+		if _, err := iamClient.DeleteRole(ctx, &iamsdk.DeleteRoleInput{RoleName: aws.String(roleName)}); err != nil && !isIAMNotFound(err) {
+			return nil, fmt.Errorf("AgentImage: deleting role: %w", err)
+		}
 	}
 
 	return &resource.DeleteResult{ProgressResult: &resource.ProgressResult{
@@ -636,6 +647,11 @@ func (a *AgentImage) Delete(ctx context.Context, request *resource.DeleteRequest
 // from the target repository. A missing image or repository is treated as success
 // (nothing left to remove); any other ECR error is surfaced so a repository that
 // cannot be emptied does not silently block its own teardown.
+//
+// This removes only the image currently under the tag. Rebuilding to the same tag
+// (an in-place update) leaves the prior digest behind as an untagged image; those
+// orphaned digests are not pruned here, so a co-managed repository that has been
+// rebuilt in place may still hold untagged images at teardown.
 func (a *AgentImage) deletePushedImage(ctx context.Context, repoURI, tag string) error {
 	ref, err := parseEcrRepositoryURI(repoURI)
 	if err != nil {
@@ -652,6 +668,23 @@ func (a *AgentImage) deletePushedImage(ctx context.Context, repoURI, tag string)
 		return fmt.Errorf("AgentImage: deleting pushed image: %w", err)
 	}
 	return nil
+}
+
+// internalRoleExists reports whether the internally-managed service role is present
+// under its deterministic name. A NotFound (a BYO deployment that never created it,
+// or an already-completed delete) means there is nothing of ours to remove. Any
+// other lookup error (e.g. a BYO deployment that grants the agent no IAM access) is
+// also treated as "not ours to delete" so teardown is never blocked, but is logged
+// so an orphaned internally-managed role stays observable.
+func (a *AgentImage) internalRoleExists(ctx context.Context, client iamClientInterface, roleName string) bool {
+	if _, err := client.GetRole(ctx, &iamsdk.GetRoleInput{RoleName: aws.String(roleName)}); err != nil {
+		if !isIAMNotFound(err) {
+			plugin.LoggerFromContext(ctx).Warn("AgentImage: skipping internal role cleanup; role lookup failed",
+				"role", roleName, "error", err.Error())
+		}
+		return false
+	}
+	return true
 }
 
 // stopInFlightBuilds best-effort stops any running build for the project so the
@@ -682,6 +715,11 @@ func (a *AgentImage) List(_ context.Context, _ *resource.ListRequest) (*resource
 func isIAMNotFound(err error) bool {
 	var nse *iamtypes.NoSuchEntityException
 	return errors.As(err, &nse)
+}
+
+func isCodeBuildNotFound(err error) bool {
+	var rnf *codebuildtypes.ResourceNotFoundException
+	return errors.As(err, &rnf)
 }
 
 func isECRImageNotFound(err error) bool {
