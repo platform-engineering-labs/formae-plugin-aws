@@ -90,6 +90,9 @@ forma {
     name = "formae-sdk-test-eks-\(testRunID)"
     roleArn = testRole.res.arn
     version = "1.32"
+    accessConfig = new {
+      authenticationMode = "API_AND_CONFIG_MAP"
+    }
     resourcesVpcConfig = new {
       subnetIds {
         testSubnet1.res.subnetId
