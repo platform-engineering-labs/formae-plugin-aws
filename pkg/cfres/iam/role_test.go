@@ -167,6 +167,76 @@ func TestRole_Read_NoInlinePolicies_OmitsPoliciesKey(t *testing.T) {
 	iamc.AssertNotCalled(t, "GetRolePolicy", mock.Anything, mock.Anything)
 }
 
+// readReqWithPrior builds a ReadRequest whose PriorProperties carry the caller's
+// last-known model for the role.
+func readReqWithPrior(nativeID string, prior map[string]any) *resource.ReadRequest {
+	req := readReq(nativeID)
+	if prior != nil {
+		b, _ := json.Marshal(prior)
+		req.PriorProperties = b
+	}
+	return req
+}
+
+// When the caller's prior model manages the role but declares no inline
+// Policies (e.g. it manages them as standalone AWS::IAM::RolePolicy resources),
+// Read must not embed the role's inline policies — doing so would show phantom
+// drift and could drive a destructive reconcile.
+func TestRole_Read_SuppressesPolicies_WhenPriorManagesThemStandalone(t *testing.T) {
+	ccx := &mockRoleCCXReader{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: roleType, Properties: rolePropsJSON(t, testRoleName),
+	}, nil)
+
+	iamc := &mockRoleClient{}
+	iamc.On("ListRolePolicies", mock.Anything, matchRoleAndNoMarker(testRoleName)).Return(
+		&iam.ListRolePoliciesOutput{PolicyNames: []string{"logs-write"}}, nil)
+
+	r := newRoleWithMocks(ccx, iamc)
+	prior := map[string]any{"RoleName": testRoleName, "Description": "managed elsewhere"}
+	res, err := r.Read(context.Background(), readReqWithPrior(testRoleName, prior))
+
+	require.NoError(t, err)
+	require.Empty(t, res.ErrorCode)
+	var props map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &props))
+	assert.NotContains(t, props, "Policies",
+		"prior model manages the role without inline Policies, so Read must not embed them")
+	iamc.AssertNotCalled(t, "GetRolePolicy", mock.Anything, mock.Anything)
+}
+
+// When the caller's prior model declares inline Policies, Read must still embed
+// them so an inline-policy role does not show phantom drift.
+func TestRole_Read_EnrichesPolicies_WhenPriorDeclaresThemInline(t *testing.T) {
+	ccx := &mockRoleCCXReader{}
+	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: roleType, Properties: rolePropsJSON(t, testRoleName),
+	}, nil)
+
+	iamc := &mockRoleClient{}
+	iamc.On("ListRolePolicies", mock.Anything, matchRoleAndNoMarker(testRoleName)).Return(
+		&iam.ListRolePoliciesOutput{PolicyNames: []string{"logs-write"}}, nil)
+	iamc.On("GetRolePolicy", mock.Anything, matchGetRolePolicy(testRoleName, "logs-write")).Return(
+		&iam.GetRolePolicyOutput{
+			RoleName:       aws.String(testRoleName),
+			PolicyName:     aws.String("logs-write"),
+			PolicyDocument: escapedDoc(t, `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"logs:PutLogEvents","Resource":"*"}]}`),
+		}, nil)
+
+	r := newRoleWithMocks(ccx, iamc)
+	prior := map[string]any{
+		"RoleName": testRoleName,
+		"Policies": []map[string]any{{"PolicyName": "logs-write"}},
+	}
+	res, err := r.Read(context.Background(), readReqWithPrior(testRoleName, prior))
+
+	require.NoError(t, err)
+	require.Empty(t, res.ErrorCode)
+	policies := readEnrichedPolicies(t, res.Properties)
+	require.Len(t, policies, 1)
+	assert.Equal(t, "logs-write", policies[0]["PolicyName"])
+}
+
 func TestRole_Read_UsesPathUnescapeNotQueryUnescape(t *testing.T) {
 	ccx := &mockRoleCCXReader{}
 	ccx.On("ReadResource", mock.Anything, mock.Anything).Return(&resource.ReadResult{

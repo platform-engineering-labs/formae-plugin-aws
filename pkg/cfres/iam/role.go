@@ -119,22 +119,28 @@ func (r *Role) readWithClients(ctx context.Context, ccxClient roleCCXReader, iam
 		return nil, err
 	}
 
-	policies, notFound, err := listInlinePolicies(ctx, iamClient, roleName)
-	if err != nil {
-		return nil, err
-	}
-	if notFound {
-		return &resource.ReadResult{
-			ResourceType: request.ResourceType,
-			ErrorCode:    resource.OperationErrorCodeNotFound,
-		}, nil
-	}
+	// Only enrich with inline policies when the caller manages them as part of
+	// the role. A caller that manages the role's policies out-of-band (standalone
+	// AWS::IAM::RolePolicy resources) has no Policies in its model, so embedding
+	// them here would show phantom drift and could drive a destructive reconcile.
+	if callerManagesPoliciesInline(request.PriorProperties) {
+		policies, notFound, err := listInlinePolicies(ctx, iamClient, roleName)
+		if err != nil {
+			return nil, err
+		}
+		if notFound {
+			return &resource.ReadResult{
+				ResourceType: request.ResourceType,
+				ErrorCode:    resource.OperationErrorCodeNotFound,
+			}, nil
+		}
 
-	// Only inject Policies when the role actually carries inline policies. A role
-	// with none must not gain an empty Policies key: an absent actual field against
-	// an absent desired field produces no diff.
-	if len(policies) > 0 {
-		props["Policies"] = policies
+		// Only inject Policies when the role actually carries inline policies. A role
+		// with none must not gain an empty Policies key: an absent actual field against
+		// an absent desired field produces no diff.
+		if len(policies) > 0 {
+			props["Policies"] = policies
+		}
 	}
 
 	out, err := json.Marshal(props)
@@ -143,6 +149,25 @@ func (r *Role) readWithClients(ctx context.Context, ccxClient roleCCXReader, iam
 	}
 	result.Properties = string(out)
 	return result, nil
+}
+
+// callerManagesPoliciesInline reports whether the caller's prior model manages
+// the role's inline policies as part of the role (an inline `policies` block),
+// rather than out-of-band via standalone AWS::IAM::RolePolicy resources. When
+// the prior model is unknown — empty PriorProperties, as on a create/status
+// read-back or discovery — it assumes inline so that roles declaring inline
+// policies do not show phantom drift. Only a known prior model that omits
+// Policies suppresses the enrichment.
+func callerManagesPoliciesInline(priorProperties json.RawMessage) bool {
+	if len(priorProperties) == 0 {
+		return true
+	}
+	var prior map[string]any
+	if err := json.Unmarshal(priorProperties, &prior); err != nil {
+		return true
+	}
+	_, ok := prior["Policies"]
+	return ok
 }
 
 // roleNameForRead resolves the role name to query IAM with. It prefers the
