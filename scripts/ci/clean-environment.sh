@@ -343,6 +343,52 @@ aws ec2 describe-internet-gateways --region "$REGION" \
     fi
 done
 
+# 18b. Delete detached (unattached) internet gateways.
+# Fixture IGWs carry no Name tag (only a formae label), so section 18's
+# tag filter never matches them. Attached test IGWs still get reaped by
+# clean_orphan_vpc (it finds them via attachment.vpc-id), but once an IGW
+# is detached — e.g. a prior run detached it and the delete-internet-gateway
+# was then throttled — nothing finds it again: its VPC is gone, so the
+# vpc-id lookup misses it, and the Name-tag filter can't match it either.
+# Such orphans accumulate every night until the per-region IGW limit
+# (default 5) is exhausted, after which every fixture that creates an IGW
+# fails with ServiceLimitExceeded. Reaping detached IGWs closes that gap.
+# An IGW with no attachments cannot belong to live infrastructure, and this
+# is consistent with the untagged-VPC policy above (untagged == test resource);
+# cleanup runs as dedicated pre/post jobs, not concurrently with the test
+# matrix, so this cannot race a job that has just created but not yet
+# attached its IGW.
+echo "Cleaning detached (orphaned) internet gateways..."
+aws ec2 describe-internet-gateways --region "$REGION" \
+    --query "InternetGateways[?length(Attachments)==\`0\`].InternetGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r igw_id; do
+    if [[ -n "$igw_id" ]]; then
+        echo "  Deleting detached internet gateway: $igw_id"
+        aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# 18c. Detach and delete internet gateways by formae identity tag.
+# Defense in depth: fixture IGWs have no Name tag, but formae stamps a
+# FormaeStackLabel tag on every resource it creates (the discovery identity
+# tag), and every conformance stack is named "$TEST_PREFIX-...". Matching on
+# that tag reaps leaked test IGWs precisely by their formae identity — while
+# still attached (before their orphaned VPC is swept) as well as detached —
+# without touching any fixture. Detach from any VPC first, then delete.
+echo "Cleaning internet gateways by formae identity tag..."
+aws ec2 describe-internet-gateways --region "$REGION" \
+    --filters "Name=tag:FormaeStackLabel,Values=*$TEST_PREFIX*" \
+    --query "InternetGateways[].{Id:InternetGatewayId, Attachments:Attachments}" --output json 2>/dev/null | \
+    jq -c '.[]' 2>/dev/null | while read -r igw_json; do
+    igw_id=$(echo "$igw_json" | jq -r '.Id')
+    if [[ -n "$igw_id" ]]; then
+        echo "  Deleting internet gateway (formae-tagged): $igw_id"
+        echo "$igw_json" | jq -r '.Attachments[]?.VpcId // empty' 2>/dev/null | while read -r vpc_id; do
+            [[ -n "$vpc_id" ]] && aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null || true
+        done
+        aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # 19. Detach and delete EC2 VPN gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test VPN gateways..."
 aws ec2 describe-vpn-gateways --region "$REGION" \
