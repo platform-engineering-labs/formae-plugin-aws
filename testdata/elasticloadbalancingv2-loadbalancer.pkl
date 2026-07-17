@@ -66,13 +66,13 @@ forma {
   testSubnetB
   albSG
 
-  // Application Load Balancer under test -- a bare internet-facing ALB with no
+  // Application Load Balancer under test -- a bare internal ALB with no
   // listener creates and deletes cleanly. Name capped at 32 chars (AWS hard
   // limit); "fmae-sdk-lb-" + 8-char run ID = 20 chars.
   new loadbalancer.LoadBalancer {
     label = "plugin-sdk-test-elbv2-loadbalancer"
     name = "formae-sdk-test-lb-\(testRunID)"
-    scheme = "internet-facing"
+    scheme = "internal"
     type = "application"
     subnets {
       testSubnetA.res.subnetId
