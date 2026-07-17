@@ -18,6 +18,22 @@ open class Content extends formae.SubResource {
     s3ObjectVersion: (String|formae.Resolvable)?
 }
 
+open class LayerVersionResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden layerVersionArn: LayerVersionResolvable = (this) {
+        property = "LayerVersionArn"
+    }
+
+    hidden layerArn: LayerVersionResolvable = (this) {
+        property = "LayerArn"
+    }
+
+    hidden version: LayerVersionResolvable = (this) {
+        property = "Version"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "LayerVersionArn"
@@ -46,4 +62,11 @@ open class LayerVersion extends formae.Resource {
 
     @aws.FieldHint{createOnly = true}
     licenseInfo: String?
+
+    hidden parent = this
+
+    hidden res: LayerVersionResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
