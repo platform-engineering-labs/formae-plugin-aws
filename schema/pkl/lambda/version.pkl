@@ -42,6 +42,12 @@ open class Version extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     provisionedConcurrencyConfig: ProvisionedConcurrencyConfiguration?
 
-    @aws.FieldHint{createOnly = true}
+    // AWS populates RuntimePolicy on every published version (pinning the
+    // runtime version it was published against) even when the caller never set
+    // it — conformance-observed: the extract comparison reported it as present
+    // in actual but absent from desired. The field is createOnly, so absorbing
+    // the provider value costs nothing: removal-by-omission does not apply to a
+    // field that can never be updated in place.
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     runtimePolicy: RuntimePolicy?
 }
