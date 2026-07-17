@@ -113,7 +113,7 @@ open class EventSourceMapping extends formae.Resource {
     @aws.FieldHint{hasProviderDefault = true}
     bisectBatchOnFunctionError: Boolean?
 
-    @aws.FieldHint{hasProviderDefault = true}
+    @aws.FieldHint
     destinationConfig: DestinationConfig?
 
     @aws.FieldHint

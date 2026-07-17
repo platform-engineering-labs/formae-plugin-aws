@@ -729,6 +729,56 @@ func TestReadResource_PreservesRealEventInvokeDestination(t *testing.T) {
 		"the empty OnSuccess sibling should be stripped")
 }
 
+func TestReadResource_StripsEmptyEventSourceMappingDestinationConfig(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	// CloudControl injects DestinationConfig:{OnFailure:{}} into stream-source
+	// EventSourceMapping reads even when the caller never set one. The empty
+	// OnFailure carries no information (AWS requires Destination inside it), so
+	// absorbing it produces perpetual false drift.
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of("uuid-1234"),
+			Properties: ptr.Of(`{"Id":"uuid-1234","BatchSize":10,"DestinationConfig":{"OnFailure":{}}}`),
+		},
+		TypeName: ptr.Of("AWS::Lambda::EventSourceMapping"),
+	}, nil)
+
+	result, err := client.ReadResource(context.Background(), &resource.ReadRequest{
+		ResourceType: "AWS::Lambda::EventSourceMapping",
+		NativeID:     "uuid-1234",
+	})
+	require.NoError(t, err)
+	require.NotContains(t, string(result.Properties), "DestinationConfig",
+		"empty provider-injected DestinationConfig must be stripped on read")
+	require.Contains(t, string(result.Properties), "BatchSize",
+		"real properties must be preserved")
+}
+
+func TestReadResource_PreservesRealEventSourceMappingDestination(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI}
+
+	// A genuine user-set on-failure destination must survive the strip, so that
+	// removing it from desired state still emits a removal (removal-by-omission).
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of("uuid-1234"),
+			Properties: ptr.Of(`{"Id":"uuid-1234","DestinationConfig":{"OnFailure":{"Destination":"arn:aws:sqs:us-east-1:123456789012:dlq"}}}`),
+		},
+		TypeName: ptr.Of("AWS::Lambda::EventSourceMapping"),
+	}, nil)
+
+	result, err := client.ReadResource(context.Background(), &resource.ReadRequest{
+		ResourceType: "AWS::Lambda::EventSourceMapping",
+		NativeID:     "uuid-1234",
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(result.Properties), "arn:aws:sqs:us-east-1:123456789012:dlq",
+		"a genuine user-set destination must be preserved")
+}
+
 // captureSlog returns a context carrying a plugin.Logger that writes WARN+
 // records into the returned buffer, so a test can drive StatusResource through
 // the SDK context logger and inspect what it emitted. Returned buffer contains

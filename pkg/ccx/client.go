@@ -326,14 +326,18 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 		return nil, fmt.Errorf("failed to strip ignored fields: %w", err)
 	}
 
-	// CloudControl injects DestinationConfig:{OnFailure:{},OnSuccess:{}} into
-	// every AWS::Lambda::EventInvokeConfig read, even when the caller never set
-	// it. AWS requires Destination inside OnFailure/OnSuccess, so an empty {}
-	// carries no information; absorbing it makes formae's required-field
-	// validation spuriously reject a valid resource. Strip the empty
-	// sub-objects (and DestinationConfig if it ends up empty); genuine
-	// user-set destinations are non-empty and pass through untouched.
-	if request.ResourceType == "AWS::Lambda::EventInvokeConfig" {
+	// CloudControl injects an empty DestinationConfig into every
+	// AWS::Lambda::EventInvokeConfig read ({OnFailure:{},OnSuccess:{}}) and into
+	// every stream-source AWS::Lambda::EventSourceMapping read ({OnFailure:{}}),
+	// even when the caller never set one. AWS requires Destination inside those
+	// sub-objects, so an empty {} carries no information; absorbing it makes
+	// formae's diff treat the actual-only value as drift and, for ESM, would
+	// require the blanket hasProviderDefault that also suppresses removal of a
+	// real destination. Strip the empty sub-objects (and DestinationConfig if it
+	// ends up empty); genuine user-set destinations are non-empty and pass
+	// through untouched, so removal-by-omission still works.
+	if request.ResourceType == "AWS::Lambda::EventInvokeConfig" ||
+		request.ResourceType == "AWS::Lambda::EventSourceMapping" {
 		stripEmptyCollectionsFromMap(propsMap)
 	}
 
