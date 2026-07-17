@@ -1,0 +1,114 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/elasticloadbalancingv2/loadbalancer.pkl"
+import "@aws/elasticloadbalancingv2/targetgroup.pkl"
+import "@aws/elasticloadbalancingv2/listener.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-elbv2-listener-\(testRunID)"
+
+// VPC + two Subnets in different AZs (an ALB requires at least two subnets in
+// different AZs).
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-elbv2-listener"
+  cidrBlock = "10.233.0.0/16"
+  enableDnsSupport = true
+}
+
+local testSubnetA = new subnet.Subnet {
+  label = "test-subnet-a-for-elbv2-listener"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.233.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnetB = new subnet.Subnet {
+  label = "test-subnet-b-for-elbv2-listener"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.233.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+// Security group for the ALB.
+local albSG = new securitygroup.SecurityGroup {
+  label = "test-alb-sg-for-elbv2-listener"
+  groupDescription = "Allow HTTP to ALB for ELBv2 Listener conformance test"
+  groupName = "fmae-sdk-lsnr-sg-\(testRunID)"
+  vpcId = testVpc.res.vpcId
+}
+
+// Internal ALB across the two subnets.
+local testALB = new loadbalancer.LoadBalancer {
+  label = "test-alb-for-elbv2-listener"
+  name = "formae-sdk-test-lb-\(testRunID)"
+  scheme = "internal"
+  type = "application"
+  subnets {
+    testSubnetA.res.subnetId
+    testSubnetB.res.subnetId
+  }
+  securityGroups {
+    albSG.res.groupId
+  }
+}
+
+// Target Group the listener's default action forwards to.
+local testTG = new targetgroup.TargetGroup {
+  label = "test-tg-for-elbv2-listener"
+  name = "formae-sdk-test-tg-\(testRunID)"
+  port = 80
+  protocol = "HTTP"
+  targetType = "ip"
+  vpcId = testVpc.res.vpcId
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ELBv2 Listener"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Network plumbing.
+  testVpc
+  testSubnetA
+  testSubnetB
+  albSG
+
+  // Load balancer + target group the listener wires together.
+  testALB
+  testTG
+
+  // Listener under test -- :80/HTTP with a single default action forwarding to
+  // the target group.
+  new listener.Listener {
+    label = "plugin-sdk-test-elbv2-listener"
+    loadBalancerArn = testALB.res.loadBalancerArn
+    port = 80
+    protocol = "HTTP"
+    defaultActions {
+      new listener.Action {
+        type = "forward"
+        targetGroupArn = testTG.res.targetGroupArn
+      }
+    }
+  }
+}

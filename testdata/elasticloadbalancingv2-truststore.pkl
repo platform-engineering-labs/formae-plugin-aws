@@ -1,0 +1,95 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/object.pkl"
+import "@aws/elasticloadbalancingv2/truststore.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-elasticloadbalancingv2-truststore-\(testRunID)"
+
+// Bucket that stages the CA certificate bundle the trust store validates
+// client certificates against.
+local caBundleBucket = new bucket.Bucket {
+  label = "truststore-ca-bundle-bucket"
+  bucketName = "formae-plugin-sdk-test-ts-\(testRunID)"
+}
+
+// Self-signed CA public certificate used as the trust store's CA bundle. This
+// is a CA bundle for validating *client* certificates, NOT a server cert, so it
+// does not require ACM. Generated deterministically with openssl:
+//   openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 36500 \
+//     -keyout ca.key -out ca.pem \
+//     -subj "/CN=Formae Plugin SDK Test CA/O=Platform Engineering Labs" \
+//     -addext "basicConstraints=critical,CA:TRUE" \
+//     -addext "keyUsage=critical,keyCertSign,cRLSign"
+// notAfter = 2126 (100 years) so the embedded bundle never expires in CI.
+local caBundleObject = new object.Object {
+  label = "truststore-ca-bundle"
+  bucket = caBundleBucket.res.bucketName
+  key = "ca-bundle/ca.pem"
+  contentType = "application/x-pem-file"
+  content = """
+    -----BEGIN CERTIFICATE-----
+    MIIDgzCCAmugAwIBAgIUW8+PgKZ/n2Bq1ux8RmCqS45ICRowDQYJKoZIhvcNAQEL
+    BQAwSDEiMCAGA1UEAwwZRm9ybWFlIFBsdWdpbiBTREsgVGVzdCBDQTEiMCAGA1UE
+    CgwZUGxhdGZvcm0gRW5naW5lZXJpbmcgTGFiczAgFw0yNjA3MTcxNzI4MTlaGA8y
+    MTI2MDYyMzE3MjgxOVowSDEiMCAGA1UEAwwZRm9ybWFlIFBsdWdpbiBTREsgVGVz
+    dCBDQTEiMCAGA1UECgwZUGxhdGZvcm0gRW5naW5lZXJpbmcgTGFiczCCASIwDQYJ
+    KoZIhvcNAQEBBQADggEPADCCAQoCggEBAKHu4Vtm27P/2qF/ZovqXOsKHgQHGfLW
+    kuBf9set040cymRX50tVC/JQV6S6SoYlWKGVA2VFCAHW/OgrGu0tvPPopNgJKzUQ
+    fDuPitzV/EpoPeoWB+K8kucFIuPBFnVuCaFSNAR53Q5JI4TZPkwZe3SGZfry9QEv
+    j7juxEYb8F0Gcji6NUMflmycfYQBaV4ATsBnDHbwBggB+w8YLdaqJTsKEWmugcAA
+    vuDSQ4oSbldQCvoRwCCbVd3YZQRdSSaQZ7r5mKaPk8S7w7uNHtegzM9hTb5E5qKi
+    utSU/mRlVihA827id5rhn5FTySbtQ4SFE/7XCTr8AqIL7tmziUcErJsCAwEAAaNj
+    MGEwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFOj9
+    YZJoPb4TuzqOTnjRIcJ+45wqMB8GA1UdIwQYMBaAFOj9YZJoPb4TuzqOTnjRIcJ+
+    45wqMA0GCSqGSIb3DQEBCwUAA4IBAQCQQg+UY6KGVgPxxuaUoNJ3dprDhWFZFwHM
+    0FpVT1Wrn1AixmZZD4lFVPwbZqdmb5X2K+bkQ3SH9L6dMs21YykAtj4/4AwnhuXD
+    44qqUCk5OP172W0kbsS798e3ApYdNrNfHJYRrCKZ6MUqqqkrrNUNAyDTt+OzFzqO
+    YItjZnY+mdjPVUvcStr2zexXOUipPKNCAfEhjdTwSWa5oD2CCVEYMOrM2cHNqKed
+    UWjUF1IAHrddw8lVQIpbrzMAICHW4qnl3vZ4efEvSV8rZt8vStNNQVwbAmhVdBbi
+    71rZ7RZaw0iD7PfTxQ5EndU6E4MUAAiyDZa7FBsyVit8lIwzjVFN
+    -----END CERTIFICATE-----
+    """
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ELBv2 TrustStore (mTLS CA bundle from S3)"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  caBundleBucket
+
+  caBundleObject
+
+  // Resource under test: the TrustStore is a singleton and a leaf (nothing
+  // references it), so the harness can OOB-delete it in isolation.
+  new truststore.TrustStore {
+    label = "plugin-sdk-test-truststore"
+    name = "formae-sdk-test-ts-\(testRunID)"
+    caCertificatesBundleS3Bucket = caBundleBucket.res.bucketName
+    caCertificatesBundleS3Key = caBundleObject.res.key
+    tags = new Listing<aws.Tag> {
+      new { key = "Owner"; value = "plugin-sdk" }
+    }
+  }
+}

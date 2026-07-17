@@ -1,0 +1,134 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/object.pkl"
+import "@aws/elasticloadbalancingv2/truststore.pkl"
+import "@aws/elasticloadbalancingv2/truststorerevocation.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-elasticloadbalancingv2-truststorerevocation-\(testRunID)"
+
+// Bucket staging both the CA bundle (for the trust store) and the CRL (for the
+// revocation). The CRL MUST be signed by a CA present in the trust store.
+local bkt = new bucket.Bucket {
+  label = "tsr-bucket"
+  bucketName = "formae-plugin-sdk-test-tsr-\(testRunID)"
+}
+
+// Self-signed CA public certificate used as the trust store's CA bundle.
+// notAfter = 2126 (100 years). Generated with openssl (see truststore fixture).
+local caBundleObject = new object.Object {
+  label = "tsr-ca-bundle"
+  bucket = bkt.res.bucketName
+  key = "ca-bundle/ca.pem"
+  contentType = "application/x-pem-file"
+  content = """
+    -----BEGIN CERTIFICATE-----
+    MIIDgzCCAmugAwIBAgIUW8+PgKZ/n2Bq1ux8RmCqS45ICRowDQYJKoZIhvcNAQEL
+    BQAwSDEiMCAGA1UEAwwZRm9ybWFlIFBsdWdpbiBTREsgVGVzdCBDQTEiMCAGA1UE
+    CgwZUGxhdGZvcm0gRW5naW5lZXJpbmcgTGFiczAgFw0yNjA3MTcxNzI4MTlaGA8y
+    MTI2MDYyMzE3MjgxOVowSDEiMCAGA1UEAwwZRm9ybWFlIFBsdWdpbiBTREsgVGVz
+    dCBDQTEiMCAGA1UECgwZUGxhdGZvcm0gRW5naW5lZXJpbmcgTGFiczCCASIwDQYJ
+    KoZIhvcNAQEBBQADggEPADCCAQoCggEBAKHu4Vtm27P/2qF/ZovqXOsKHgQHGfLW
+    kuBf9set040cymRX50tVC/JQV6S6SoYlWKGVA2VFCAHW/OgrGu0tvPPopNgJKzUQ
+    fDuPitzV/EpoPeoWB+K8kucFIuPBFnVuCaFSNAR53Q5JI4TZPkwZe3SGZfry9QEv
+    j7juxEYb8F0Gcji6NUMflmycfYQBaV4ATsBnDHbwBggB+w8YLdaqJTsKEWmugcAA
+    vuDSQ4oSbldQCvoRwCCbVd3YZQRdSSaQZ7r5mKaPk8S7w7uNHtegzM9hTb5E5qKi
+    utSU/mRlVihA827id5rhn5FTySbtQ4SFE/7XCTr8AqIL7tmziUcErJsCAwEAAaNj
+    MGEwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFOj9
+    YZJoPb4TuzqOTnjRIcJ+45wqMB8GA1UdIwQYMBaAFOj9YZJoPb4TuzqOTnjRIcJ+
+    45wqMA0GCSqGSIb3DQEBCwUAA4IBAQCQQg+UY6KGVgPxxuaUoNJ3dprDhWFZFwHM
+    0FpVT1Wrn1AixmZZD4lFVPwbZqdmb5X2K+bkQ3SH9L6dMs21YykAtj4/4AwnhuXD
+    44qqUCk5OP172W0kbsS798e3ApYdNrNfHJYRrCKZ6MUqqqkrrNUNAyDTt+OzFzqO
+    YItjZnY+mdjPVUvcStr2zexXOUipPKNCAfEhjdTwSWa5oD2CCVEYMOrM2cHNqKed
+    UWjUF1IAHrddw8lVQIpbrzMAICHW4qnl3vZ4efEvSV8rZt8vStNNQVwbAmhVdBbi
+    71rZ7RZaw0iD7PfTxQ5EndU6E4MUAAiyDZa7FBsyVit8lIwzjVFN
+    -----END CERTIFICATE-----
+    """
+}
+
+// Certificate Revocation List signed by the CA above. Generated with:
+//   openssl ca -gencrl -cert ca.pem -keyfile ca.key -out crl.pem -crldays 36500
+// nextUpdate = 2126 (100 years out). AWS ELBv2 only requires the CRL to be in
+// PEM format and signed by a CA in the trust store; it imposes no upper bound
+// on the CRL validity window and does not re-fetch the CRL, so a long-dated CRL
+// committed to the repo does not become a time-bomb.
+local crlObject = new object.Object {
+  label = "tsr-crl"
+  bucket = bkt.res.bucketName
+  key = "crl/revocations.crl.pem"
+  contentType = "application/x-pem-file"
+  content = """
+    -----BEGIN X509 CRL-----
+    MIIBpDCBjQIBATANBgkqhkiG9w0BAQsFADBIMSIwIAYDVQQDDBlGb3JtYWUgUGx1
+    Z2luIFNESyBUZXN0IENBMSIwIAYDVQQKDBlQbGF0Zm9ybSBFbmdpbmVlcmluZyBM
+    YWJzFw0yNjA3MTcxNzI4MTlaGA8yMTI2MDYyMzE3MjgxOVqgDzANMAsGA1UdFAQE
+    AgIQADANBgkqhkiG9w0BAQsFAAOCAQEAdGhuaGJ7VpTdTYc7YF/MVglRLGe8U1Ku
+    Ds9mRha+YheSI1YE3352QJQahuO8MIN+qJANC6TwvdcpnI65zt0ieTx2NRoJIVHw
+    65kKZTHcDqqN7hR+CJfQiEouCY3RZH+qZPA7kRBgq0/Oc4ctn8Drx03EbhXUUVs3
+    hqHV4JcxiX3sd/Pet9ZLYS0hyNXwVpqq+OM4T4uJEKiqcGLwOPV6Kw3T1HJ6jGaq
+    B11pWtZu3SJRSRL6op8qE8GqVW93lAlHSEvjGh0zvsRKMpj8q2KlnqR/dtTOj1ka
+    rmkEGnujbs2Fn58yb4tHtCmhQ/VKcWWBw/goJU3GY2ilEZ0vGGhdlA==
+    -----END X509 CRL-----
+    """
+}
+
+// Trust store the revocation attaches to. Not the resource under test.
+local trustStore = new truststore.TrustStore {
+  label = "tsr-truststore"
+  name = "formae-sdk-test-tsr-\(testRunID)"
+  caCertificatesBundleS3Bucket = bkt.res.bucketName
+  caCertificatesBundleS3Key = caBundleObject.res.key
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ELBv2 TrustStoreRevocation (mTLS CRL from S3)"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  bkt
+
+  caBundleObject
+
+  crlObject
+
+  trustStore
+
+  // Resource under test: the revocation is a singleton and a leaf (nothing
+  // references it), so the harness can OOB-delete it in isolation via
+  // RemoveTrustStoreRevocations.
+  new truststorerevocation.TrustStoreRevocation {
+    label = "plugin-sdk-test-truststorerevocation"
+    trustStoreArn = new formae.Resolvable {
+      label = trustStore.label
+      type = "AWS::ElasticLoadBalancingV2::TrustStore"
+      property = "TrustStoreArn"
+    }
+    revocationContents = new Listing<truststorerevocation.RevocationContent> {
+      new {
+        revocationType = "CRL"
+        s3Bucket = bkt.res.bucketName
+        s3Key = crlObject.res.key
+      }
+    }
+  }
+}

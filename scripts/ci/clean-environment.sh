@@ -542,6 +542,18 @@ aws elbv2 describe-target-groups --region "$REGION" \
     fi
 done
 
+# --- ELBv2 trust stores (mTLS). Deleting a trust store removes its revocations
+# implicitly, so no separate revocation sweep is needed. A trust store not
+# attached to any listener deletes cleanly; test fixtures never attach one.
+echo "Cleaning ELBv2 test trust stores..."
+aws elbv2 describe-trust-stores --region "$REGION" \
+    --query "TrustStores[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].TrustStoreArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r ts_arn; do
+    if [[ -n "$ts_arn" ]]; then
+        echo "  Deleting ELBv2 trust store: $ts_arn"
+        aws elbv2 delete-trust-store --trust-store-arn "$ts_arn" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # --- EC2 NAT gateways (before subnets/VPCs, slow to delete)
 echo "Cleaning EC2 test NAT gateways..."
 aws ec2 describe-nat-gateways --region "$REGION" \
