@@ -1,0 +1,110 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.codebuild.imagebuild
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CodeBuild::ImageBuild"
+
+/// Read-only outputs produced by the build, referenceable as resolvables via
+/// `imageBuild.res.*`. `imageRef` (repo@sha256:…) is the immutable, primary
+/// consumption reference; `imageUri` (repo:tag) is a convenience mutable alias.
+open class ImageBuildResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden imageRef: ImageBuildResolvable = (this) {
+        property = "ImageRef"
+    }
+
+    hidden imageDigest: ImageBuildResolvable = (this) {
+        property = "ImageDigest"
+    }
+
+    hidden imageUri: ImageBuildResolvable = (this) {
+        property = "ImageUri"
+    }
+
+    hidden imageTag: ImageBuildResolvable = (this) {
+        property = "ImageTag"
+    }
+}
+
+typealias ComputeType = "BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "ImageRef"
+    discoverable = false
+}
+open class ImageBuild extends formae.Resource {
+
+    /// ECR repository URI to push to (registry/repo). Resolvable from an
+    /// AWS::ECR::Repository's `repositoryUri`. Part of the resource identity. The
+    /// repository must be in the same account and region as the target (where the
+    /// build project and its log group run); a mismatch is rejected.
+    @aws.FieldHint { createOnly = true }
+    ecrRepositoryUri: (String|formae.Resolvable)
+
+    /// Human-facing tag for the pushed image. Part of the resource identity.
+    @aws.FieldHint { createOnly = true }
+    imageTag: String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))
+
+    /// The full literal Dockerfile content to build. The image is built verbatim
+    /// from this Dockerfile; the returned digest is the source of truth.
+    @aws.FieldHint
+    dockerfile: String(!isEmpty)
+
+    /// Build arguments passed to `docker build --build-arg KEY=VALUE`.
+    /// Order-insensitive; hashed canonically to gate rebuilds.
+    @aws.FieldHint
+    buildArgs: Mapping<String, String>?
+
+    /// CodeBuild compute size for the build project. Defaults to SMALL.
+    @aws.FieldHint
+    computeType: ComputeType?
+
+    /// Build timeout in minutes. Must be shorter than the engine's async poll
+    /// deadline. Defaults to 30.
+    @aws.FieldHint
+    timeoutMinutes: (Int(this >= 5 && this <= 60))?
+
+    /// BYO CodeBuild service role ARN. When supplied the plugin never creates,
+    /// mutates, or deletes the role. Resolvable from an AWS::IAM::Role.
+    @aws.FieldHint
+    serviceRoleArn: (String|formae.Resolvable)?
+
+    /// CodeBuild build-environment image (docker-in-docker capable). Defaults to a
+    /// pinned aws/codebuild/standard image.
+    @aws.FieldHint
+    buildEnvironmentImage: String?
+
+    // ── Computed outputs ────────────────────────────────────────
+
+    /// Immutable digest reference `<repo>@sha256:…` — the primary output.
+    @aws.FieldHint { hasProviderDefault = true }
+    imageRef: String?
+
+    /// The pushed manifest digest `sha256:…` alone.
+    @aws.FieldHint { hasProviderDefault = true }
+    imageDigest: String?
+
+    /// Convenience mutable alias `<repo>:<tag>`.
+    @aws.FieldHint { hasProviderDefault = true }
+    imageUri: String?
+
+    /// Hash over the build-affecting inputs; used to gate rebuilds.
+    @aws.FieldHint { hasProviderDefault = true }
+    buildConfigHash: String?
+
+    local parent = this
+
+    hidden res: ImageBuildResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
