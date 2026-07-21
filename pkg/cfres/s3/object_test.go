@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -550,6 +551,50 @@ func TestList_WithPagination(t *testing.T) {
 	require.Len(t, result.NativeIDs, 1)
 	require.NotNil(t, result.NextPageToken)
 	assert.Equal(t, "next-page", *result.NextPageToken)
+
+	client.AssertExpectations(t)
+}
+
+func TestList_CrossRegionBucket_RetriesWithRedirectedRegion(t *testing.T) {
+	ctx := context.Background()
+	client := &mockS3ObjectClient{}
+
+	// A bucket that lives in a different region than the client's configured
+	// region answers ListObjectsV2 with a 301 PermanentRedirect whose
+	// x-amz-bucket-region header names the bucket's home region.
+	redirect := &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{
+			StatusCode: http.StatusMovedPermanently,
+			Header:     http.Header{"X-Amz-Bucket-Region": []string{"eu-west-1"}},
+		}},
+		Err: errors.New("api error PermanentRedirect: The bucket you are attempting to access must be addressed using the specified endpoint."),
+	}
+
+	// First attempt (default region) redirects; retry (redirected region) succeeds.
+	client.On("ListObjectsV2", ctx, mock.MatchedBy(func(input *s3.ListObjectsV2Input) bool {
+		return *input.Bucket == "out-of-region-bucket"
+	})).Return((*s3.ListObjectsV2Output)(nil), redirect).Once()
+	client.On("ListObjectsV2", ctx, mock.MatchedBy(func(input *s3.ListObjectsV2Input) bool {
+		return *input.Bucket == "out-of-region-bucket"
+	})).Return(&s3.ListObjectsV2Output{
+		Contents:    []s3types.Object{{Key: aws.String("file1.txt")}},
+		IsTruncated: aws.Bool(false),
+	}, nil).Once()
+
+	o := &Object{}
+	result, err := o.listWithClient(ctx, client, &resource.ListRequest{
+		ResourceType: "AWS::S3::Object",
+		PageSize:     100,
+		AdditionalProperties: map[string]string{
+			"BucketName": "out-of-region-bucket",
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"out-of-region-bucket|file1.txt"}, result.NativeIDs)
+	// First call used the default region; the retry targeted the redirected region.
+	assert.Equal(t, []string{"", "eu-west-1"}, client.listRegions)
 
 	client.AssertExpectations(t)
 }
