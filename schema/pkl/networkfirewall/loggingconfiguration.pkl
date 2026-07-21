@@ -27,9 +27,17 @@ open class LoggingConfigurationData extends formae.SubResource {
     logDestinationConfigs: Listing<LogDestinationConfig>
 }
 
+// CloudControl does not support the LIST action for this type (ListResources
+// returns "UnsupportedActionException: ... does not support LIST action"), so the
+// AWS plugin registers a custom List that synthesizes it from a per-firewall
+// GetResource. Discovery scopes that List to each firewall via the FirewallArn
+// list parameter below; the Firewall is the parent, so discovery iterates
+// firewalls and lists each one's logging configuration.
 @aws.ResourceHint {
     type = module.type
     identifier = "FirewallArn"
+    parent = "AWS::NetworkFirewall::Firewall"
+    listParam = new formae.ListProperty { parentProperty = "FirewallArn" listParameter = "FirewallArn" }
 }
 open class LoggingConfiguration extends formae.Resource {
 
