@@ -11,6 +11,14 @@ import "@formae/formae.pkl"
 
 const type = "AWS::S3::BucketPolicy"
 
+open class BucketPolicyResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden bucket: BucketPolicyResolvable = (this) {
+        property = "Bucket"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Bucket"
@@ -21,4 +29,11 @@ open class BucketPolicy extends formae.Resource {
 
     @aws.FieldHint
     policyDocument: Dynamic
+
+    local parent = this
+
+    hidden res: BucketPolicyResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }
