@@ -1,0 +1,129 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.cloudtrail.trail
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CloudTrail::Trail"
+
+open class TrailResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: TrailResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden trailName: TrailResolvable = (this) {
+        property = "TrailName"
+    }
+}
+
+@aws.SubResourceHint
+open class DataResource extends formae.SubResource {
+    type: String?
+    values: Listing<String>?
+}
+
+@aws.SubResourceHint
+open class EventSelector extends formae.SubResource {
+    readWriteType: String?
+    includeManagementEvents: Boolean?
+    dataResources: Listing<DataResource>?
+    excludeManagementEventSources: Listing<String>?
+}
+
+@aws.SubResourceHint
+open class AdvancedFieldSelector extends formae.SubResource {
+    field: String
+    equals: Listing<String>?
+    startsWith: Listing<String>?
+    endsWith: Listing<String>?
+    notEquals: Listing<String>?
+    notStartsWith: Listing<String>?
+    notEndsWith: Listing<String>?
+}
+
+@aws.SubResourceHint
+open class AdvancedEventSelector extends formae.SubResource {
+    name: String?
+    fieldSelectors: Listing<AdvancedFieldSelector>
+}
+
+@aws.SubResourceHint
+open class InsightSelector extends formae.SubResource {
+    insightType: String?
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "TrailName"
+    discoverable = true
+}
+open class Trail extends formae.Resource {
+
+    @aws.FieldHint { createOnly = true }
+    trailName: String
+
+    @aws.FieldHint
+    s3BucketName: (String|formae.Resolvable)
+
+    @aws.FieldHint
+    s3KeyPrefix: String?
+
+    @aws.FieldHint
+    isLogging: Boolean
+
+    @aws.FieldHint { hasProviderDefault = true }
+    isMultiRegionTrail: Boolean?
+
+    @aws.FieldHint { hasProviderDefault = true }
+    includeGlobalServiceEvents: Boolean?
+
+    @aws.FieldHint { hasProviderDefault = true }
+    enableLogFileValidation: Boolean?
+
+    @aws.FieldHint { hasProviderDefault = true }
+    isOrganizationTrail: Boolean?
+
+    @aws.FieldHint
+    kmsKeyId: (String|formae.Resolvable)?
+
+    @aws.FieldHint
+    snsTopicName: (String|formae.Resolvable)?
+
+    @aws.FieldHint
+    cloudWatchLogsLogGroupArn: (String|formae.Resolvable)?
+
+    @aws.FieldHint
+    cloudWatchLogsRoleArn: (String|formae.Resolvable)?
+
+    // eventSelectors and advancedEventSelectors are mutually exclusive at the
+    // CloudTrail API: a trail uses one mode or the other. Both are modelled here
+    // so that a discovered trail using either mode round-trips correctly.
+    @aws.FieldHint { updateMethod = "Atomic" }
+    eventSelectors: Listing<EventSelector>?
+
+    @aws.FieldHint { updateMethod = "Atomic" }
+    advancedEventSelectors: Listing<AdvancedEventSelector>?
+
+    @aws.FieldHint { updateMethod = "Atomic" }
+    insightSelectors: Listing<InsightSelector>?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: TrailResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
