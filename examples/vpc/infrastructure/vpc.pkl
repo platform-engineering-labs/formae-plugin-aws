@@ -1,0 +1,214 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+import "@aws/aws.pkl"
+import "@aws/ec2/eip.pkl"
+import "@aws/ec2/internetgateway.pkl"
+import "@aws/ec2/natgateway.pkl"
+import "@aws/ec2/route.pkl"
+import "@aws/ec2/routetable.pkl"
+import "@aws/ec2/securitygroup.pkl"
+import "@aws/ec2/securitygroupingress.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/ec2/subnetroutetableassociation.pkl"
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/vpcgatewayattachment.pkl"
+
+
+class VPC {
+  name: String
+  region: aws.Region
+  cidr: String
+
+  publicZoneCidrs: Mapping<String, String>
+  privateZoneCidrs: Mapping<String, String>
+
+  hidden infraVpc: vpc.VPC = new {
+    label = "\(name)-vpc"
+    cidrBlock = cidr
+    enableDnsHostnames = true
+    enableDnsSupport = true
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+
+  hidden natIp: eip.EIP = new {
+    label = name
+  }
+
+  hidden igw: internetgateway.InternetGateway = new {
+    label = name
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+
+  hidden ngw: natgateway.NatGateway = new {
+    label = name
+    subnetId = publicSubnets.first.res.id
+    allocationId = natIp.res.id
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+
+  hidden publicSubnets: Listing<subnet.Subnet> = new {
+    for (zone, subnet in publicZoneCidrs) {
+      new subnet.Subnet {
+        label = "\(name)-public-\(zone)"
+        vpcId = infraVpc.res.id
+        cidrBlock = subnet
+        availabilityZone = "\(region)\(zone)"
+        mapPublicIpOnLaunch = true
+        tags {
+          new {
+            key = "Name"
+            value = label
+          }
+        }
+      }
+    }
+  }
+  hidden privateSubnets: Listing<subnet.Subnet> = new {
+    for (zone, subnet in privateZoneCidrs) {
+      new subnet.Subnet {
+        label = "\(name)-private-\(zone)"
+        vpcId = infraVpc.res.id
+        cidrBlock = subnet
+        availabilityZone = "\(region)\(zone)"
+        mapPublicIpOnLaunch = false
+        tags {
+          new {
+            key = "Name"
+            value = label
+          }
+        }
+      }
+    }
+  }
+
+  hidden publicRouteTable: routetable.RouteTable = new {
+    label = "\(name)-public"
+    vpcId = infraVpc.res.id
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+  hidden privateRouteTable: routetable.RouteTable = new {
+    label = "\(name)-private"
+    vpcId = infraVpc.res.id
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+
+  hidden publicSecurityGroup: securitygroup.SecurityGroup = new {
+    label = "\(name)-public"
+    vpcId = infraVpc.res.id
+    groupDescription = "Default public subnet rules"
+
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+
+  hidden privateSecurityGroup: securitygroup.SecurityGroup = new {
+    label = "\(name)-private"
+    groupDescription = "Default private subnet rules"
+    vpcId = infraVpc.res.id
+    tags {
+      new {
+        key = "Name"
+        value = label
+      }
+    }
+  }
+
+  hidden privateSecurityGroupRules: Listing = new {
+    new securitygroupingress.SecurityGroupIngress {
+      label = "\(name)-private-allow-all"
+      ipProtocol = "-1"
+      cidrIp = cidr
+      groupId = privateSecurityGroup.res.id
+    }
+  }
+
+  hidden resources: Listing = new {
+    infraVpc
+
+    igw
+
+    new vpcgatewayattachment.VPCGatewayAttachment {
+      label = name
+      vpcId = infraVpc.res.id
+      internetGatewayId = igw.res.id
+    }
+
+    ...publicSubnets
+    ...privateSubnets
+
+    natIp
+
+    ngw
+
+    publicRouteTable
+    privateRouteTable
+
+    publicSecurityGroup
+    privateSecurityGroup
+    ...privateSecurityGroupRules
+
+    // Routes
+    new route.Route {
+      label = "\(name)-public-default"
+      routeTableId = publicRouteTable.res.id
+      destinationCidrBlock = "0.0.0.0/0"
+      gatewayId = igw.res.id
+    }
+
+    new route.Route {
+      label = "\(name)-private-default"
+      routeTableId = privateRouteTable.res.id
+      destinationCidrBlock = "0.0.0.0/0"
+      natGatewayId = ngw.res.id
+    }
+
+    for (subnet in publicSubnets) {
+      new subnetroutetableassociation.SubnetRouteTableAssociation {
+        label = subnet.label
+        subnetId = subnet.res.subnetId
+        routeTableId = publicRouteTable.res.routeTableId
+      }
+    }
+
+    for (subnet in privateSubnets) {
+      new subnetroutetableassociation.SubnetRouteTableAssociation {
+        label = subnet.label
+        subnetId = subnet.res.subnetId
+        routeTableId = privateRouteTable.res.routeTableId
+      }
+    }
+  }
+}
