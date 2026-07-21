@@ -82,6 +82,9 @@ forma {
     trailName = "formae-plugin-sdk-test-ct-\(testRunID)"
     s3BucketName = testBucketPolicy.res.bucket
     isMultiRegionTrail = true
+    // A multi-region trail must include global service events (AWS rejects the
+    // pair otherwise), mirroring the real multi-region audit trail.
+    includeGlobalServiceEvents = true
     enableLogFileValidation = true
     isLogging = false
     advancedEventSelectors = new Listing<trail.AdvancedEventSelector> {
