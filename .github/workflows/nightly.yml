@@ -49,7 +49,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -74,7 +74,7 @@ jobs:
       test-cases: ${{ steps.discover.outputs.test-cases }}
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Discover test cases
         id: discover
@@ -99,7 +99,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -135,7 +135,7 @@ jobs:
 
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -286,7 +286,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
