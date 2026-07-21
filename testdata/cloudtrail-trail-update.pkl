@@ -1,0 +1,116 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/bucketpolicy.pkl"
+import "@aws/cloudtrail/trail.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-cloudtrail-trail-\(testRunID)"
+
+// S3 bucket to receive CloudTrail log delivery.
+// blockPublicPolicy must be false to allow the service-principal bucket policy to attach.
+local testBucket = new bucket.Bucket {
+  label = "test-ct-bucket"
+  bucketName = "formae-plugin-sdk-test-ct-\(testRunID)"
+  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
+    blockPublicAcls = true
+    blockPublicPolicy = false
+    ignorePublicAcls = true
+    restrictPublicBuckets = false
+  }
+}
+
+// Bucket policy granting CloudTrail the access it needs to write logs.
+local testBucketPolicy = new bucketpolicy.BucketPolicy {
+  label = "test-ct-bucketpolicy"
+  bucket = testBucket.res.bucketName
+  policyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Sid"] = "AWSCloudTrailAclCheck"
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "cloudtrail.amazonaws.com"
+        }
+        ["Action"] = "s3:GetBucketAcl"
+        ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-ct-\(testRunID)"
+      }
+      new {
+        ["Sid"] = "AWSCloudTrailWrite"
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "cloudtrail.amazonaws.com"
+        }
+        ["Action"] = "s3:PutObject"
+        ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-ct-\(testRunID)/*"
+      }
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for AWS CloudTrail Trail"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testBucket
+  testBucketPolicy
+
+  // Update fixture: the S3 data-events selector's resources.ARN startsWith prefix is
+  // changed from /logs/ to /audit-logs/ to verify AdvancedEventSelectors update
+  // round-trips without perpetual drift.
+  new trail.Trail {
+    label = "plugin-sdk-test-cloudtrail-trail"
+    trailName = "formae-plugin-sdk-test-ct-\(testRunID)"
+    s3BucketName = testBucketPolicy.res.bucket
+    isMultiRegionTrail = true
+    enableLogFileValidation = true
+    isLogging = false
+    advancedEventSelectors = new Listing<trail.AdvancedEventSelector> {
+      new {
+        name = "Management events"
+        fieldSelectors = new Listing<trail.AdvancedFieldSelector> {
+          new {
+            field = "eventCategory"
+            equals = new Listing<String> { "Management" }
+          }
+        }
+      }
+      new {
+        name = "S3 data events"
+        fieldSelectors = new Listing<trail.AdvancedFieldSelector> {
+          new {
+            field = "eventCategory"
+            equals = new Listing<String> { "Data" }
+          }
+          new {
+            field = "resources.type"
+            equals = new Listing<String> { "AWS::S3::Object" }
+          }
+          new {
+            field = "resources.ARN"
+            startsWith = new Listing<String> { "arn:aws:s3:::formae-plugin-sdk-test-ct-data-\(testRunID)/audit-logs/" }
+          }
+        }
+      }
+    }
+  }
+}
