@@ -61,6 +61,14 @@ test-integration:
 lint:
 	golangci-lint run
 
+## lint-reuse: Check REUSE license compliance
+lint-reuse:
+	./scripts/lint_reuse.sh
+
+## add-license: Add license headers to source files (idempotent)
+add-license:
+	./scripts/add_license.sh
+
 ## verify-schema: Validate PKL schema files
 ## Checks that schema files are well-formed and follow formae conventions.
 verify-schema:
