@@ -1,0 +1,82 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/cloudtrail/trail.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local accountID = read("env:FORMAE_TEST_ACCOUNT_ID")
+local stackName = "plugin-sdk-test-cloudtrail-trail-\(testRunID)"
+
+// The CloudTrail log-delivery bucket is a PERSISTENT, formae-UNMANAGED
+// prerequisite provisioned by scripts/ci/clean-environment.sh (Option B /
+// PLA-302): CloudTrail deposits placeholder objects into it, and CloudControl
+// refuses to delete a non-empty bucket, so managing the bucket here made the
+// whole-stack Destroy fail. Referencing it by name keeps it out of formae's
+// lifecycle. The self-contained forceDestroy-managed version is tracked in
+// PLA-345.
+local logBucketName = "formae-plugin-sdk-test-ct-logs-\(accountID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for AWS CloudTrail Trail"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Trail is the last resource — the conformance harness verifies it as a singleton
+  // leaf and OOB-deletes it in isolation. isLogging=false keeps the bucket empty so
+  // CloudControl can delete it at teardown.
+  new trail.Trail {
+    label = "plugin-sdk-test-cloudtrail-trail"
+    trailName = "formae-plugin-sdk-test-ct-\(testRunID)"
+    s3BucketName = logBucketName
+    isMultiRegionTrail = true
+    // A multi-region trail must include global service events (AWS rejects the
+    // pair otherwise), mirroring the real multi-region audit trail.
+    includeGlobalServiceEvents = true
+    enableLogFileValidation = true
+    isLogging = false
+    advancedEventSelectors = new Listing<trail.AdvancedEventSelector> {
+      new {
+        name = "Management events"
+        fieldSelectors = new Listing<trail.AdvancedFieldSelector> {
+          new {
+            field = "eventCategory"
+            equals = new Listing<String> { "Management" }
+          }
+        }
+      }
+      new {
+        name = "S3 data events"
+        fieldSelectors = new Listing<trail.AdvancedFieldSelector> {
+          new {
+            field = "eventCategory"
+            equals = new Listing<String> { "Data" }
+          }
+          new {
+            field = "resources.type"
+            equals = new Listing<String> { "AWS::S3::Object" }
+          }
+          new {
+            field = "resources.ARN"
+            startsWith = new Listing<String> { "arn:aws:s3:::formae-plugin-sdk-test-ct-data-\(testRunID)/logs/" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -171,6 +171,7 @@ conformance-test-discovery: install
 conformance-test-crud-run:
 	@echo "Running CRUD conformance tests..."
 	@FORMAE_TEST_FILTER="$(TEST)" FORMAE_TEST_TYPE=crud FORMAE_TEST_PARALLEL="$(PARALLEL)" FORMAE_TEST_TIMEOUT="$(or $(TIMEOUT),60)" \
+		FORMAE_TEST_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
 		$(GO) test -tags=conformance -v -timeout $(or $(TIMEOUT),60)m ./...
 
 ## conformance-test-discovery-run: Run only discovery tests (no cleanup)
@@ -178,4 +179,5 @@ conformance-test-crud-run:
 conformance-test-discovery-run:
 	@echo "Running discovery conformance tests..."
 	@FORMAE_TEST_FILTER="$(TEST)" FORMAE_TEST_TYPE=discovery FORMAE_TEST_PARALLEL="$(PARALLEL)" FORMAE_TEST_TIMEOUT="$(or $(TIMEOUT),60)" \
+		FORMAE_TEST_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
 		$(GO) test -tags=conformance -v -timeout $(or $(TIMEOUT),60)m ./...
