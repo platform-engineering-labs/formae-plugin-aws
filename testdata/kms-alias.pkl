@@ -1,0 +1,43 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/kms/key.pkl"
+import "@aws/kms/kmsalias.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-kms-alias-\(testRunID)"
+
+local testKey = new key.Key {
+  label = "test-key"
+  description = "Formae plugin SDK test key for KMS Alias"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for KMS Alias"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testKey
+
+  new kmsalias.Alias {
+    label = "plugin-sdk-test-alias"
+    aliasName = "alias/formae-sdk-test-alias-\(testRunID)"
+    targetKeyId = testKey.res.arn
+  }
+}

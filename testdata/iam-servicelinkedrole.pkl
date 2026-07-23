@@ -1,0 +1,57 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+// Conformance fixture for AWS::IAM::ServiceLinkedRole. The role is standalone,
+// so it is the only resource in the stack and is trivially the singleton leaf
+// the harness requires.
+//
+// This type has no settable name: AWS derives RoleName (the readOnly primary
+// identifier) from AWSServiceName, so per-run uniqueness comes from customSuffix
+// instead of a name interpolation. testRunID yields
+// AWSServiceRoleForAutoScaling_<testRunID>, which is distinct per run and never
+// collides with the unsuffixed AWSServiceRoleForAutoScaling that EC2 Auto
+// Scaling auto-creates on first use.
+//
+// autoscaling.amazonaws.com is chosen deliberately: only some services accept
+// CustomSuffix (a service that rejects it would be limited to ONE role per
+// account and could not be tested concurrently), and Auto Scaling is the
+// service AWS's own CloudFormation documentation uses for the CustomSuffix
+// example.
+//
+// awsServiceName and customSuffix are both writeOnly — AWS does not return them
+// on read — mirroring cloudfront-function.pkl's autoPublish. Only RoleName and
+// Description come back.
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/servicelinkedrole.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-iam-servicelinkedrole-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for IAM ServiceLinkedRole"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new servicelinkedrole.ServiceLinkedRole {
+    label = "plugin-sdk-test-servicelinkedrole"
+    awsServiceName = "autoscaling.amazonaws.com"
+    customSuffix = testRunID
+    description = "Plugin SDK test service-linked role"
+  }
+}

@@ -1,0 +1,75 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+import "@aws/s3/object.pkl"
+import "@aws/lambda/layerversion.pkl"
+import "@aws/lambda/layerversionpermission.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-lambda-layerversionpermission-\(testRunID)"
+
+// Lambda layer content can only be supplied from S3 (the schema has no inline
+// zipFile equivalent), so the fixture stages a minimal zip in its own bucket.
+local layerBucket = new bucket.Bucket {
+  label = "lambda-layerversionperm-test-bucket"
+  bucketName = "formae-plugin-sdk-test-layerperm-\(testRunID)"
+}
+
+// Base64 of a deflate zip containing python/formae_layer_hello.py.
+local layerZip = new object.Object {
+  label = "lambda-layerversionperm-test-zip"
+  bucket = layerBucket.res.bucketName
+  key = "layers/formae-layer.zip"
+  contentBase64 = "UEsDBBQAAAAIAAAAIVoBsZUcLwAAADIAAAAcAAAAcHl0aG9uL2Zvcm1hZV9sYXllcl9oZWxsby5weUtJTVPISM3JydfQtOJSAIKi1JLSojwFJbCgQlpRfq5CWn5RbmKqQk5iZWqREhcAUEsBAhQDFAAAAAgAAAAhWgGxlRwvAAAAMgAAABwAAAAAAAAAAAAAAKQBAAAAAHB5dGhvbi9mb3JtYWVfbGF5ZXJfaGVsbG8ucHlQSwUGAAAAAAEAAQBKAAAAaQAAAAAA"
+  contentType = "application/zip"
+}
+
+local testLayerVersion = new layerversion.LayerVersion {
+  label = "test-layerversion-for-permission"
+  layerName = "formae-sdk-test-layerperm-\(testRunID)"
+  content = new layerversion.Content {
+    s3Bucket = layerZip.res.bucket
+    s3Key = layerZip.res.key
+  }
+  compatibleRuntimes {
+    "python3.12"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for Lambda LayerVersionPermission"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  layerBucket
+
+  layerZip
+
+  testLayerVersion
+
+  // Every property is createOnly: a layer permission statement is immutable, so
+  // any change is add/remove rather than an in-place update.
+  new layerversionpermission.LayerVersionPermission {
+    label = "plugin-sdk-test-lambda-layerversionpermission"
+    layerVersionArn = testLayerVersion.res.layerVersionArn
+    action = "lambda:GetLayerVersion"
+    principal = "*"
+  }
+}
