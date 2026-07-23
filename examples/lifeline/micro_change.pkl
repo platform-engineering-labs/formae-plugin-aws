@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@formae/ext/random.pkl"
 import "@aws/s3/bucket.pkl"
@@ -28,18 +28,16 @@ description {
     confirm = true
 }
 
-local randomId = random.id(4).toString()
+const local randomId = random.id(4).toString()
 
-properties {
-    s3BucketSuffix = new formae.Prop {
-        flag = "suffix"
-        default = vars.s3BucketSuffix
-    }
+properties: Props
 
-    bucketName = new formae.Prop {
-        flag = "bucketName"
-        default = "\(vars.projectName)\(vars.s3BucketSuffix)-\(randomId)"
-    }
+class Props {
+    /// Suffix for the globally-unique S3 bucket name
+    suffix: String = vars.s3BucketSuffix
+
+    /// Name of the S3 bucket to create
+    bucketName: String = "\(vars.projectName)\(vars.s3BucketSuffix)-\(randomId)"
 }
 
 forma {
@@ -48,11 +46,11 @@ forma {
 
     new bucket.Bucket {
         label = "bucket-1"
-        bucketName = properties.bucketName.value
+        bucketName = properties.bucketName
         tags {
             new {
                 key = "Name"
-                value = formae.value(properties.bucketName.value).setOnce
+                value = formae.value(properties.bucketName).setOnce
             }
             new {
                 key = "Project"

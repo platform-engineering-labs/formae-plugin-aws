@@ -4,20 +4,19 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 import "@aws/s3/bucket.pkl"
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = "pel-s3-demo"
-    }
-    bucketSuffix = new formae.Prop {
-        flag = "bucketSuffix"
-        default = "-unique-bucket-id"
-    }
+properties: Props
+
+class Props {
+    /// Base name for the S3 bucket
+    name: String = "pel-s3-demo"
+
+    /// Suffix appended to make the bucket name globally unique
+    bucketSuffix: String = "-unique-bucket-id"
 }
 
 forma {
@@ -37,14 +36,14 @@ forma {
 
     new bucket.Bucket {
         label = "simple-demo-bucket"
-        bucketName = properties.name.value + properties.bucketSuffix.value
+        bucketName = properties.name + properties.bucketSuffix
         versioningConfiguration = new bucket.VersioningConfiguration {
             status = "Enabled"
         }
         tags {
             new {
                 key = "Name"
-                value = properties.name.value + "-bucket"
+                value = properties.name + "-bucket"
             }
             new {
                 key = "Project"

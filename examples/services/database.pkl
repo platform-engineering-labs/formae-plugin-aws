@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 
@@ -21,24 +21,23 @@ description {
     confirm = true
 }
 
-properties {
-    team = new formae.Prop {
-        flag = "team"
-    }
+properties: Props
 
-    size = new formae.Prop {
-        flag = "size"
-        default = "xs"
-    }
+class Props {
+    /// Team that owns the database
+    team: types.Team = "team-a"
+
+    /// Database size class
+    size: String = "xs"
 }
 
 local _vpc = new vpc_resources.VpcResources {
-    team = properties.team.value
+    team = properties.team
 }
 
 local _database = new database_resources.DatabaseResources {
-    team = properties.team.value
-    size = properties.size.value
+    team = properties.team
+    size = properties.size
     vpc = _vpc.vpc
     subnet1 = _vpc.subnet1
     subnet2 = _vpc.subnet2
@@ -46,14 +45,14 @@ local _database = new database_resources.DatabaseResources {
 
 forma {
     new formae.Stack {
-        label = "\(properties.team.value)-stack"
-        description = "Stack for \(properties.team.value) infrastructure"
+        label = "\(properties.team)-stack"
+        description = "Stack for \(properties.team) infrastructure"
     }
 
     new formae.Target {
-        label = "\(properties.team.value)-target"
+        label = "\(properties.team)-target"
         config = new aws.Config {
-            region = types.regionFromTeam(properties.team.value)
+            region = types.regionFromTeam(properties.team)
         }
     }
 

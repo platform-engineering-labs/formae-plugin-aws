@@ -7,7 +7,7 @@
  * Used to test the DatastoreAuroraDataAPI implementation.
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 
 import "./infrastructure/vpc_resources.pkl"
@@ -32,49 +32,43 @@ description {
     confirm = true
 }
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = vars.projectName
-    }
-    region = new formae.Prop {
-        flag = "region"
-        default = vars.region
-    }
-    vpcCidr = new formae.Prop {
-        flag = "vpcCidr"
-        default = vars.vpcCidr
-    }
-    subnetCidr1 = new formae.Prop {
-        flag = "subnetCidr1"
-        default = vars.subnetCidr1
-    }
-    subnetCidr2 = new formae.Prop {
-        flag = "subnetCidr2"
-        default = vars.subnetCidr2
-    }
-    availabilityZone1 = new formae.Prop {
-        flag = "az1"
-        default = vars.availabilityZone1
-    }
-    availabilityZone2 = new formae.Prop {
-        flag = "az2"
-        default = vars.availabilityZone2
-    }
+properties: Props
+
+class Props {
+    /// Project name
+    name: String = vars.projectName
+
+    /// AWS region
+    region: String = vars.region
+
+    /// VPC CIDR block
+    vpcCidr: String = vars.vpcCidr
+
+    /// CIDR block for subnet 1
+    subnetCidr1: String = vars.subnetCidr1
+
+    /// CIDR block for subnet 2
+    subnetCidr2: String = vars.subnetCidr2
+
+    /// Availability zone 1
+    az1: String = vars.availabilityZone1
+
+    /// Availability zone 2
+    az2: String = vars.availabilityZone2
 }
 
 local _vpc = new vpc_resources.VpcResources {
-    name = properties.name.value
-    vpcCidr = properties.vpcCidr.value
-    subnetCidr1 = properties.subnetCidr1.value
-    subnetCidr2 = properties.subnetCidr2.value
-    availabilityZone1 = properties.availabilityZone1.value
-    availabilityZone2 = properties.availabilityZone2.value
+    name = properties.name
+    vpcCidr = properties.vpcCidr
+    subnetCidr1 = properties.subnetCidr1
+    subnetCidr2 = properties.subnetCidr2
+    availabilityZone1 = properties.az1
+    availabilityZone2 = properties.az2
 }
 
 local _rds = new rds_resources.RdsResources {
-    name = properties.name.value
-    vpcCidr = properties.vpcCidr.value
+    name = properties.name
+    vpcCidr = properties.vpcCidr
     dbName = vars.dbName
     vpc = _vpc.vpc
     subnet1 = _vpc.subnet1

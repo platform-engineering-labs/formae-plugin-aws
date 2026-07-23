@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
@@ -14,30 +14,23 @@ import "./components/s3_website.pkl" as storage
 import "./components/cloudfront.pkl" as cdn
 import "./components/dns.pkl"
 
-properties {
-    // Project configuration
-    projectName = new formae.Prop {
-        flag = "project-name"
-        default = vars.projectName
-    }
-    environment = new formae.Prop {
-        flag = "env"
-        default = vars.environment
-    }
+properties: Props
 
-    // Infrastructure configuration
-    region = new formae.Prop {
-        flag = "region"
-        default = vars.region
-    }
-    bucketSuffix = new formae.Prop {
-        flag = "bucket-suffix"
-        default = vars.bucketSuffix
-    }
-    domainName = new formae.Prop {
-        flag = "domain"
-        default = vars.domainName
-    }
+class Props {
+    /// Project name
+    projectName: String = vars.projectName
+
+    /// Deployment environment
+    environment: String = vars.environment
+
+    /// AWS region
+    region: String = vars.region
+
+    /// Suffix for the globally-unique S3 bucket name
+    bucketSuffix: String = vars.bucketSuffix
+
+    /// Public domain name for the site
+    domainName: String = vars.domainName
 }
 
 forma {
@@ -49,7 +42,7 @@ forma {
     new formae.Target {
         label = "aws-target"
         config = new aws.Config {
-            region = properties.region.value
+            region = properties.region
         }
     }
 

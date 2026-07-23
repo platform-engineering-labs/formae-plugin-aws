@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 import "@formae/ext/random.pkl"
@@ -30,20 +30,19 @@ description {
     confirm = true
 }
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = "secret-resolution"
-    }
-    region = new formae.Prop {
-        flag = "region"
-        default = "us-west-2"
-    }
+properties: Props
+
+class Props {
+    /// Stack / resource name prefix
+    name: String = "secret-resolution"
+
+    /// AWS region
+    region: String = "us-west-2"
 }
 
 forma {
     local stack = new formae.Stack {
-        label = properties.name.value
+        label = properties.name
         description = "Secret resolution example"
     }
     stack
@@ -51,7 +50,7 @@ forma {
     local target = new formae.Target {
         label = "aws-target"
         config = new aws.Config {
-            region = properties.region.value
+            region = properties.region
         }
     }
     target
@@ -68,14 +67,14 @@ forma {
         label = "Subnet1"
         vpcId = vpc.res.vpcId
         cidrBlock = "10.0.1.0/24"
-        availabilityZone = properties.region.value + "a"
+        availabilityZone = properties.region + "a"
     }
     subnet1
     local subnet2 = new subnet.Subnet {
         label = "Subnet2"
         vpcId = vpc.res.vpcId
         cidrBlock = "10.0.2.0/24"
-        availabilityZone = properties.region.value + "b"
+        availabilityZone = properties.region + "b"
     }
     subnet2
 
@@ -83,7 +82,7 @@ forma {
     local dbSubnetGroup = new dbsubnetgroup.DBSubnetGroup {
         label = "DBSubnetGroup"
         dbSubnetGroupDescription = "Subnet group for RDS"
-        dbSubnetGroupName = properties.name.value + "-db-subnet-group"
+        dbSubnetGroupName = properties.name + "-db-subnet-group"
         subnetIds {
             subnet1.res.subnetId
             subnet2.res.subnetId
@@ -102,7 +101,7 @@ forma {
     // Secret
     local dbSecret = new secret.Secret {
         label = "DBSecret"
-        name = properties.name.value + "-password"
+        name = properties.name + "-password"
         description = "Database password secret (randomly generated)"
         secretString = formae.value(random.password(12, false)).opaque.setOnce
     }

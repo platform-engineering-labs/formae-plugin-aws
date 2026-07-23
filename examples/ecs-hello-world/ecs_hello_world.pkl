@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 
 // VPC and Networking
@@ -27,24 +27,23 @@ import "@aws/ecs/service.pkl"
 
 import "./vars.pkl"
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = vars.projectName
-    }
-    region = vars.regionProp
-    vpcCidr = new formae.Prop {
-        flag = "vpcCidr"
-        default = "10.1.0.0/16"
-    }
-    subnetCidr1 = new formae.Prop {
-        flag = "subnetCidr1"
-        default = "10.1.1.0/24"
-    }
-    subnetCidr2 = new formae.Prop {
-        flag = "subnetCidr2"
-        default = "10.1.2.0/24"
-    }
+properties: Props
+
+class Props {
+    /// Project name
+    name: String = vars.projectName
+
+    /// AWS region
+    region: String = vars.region
+
+    /// VPC CIDR block
+    vpcCidr: String = "10.1.0.0/16"
+
+    /// CIDR block for public subnet 1
+    subnetCidr1: String = "10.1.1.0/24"
+
+    /// CIDR block for public subnet 2
+    subnetCidr2: String = "10.1.2.0/24"
 }
 
 forma {
@@ -53,16 +52,16 @@ forma {
 
     local vpc = new vpc.VPC {
         label = "ecs-vpc"
-        cidrBlock = properties.vpcCidr.value
+        cidrBlock = properties.vpcCidr
         enableDnsHostnames = true
         enableDnsSupport = true
-        tags { new { key = "Name"; value = properties.name.value + "-vpc" } }
+        tags { new { key = "Name"; value = properties.name + "-vpc" } }
     }
     vpc
 
     local igw = new internetgateway.InternetGateway {
         label = "ecs-igw"
-        tags { new { key = "Name"; value = properties.name.value + "-igw" } }
+        tags { new { key = "Name"; value = properties.name + "-igw" } }
     }
     igw
 
@@ -76,27 +75,27 @@ forma {
     local subnet1 = new subnet.Subnet {
         label = "ecs-public-subnet-1"
         vpcId = vpc.res.id
-        cidrBlock = properties.subnetCidr1.value
-        availabilityZone = "\(properties.region.value)a"
+        cidrBlock = properties.subnetCidr1
+        availabilityZone = "\(properties.region)a"
         mapPublicIpOnLaunch = true
-        tags { new { key = "Name"; value = properties.name.value + "-public-subnet-1" } }
+        tags { new { key = "Name"; value = properties.name + "-public-subnet-1" } }
     }
     subnet1
 
     local subnet2 = new subnet.Subnet {
         label = "ecs-public-subnet-2"
         vpcId = vpc.res.id
-        cidrBlock = properties.subnetCidr2.value
-        availabilityZone = "\(properties.region.value)b"
+        cidrBlock = properties.subnetCidr2
+        availabilityZone = "\(properties.region)b"
         mapPublicIpOnLaunch = true
-        tags { new { key = "Name"; value = properties.name.value + "-public-subnet-2" } }
+        tags { new { key = "Name"; value = properties.name + "-public-subnet-2" } }
     }
     subnet2
 
     local routeTable = new routetable.RouteTable {
         label = "ecs-public-rt"
         vpcId = vpc.res.id
-        tags { new { key = "Name"; value = properties.name.value + "-public-rt" } }
+        tags { new { key = "Name"; value = properties.name + "-public-rt" } }
     }
     routeTable
 
@@ -126,7 +125,7 @@ forma {
         label = "ecs-alb-sg"
         groupDescription = "Allow HTTP traffic to ALB"
         vpcId = vpcRes.id
-        tags { new { key = "Name"; value = properties.name.value + "-alb-sg" } }
+        tags { new { key = "Name"; value = properties.name + "-alb-sg" } }
     }
     albSg
 
@@ -144,7 +143,7 @@ forma {
         label = "ecs-task-sg"
         groupDescription = "Allow HTTP traffic from ALB"
         vpcId = vpcRes.id
-        tags { new { key = "Name"; value = properties.name.value + "-task-sg" } }
+        tags { new { key = "Name"; value = properties.name + "-task-sg" } }
     }
     taskSg
 
@@ -175,7 +174,7 @@ forma {
         managedPolicyArns  {
             "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
         }
-        tags { new { key = "Name"; value = properties.name.value + "-task-exec-role" } }
+        tags { new { key = "Name"; value = properties.name + "-task-exec-role" } }
     }
     taskExecRole
 
@@ -183,13 +182,13 @@ forma {
     new ecscluster.Cluster {
         label = "ecs-hello-world-cluster"
         clusterName = "ecs-hello-world-cluster"
-        tags { new { key = "Name"; value = properties.name.value + "-cluster" } }
+        tags { new { key = "Name"; value = properties.name + "-cluster" } }
     }
 
     // ECS Task Definition (Fargate)
     new taskdefinition.TaskDefinition {
         label = "ecs-hello-task-def"
-        family = properties.name.value + "-hello-task"
+        family = properties.name + "-hello-task"
         requiresCompatibilities {"FARGATE"}
         networkMode = "awsvpc" // Required for Fargate
         cpu = "256"
@@ -208,7 +207,7 @@ forma {
                 }
             }
         }
-        tags { new { key = "Name"; value = properties.name.value + "-hello-task-def" } }
+        tags { new { key = "Name"; value = properties.name + "-hello-task-def" } }
     }
 
     local vpcRes = new vpc.VpcResolvable {
@@ -249,19 +248,19 @@ forma {
     // Application Load Balancer
     local alb = new loadbalancer.LoadBalancer {
         label = "ecs-alb"
-        name = properties.name.value + "-alb"
+        name = properties.name + "-alb"
         subnets {subnetRes1.subnetId; subnetRes2.subnetId}
         securityGroups  {albSgRes.groupId}
         scheme = "internet-facing"
         type = "application"
-        tags { new { key = "Name"; value = properties.name.value + "-alb" } }
+        tags { new { key = "Name"; value = properties.name + "-alb" } }
     }
     alb
 
     // Target Group for ECS Tasks
     local targetGroup = new targetgroup.TargetGroup {
         label = "ecs-tg"
-        name = properties.name.value + "-tg"
+        name = properties.name + "-tg"
         vpcId = vpcRes.id
         port = 80
         protocol = "HTTP"
@@ -271,7 +270,7 @@ forma {
         healthCheckProtocol = "HTTP"
         matcher = new targetgroup.Matcher { httpCode = "200" }
         healthCheckIntervalSeconds = 30
-        tags { new { key = "Name"; value = properties.name.value + "-tg" } }
+        tags { new { key = "Name"; value = properties.name + "-tg" } }
     }
     targetGroup
 
@@ -292,7 +291,7 @@ forma {
     // Fargate clusters often don't need specific capacity providers defined here
     new ecscluster.Cluster {
         label = "ecs-hello-cluster2"
-        clusterName = properties.name.value + "-cluster2"
-        tags { new { key = "Name"; value = properties.name.value + "-cluster" } }
+        clusterName = properties.name + "-cluster2"
+        tags { new { key = "Name"; value = properties.name + "-cluster" } }
     }
 }

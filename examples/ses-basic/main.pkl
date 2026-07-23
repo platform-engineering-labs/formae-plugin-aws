@@ -40,7 +40,7 @@
  *   domain is derived as `mail.<domain>`.
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 
@@ -64,28 +64,27 @@ description {
     confirm = true
 }
 
-properties {
-    domain = new formae.Prop {
-        flag = "domain"
-        default = "example.com"
-    }
-    region = new formae.Prop {
-        flag = "region"
-        default = "us-east-1"
-    }
+properties: Props
+
+class Props {
+    /// Domain name for the SES identity (MAIL FROM is derived as `mail.<domain>`)
+    domain: String = "example.com"
+
+    /// AWS region
+    region: String = "us-east-1"
 }
 
 forma {
     local stack = new formae.Stack {
         label = "ses-basic"
-        description = "SES outbound email for \(properties.domain.value)"
+        description = "SES outbound email for \(properties.domain)"
     }
     stack
 
     local target = new formae.Target {
         label = "aws-target"
         config = new aws.Config {
-            region = properties.region.value
+            region = properties.region
         }
     }
     target
@@ -97,7 +96,7 @@ forma {
 
     local zone = new hostedzone.HostedZone {
         label = "primary-zone"
-        name = properties.domain.value
+        name = properties.domain
     }
     zone
 
@@ -110,9 +109,9 @@ forma {
 
     local id = new emailidentity.EmailIdentity {
         label = "primary-sender"
-        emailIdentity = properties.domain.value
+        emailIdentity = properties.domain
         mailFrom = new ses.MailFromAttributes {
-            mailFromDomain = "mail.\(properties.domain.value)"
+            mailFromDomain = "mail.\(properties.domain)"
             behaviorOnMxFailure = "USE_DEFAULT_VALUE"
         }
         dkimSigning = new ses.DkimSigningAttributes {

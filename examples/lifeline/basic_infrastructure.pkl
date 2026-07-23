@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 import "@formae/ext/random.pkl"
@@ -43,46 +43,38 @@ description {
     confirm = true
 }
 
-local randomId = random.id(4).toString()
+const local randomId = random.id(4).toString()
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = "\(vars.projectName)-\(randomId)"
-    }
+properties: Props
 
-    vpcLabel = new formae.Prop {
-        flag = "vpcLabel"
-        default = vars.vpcLabel
-    }
+class Props {
+    /// Name prefix for the basic infrastructure (`-p name=...`)
+    name: String = "\(vars.projectName)-\(randomId)"
 
-    vpcCidr = new formae.Prop {
-        flag = "vpcCidr"
-        default = "10.1.0.0/16"
-    }
+    /// Label of the VPC
+    vpcLabel: String = vars.vpcLabel
 
-    subnetCidr1 = new formae.Prop {
-        flag = "subnetCidr1"
-        default = "10.1.1.0/24"
-    }
+    /// CIDR block for the VPC
+    vpcCidr: String = "10.1.0.0/16"
 
-    subnetCidr2 = new formae.Prop {
-        flag = "subnetCidr2"
-        default = "10.1.2.0/24"
-    }
+    /// CIDR block for the first subnet
+    subnetCidr1: String = "10.1.1.0/24"
+
+    /// CIDR block for the second subnet
+    subnetCidr2: String = "10.1.2.0/24"
 }
 
 local network = new nw.NetworkResources {
-    name = properties.name.value
-    vpcLabel = properties.vpcLabel.value
-    vpcCidr = properties.vpcCidr.value
-    subnetCidr1 = properties.subnetCidr1.value
-    subnetCidr2 = properties.subnetCidr2.value
+    name = properties.name
+    vpcLabel = properties.vpcLabel
+    vpcCidr = properties.vpcCidr
+    subnetCidr1 = properties.subnetCidr1
+    subnetCidr2 = properties.subnetCidr2
     region = vars.region
 }
 
 local securityGroups = new sg.SecurityGroupResources {
-    name = properties.name.value
+    name = properties.name
     vpc =  network.vpc
 }
 

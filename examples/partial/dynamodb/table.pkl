@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 import "@aws/dynamodb/table.pkl"
@@ -21,21 +21,19 @@ description {
     confirm = true
 }
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = "dynamodb-example"
-    }
+properties: Props
 
-    region = new formae.Prop {
-        flag = "region"
-        default = "us-west-2"
-    }
+class Props {
+    /// Name used to label the stack
+    name: String = "dynamodb-example"
+
+    /// AWS region to deploy into
+    region: String = "us-west-2"
 }
 
 forma {
     local stack = new formae.Stack {
-        label = properties.name.value
+        label = properties.name
         description = "DynamoDB table example"
     }
     stack
@@ -43,7 +41,7 @@ forma {
     local target = new formae.Target {
         label = "default-aws-target"
         config = new aws.Config {
-            region = properties.region.value
+            region = properties.region
         }
     }
     target
