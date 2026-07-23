@@ -9,54 +9,20 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
-import "@aws/s3/bucket.pkl"
-import "@aws/s3/bucketpolicy.pkl"
 import "@aws/cloudtrail/trail.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local accountID = read("env:FORMAE_TEST_ACCOUNT_ID")
 local stackName = "plugin-sdk-test-cloudtrail-trail-\(testRunID)"
 
-// S3 bucket to receive CloudTrail log delivery.
-// blockPublicPolicy must be false to allow the service-principal bucket policy to attach.
-local testBucket = new bucket.Bucket {
-  label = "test-ct-bucket"
-  bucketName = "formae-plugin-sdk-test-ct-\(testRunID)"
-  publicAccessBlockConfiguration = new bucket.PublicAccessBlockConfiguration {
-    blockPublicAcls = true
-    blockPublicPolicy = false
-    ignorePublicAcls = true
-    restrictPublicBuckets = false
-  }
-}
-
-// Bucket policy granting CloudTrail the access it needs to write logs.
-local testBucketPolicy = new bucketpolicy.BucketPolicy {
-  label = "test-ct-bucketpolicy"
-  bucket = testBucket.res.bucketName
-  policyDocument {
-    ["Version"] = "2012-10-17"
-    ["Statement"] {
-      new {
-        ["Sid"] = "AWSCloudTrailAclCheck"
-        ["Effect"] = "Allow"
-        ["Principal"] {
-          ["Service"] = "cloudtrail.amazonaws.com"
-        }
-        ["Action"] = "s3:GetBucketAcl"
-        ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-ct-\(testRunID)"
-      }
-      new {
-        ["Sid"] = "AWSCloudTrailWrite"
-        ["Effect"] = "Allow"
-        ["Principal"] {
-          ["Service"] = "cloudtrail.amazonaws.com"
-        }
-        ["Action"] = "s3:PutObject"
-        ["Resource"] = "arn:aws:s3:::formae-plugin-sdk-test-ct-\(testRunID)/*"
-      }
-    }
-  }
-}
+// The CloudTrail log-delivery bucket is a PERSISTENT, formae-UNMANAGED
+// prerequisite provisioned by scripts/ci/clean-environment.sh (Option B /
+// PLA-302): CloudTrail deposits placeholder objects into it, and CloudControl
+// refuses to delete a non-empty bucket, so managing the bucket here made the
+// whole-stack Destroy fail. Referencing it by name keeps it out of formae's
+// lifecycle. The self-contained forceDestroy-managed version is tracked in
+// PLA-345.
+local logBucketName = "formae-plugin-sdk-test-ct-logs-\(accountID)"
 
 forma {
   new formae.Stack {
@@ -71,16 +37,13 @@ forma {
     }
   }
 
-  testBucket
-  testBucketPolicy
-
   // Trail is the last resource — the conformance harness verifies it as a singleton
   // leaf and OOB-deletes it in isolation. isLogging=false keeps the bucket empty so
   // CloudControl can delete it at teardown.
   new trail.Trail {
     label = "plugin-sdk-test-cloudtrail-trail"
     trailName = "formae-plugin-sdk-test-ct-\(testRunID)"
-    s3BucketName = testBucketPolicy.res.bucket
+    s3BucketName = logBucketName
     isMultiRegionTrail = true
     // A multi-region trail must include global service events (AWS rejects the
     // pair otherwise), mirroring the real multi-region audit trail.
