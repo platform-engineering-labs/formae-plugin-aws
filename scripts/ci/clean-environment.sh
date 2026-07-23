@@ -1173,8 +1173,13 @@ done
 # ============================================================================
 
 # 26. Delete SQS queues with test prefix
+# `list-queues --queue-name-prefix` is a literal *starts-with* match, so it never
+# matched the fixtures' own queue names (e.g. sqs-queue.pkl's
+# `formae-plugin-sdk-test-queue-*` starts with "formae-", not "plugin-sdk-test") —
+# those queues leaked. Match with contains() across all three prefixes, as the
+# Lambda/API Gateway sweeps already do.
 echo "Cleaning SQS test queues..."
-aws sqs list-queues --region "$REGION" --queue-name-prefix "$TEST_PREFIX" --query "QueueUrls[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r queue; do
+aws sqs list-queues --region "$REGION" --query "QueueUrls[?contains(@, '$FORMAE_PREFIX') || contains(@, '$SDK_PREFIX') || contains(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r queue; do
     if [[ -n "$queue" ]]; then
         echo "  Deleting SQS queue: $queue"
         aws sqs delete-queue --queue-url "$queue" --region "$REGION" 2>/dev/null || true
@@ -1558,6 +1563,75 @@ done
 # Future-proofing: CloudFront Distributions cleanup would go here once
 # conformance creates them. Skipped today — Distribution is discoverable=false,
 # extractable=false and not in the conformance matrix.
+
+# ============================================================================
+# Batch A resource types (regional)
+# Appended at the end deliberately: each of these is a leaf or is safe to reap
+# after its parents above (NetworkFirewall rule groups must follow the firewall
+# and policy sweeps, since a policy in use holds a reference to its rule group).
+# ============================================================================
+
+# KMS aliases. Aliases are leaves — delete the alias, never the key (keys are
+# reaped by their own schedule-deletion path). Alias names carry the "alias/"
+# prefix, so match on the suffix.
+echo "Cleaning KMS test aliases..."
+aws kms list-aliases --region "$REGION" \
+    --query "Aliases[?contains(AliasName, '$FORMAE_PREFIX') || contains(AliasName, '$SDK_PREFIX') || contains(AliasName, '$TEST_PREFIX')].AliasName" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r alias_name; do
+    if [[ -n "$alias_name" ]]; then
+        echo "  Deleting KMS alias: $alias_name"
+        aws kms delete-alias --alias-name "$alias_name" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# Lambda layers. Every layer version must be deleted before the layer itself
+# disappears (there is no delete-layer API — a layer ceases to exist once its
+# last version is gone). LayerVersionPermission is deleted implicitly with the
+# version, so it needs no separate sweep.
+echo "Cleaning Lambda test layers..."
+aws lambda list-layers --region "$REGION" \
+    --query "Layers[?contains(LayerName, '$FORMAE_PREFIX') || contains(LayerName, '$SDK_PREFIX') || contains(LayerName, '$TEST_PREFIX')].LayerName" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r layer_name; do
+    if [[ -n "$layer_name" ]]; then
+        aws lambda list-layer-versions --layer-name "$layer_name" --region "$REGION" \
+            --query "LayerVersions[].Version" --output text 2>/dev/null | tr '\t' '\n' | while read -r ver; do
+            if [[ -n "$ver" ]]; then
+                echo "  Deleting Lambda layer version: $layer_name:$ver"
+                aws lambda delete-layer-version --layer-name "$layer_name" --version-number "$ver" --region "$REGION" 2>/dev/null || true
+            fi
+        done
+    fi
+done
+
+# NetworkFirewall rule groups. Must run after the firewall + policy sweeps
+# above: deleting a rule group still referenced by a policy fails.
+echo "Cleaning NetworkFirewall test rule groups..."
+aws network-firewall list-rule-groups --region "$REGION" \
+    --query "RuleGroups[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r rg_name; do
+    if [[ -n "$rg_name" ]]; then
+        echo "  Deleting NetworkFirewall rule group: $rg_name"
+        # Type is required to disambiguate; try both rather than tracking which.
+        aws network-firewall delete-rule-group --rule-group-name "$rg_name" --type STATEFUL --region "$REGION" 2>/dev/null || \
+        aws network-firewall delete-rule-group --rule-group-name "$rg_name" --type STATELESS --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# IAM service-linked roles. These are NOT caught by the IAM role sweep above:
+# AWS derives the name from the service (AWSServiceRoleForAutoScaling_<suffix>),
+# so it contains no test prefix at all — per-run uniqueness comes only from the
+# CustomSuffix. Match the suffixed form and never the unsuffixed role, which
+# AWS auto-creates for the account and is not ours to delete. Deletion is async
+# (DeleteServiceLinkedRole returns a task id); we fire and let AWS drain it.
+echo "Cleaning IAM test service-linked roles..."
+aws iam list-roles --path-prefix "/aws-service-role/autoscaling.amazonaws.com/" \
+    --query "Roles[?RoleName != 'AWSServiceRoleForAutoScaling'].RoleName" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r slr; do
+    if [[ -n "$slr" ]]; then
+        echo "  Deleting IAM service-linked role: $slr"
+        aws iam delete-service-linked-role --role-name "$slr" 2>/dev/null || true
+    fi
+done
 
 echo ""
 echo "=== Cleanup complete ==="

@@ -30,7 +30,14 @@ open class RuntimePolicy extends formae.SubResource {
 }
 open class Version extends formae.Resource {
 
-    @aws.FieldHint{createOnly = true}
+    // AWS always returns CodeSha256 — it is the hash of the code the version was
+    // published from, computed by AWS. As an input it is optional and acts as an
+    // assertion (publish only if the hash matches), so a caller usually omits it
+    // and the read-back then carries a value the desired state never had.
+    // Absorb it. Like the other fields here it is createOnly, so
+    // removal-by-omission does not apply; and when a caller *does* set it, the
+    // hint only ignores actual-only values, so the assertion still compares.
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     codeSha256: String?
 
     @aws.FieldHint{createOnly = true}
@@ -42,6 +49,12 @@ open class Version extends formae.Resource {
     @aws.FieldHint{createOnly = true}
     provisionedConcurrencyConfig: ProvisionedConcurrencyConfiguration?
 
-    @aws.FieldHint{createOnly = true}
+    // AWS populates RuntimePolicy on every published version (pinning the
+    // runtime version it was published against) even when the caller never set
+    // it — conformance-observed: the extract comparison reported it as present
+    // in actual but absent from desired. The field is createOnly, so absorbing
+    // the provider value costs nothing: removal-by-omission does not apply to a
+    // field that can never be updated in place.
+    @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     runtimePolicy: RuntimePolicy?
 }

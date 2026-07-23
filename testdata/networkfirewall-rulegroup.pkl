@@ -1,0 +1,69 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+// Conformance fixture for AWS::NetworkFirewall::RuleGroup. The rule group is
+// standalone — it needs no VPC, policy or firewall — so it is the only resource
+// in the stack and is trivially the singleton leaf the harness requires: it is
+// last in the forma block, nothing references it, and it OOB-deletes in
+// isolation.
+//
+// The schema's RulesSource only models rulesSourceList, so a STATELESS group is
+// not expressible here; this exercises the STATEFUL domain-list surface —
+// rulesSourceList and statefulRuleOptions — plus the createOnly capacity and the
+// EntitySet tags.
+//
+// ruleVariables is deliberately NOT set: the schema declares RuleVariables.ipSets,
+// which renders on the wire as "IpSets", but AWS requires "IPSets" and rejects the
+// create with `extraneous key [IpSets] is not permitted`. The field needs an
+// outputField = "IPSets" hint (as servicelinkedrole.pkl does for AWSServiceName)
+// before any fixture can cover it.
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/networkfirewall/rulegroup.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-networkfirewall-rulegroup-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for AWS Network Firewall RuleGroup"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new rulegroup.RuleGroup {
+    label = "plugin-sdk-test-rulegroup"
+    ruleGroupName = "formae-plugin-sdk-test-rg-\(testRunID)"
+    type = "STATEFUL"
+    capacity = 100
+    description = "Plugin SDK test stateful domain allowlist rule group"
+    ruleGroup = new rulegroup.RuleGroupData {
+      rulesSource = new rulegroup.RulesSource {
+        rulesSourceList = new rulegroup.RulesSourceList {
+          targets = new Listing<String> { "github.com"; "api.anthropic.com" }
+          targetTypes = new Listing<rulegroup.TargetType> { "TLS_SNI"; "HTTP_HOST" }
+          generatedRulesType = "ALLOWLIST"
+        }
+      }
+      statefulRuleOptions = new rulegroup.StatefulRuleOptions {
+        ruleOrder = "STRICT_ORDER"
+      }
+    }
+    tags {
+      new { key = "Environment"; value = "test" }
+    }
+  }
+}
