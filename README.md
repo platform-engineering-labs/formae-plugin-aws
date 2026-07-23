@@ -10,7 +10,7 @@ API](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudc
 
 ## Supported Resources
 
-This plugin supports **209 AWS resource types** across 21 services via the
+This plugin supports **210 AWS resource types** across 22 services via the
 CloudControl API:
 
 | Service | Resources | Examples |
@@ -27,6 +27,7 @@ CloudControl API:
 | KMS | 2 | Key, Alias |
 | Secrets Manager | 4 | Secret, ResourcePolicy, RotationSchedule |
 | CloudFront | 1 | Distribution |
+| CloudTrail | 1 | Trail |
 | ELBv2 | 7 | LoadBalancer, TargetGroup, Listener, ListenerRule |
 | ECR | 6 | Repository, RegistryPolicy, ReplicationConfiguration |
 | EFS | 3 | FileSystem, MountTarget, AccessPoint |

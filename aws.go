@@ -100,6 +100,8 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 			"AWS::CertificateManager::Certificate": "$.DomainName",
 			// S3 objects use Key property
 			"AWS::S3::Object": "$.Key",
+			// CloudTrail trails have no Name tag; use the trail name as the label.
+			"AWS::CloudTrail::Trail": "$.TrailName",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",

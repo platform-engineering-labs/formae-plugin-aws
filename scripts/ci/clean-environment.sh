@@ -179,6 +179,13 @@ done
 echo "Cleaning S3 test buckets..."
 aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
     if [[ -n "$bucket" ]]; then
+        # The CloudTrail log bucket (formae-plugin-sdk-test-ct-logs-*) is a
+        # PERSISTENT prerequisite (Option B / PLA-302) provisioned + emptied in
+        # section 8b-ct below; never delete it here.
+        if [[ "$bucket" == formae-plugin-sdk-test-ct-logs-* ]]; then
+            echo "  Skipping persistent CloudTrail log bucket: $bucket"
+            continue
+        fi
         echo "  Deleting S3 bucket: $bucket"
         # Delete bucket policy first (if any)
         aws s3api delete-bucket-policy --bucket "$bucket" --region "$REGION" 2>/dev/null || true
@@ -186,6 +193,77 @@ aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || con
         aws s3api delete-bucket --bucket "$bucket" --region "$REGION" 2>/dev/null || true
     fi
 done
+
+# 8b-ct. Provision + empty the PERSISTENT CloudTrail log-delivery bucket.
+# This bucket is a persistent conformance prerequisite for the cloudtrail-trail
+# fixture (Option B / PLA-302): CloudTrail deposits placeholder/log objects into
+# it, and CloudControl refuses to delete a non-empty bucket, so the fixture
+# references this externally-owned bucket by name instead of managing it. We
+# therefore CREATE it if absent and EMPTY it here, but never DELETE it (unlike
+# section 8b). The self-contained forceDestroy-managed version is tracked in
+# PLA-345. Every step is guarded so it never aborts the cleanup script.
+echo "Provisioning + emptying persistent CloudTrail log bucket..."
+if acct=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && [[ -n "$acct" && "$acct" != "None" ]]; then
+    ct_bucket="formae-plugin-sdk-test-ct-logs-${acct}"
+    # Create the bucket if it does not already exist. us-east-1 must NOT pass a
+    # LocationConstraint (the API rejects it); every other region requires one.
+    if ! aws s3api head-bucket --bucket "$ct_bucket" --region "$REGION" 2>/dev/null; then
+        echo "  Creating CloudTrail log bucket: $ct_bucket"
+        if [[ "$REGION" == "us-east-1" ]]; then
+            aws s3api create-bucket --bucket "$ct_bucket" --region "$REGION" 2>/dev/null || true
+        else
+            aws s3api create-bucket --bucket "$ct_bucket" --region "$REGION" \
+                --create-bucket-configuration "LocationConstraint=$REGION" 2>/dev/null || true
+        fi
+    fi
+    # Block public access on the bucket.
+    aws s3api put-public-access-block --bucket "$ct_bucket" --region "$REGION" \
+        --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false" 2>/dev/null || true
+    # Attach the canonical CloudTrail bucket policy (mirrors the shape the fixture
+    # previously managed: AWSCloudTrailAclCheck = s3:GetBucketAcl on the bucket
+    # ARN, AWSCloudTrailWrite = s3:PutObject on <bucket-arn>/* with the
+    # bucket-owner-full-control ACL condition).
+    ct_policy=$(cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AWSCloudTrailAclCheck",
+      "Effect": "Allow",
+      "Principal": { "Service": "cloudtrail.amazonaws.com" },
+      "Action": "s3:GetBucketAcl",
+      "Resource": "arn:aws:s3:::${ct_bucket}"
+    },
+    {
+      "Sid": "AWSCloudTrailWrite",
+      "Effect": "Allow",
+      "Principal": { "Service": "cloudtrail.amazonaws.com" },
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::${ct_bucket}/*",
+      "Condition": {
+        "StringEquals": { "s3:x-amz-acl": "bucket-owner-full-control" }
+      }
+    }
+  ]
+}
+EOF
+)
+    aws s3api put-bucket-policy --bucket "$ct_bucket" --region "$REGION" --policy "$ct_policy" 2>/dev/null || true
+    # Empty the bucket (objects + versions + delete markers) WITHOUT deleting it,
+    # clearing CloudTrail placeholder/log objects left by prior runs.
+    echo "  Emptying CloudTrail log bucket: $ct_bucket"
+    aws s3 rm "s3://$ct_bucket" --recursive --region "$REGION" 2>/dev/null || true
+    # Versioned sweep in case the bucket has versioning enabled.
+    versioned=$(aws s3api list-object-versions --bucket "$ct_bucket" --region "$REGION" \
+        --output json --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}, DeleteMarkers: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' 2>/dev/null || echo '{}')
+    for kind in Objects DeleteMarkers; do
+        del=$(echo "$versioned" | jq -c "{Objects: (.$kind // []), Quiet: true}" 2>/dev/null || echo '{}')
+        n=$(echo "$del" | jq '.Objects | length' 2>/dev/null || echo 0)
+        if [[ -n "$n" && "$n" != "0" ]]; then
+            aws s3api delete-objects --bucket "$ct_bucket" --region "$REGION" --delete "$del" 2>/dev/null || true
+        fi
+    done
+fi
 
 # 8c. Delete S3 Storage Lens Groups with test prefix
 echo "Cleaning S3 test Storage Lens Groups..."
