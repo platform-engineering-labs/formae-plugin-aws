@@ -16,6 +16,10 @@ open class Action extends formae.SubResource {
     authenticateCognitoConfig: AuthenticateCognitoConfig?
     authenticateOidcConfig: AuthenticateOidcConfig?
     fixedResponseConfig: FixedResponseConfig?
+    // AWS derives ForwardConfig from a plain targetGroupArn on a forward action
+    // and returns it on read even when the caller only set targetGroupArn, so
+    // absorb it as a provider default (this mirrors the Listener schema's Action).
+    @aws.FieldHint{hasProviderDefault = true}
     forwardConfig: ForwardConfig?
     order: Int?
     redirectConfig: RedirectConfig?
@@ -117,6 +121,11 @@ open class Condition extends formae.SubResource {
     pathPatternConfig: PathPatternConfig?
     queryStringConfig: QueryStringConfig?
     sourceIpConfig: SourceIpConfig?
+    // AWS mirrors a host-header/path-pattern condition's typed config into the
+    // legacy flat Values list and returns both on read, even when the caller set
+    // only the typed config (e.g. pathPatternConfig), so absorb Values as a
+    // provider default to avoid perpetual false drift.
+    @aws.FieldHint{hasProviderDefault = true}
     values: Listing<String>?
 }
 
