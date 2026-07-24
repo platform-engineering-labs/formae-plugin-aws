@@ -15,6 +15,9 @@ import (
 
 type mockS3ObjectClient struct {
 	mock.Mock
+	// listRegions records the region applied (via option functions) on each
+	// ListObjectsV2 call, so tests can assert cross-region redirect handling.
+	listRegions []string
 }
 
 func (m *mockS3ObjectClient) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -33,6 +36,11 @@ func (m *mockS3ObjectClient) DeleteObject(ctx context.Context, params *s3.Delete
 }
 
 func (m *mockS3ObjectClient) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	opts := s3.Options{}
+	for _, fn := range optFns {
+		fn(&opts)
+	}
+	m.listRegions = append(m.listRegions, opts.Region)
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.ListObjectsV2Output), args.Error(1)
 }

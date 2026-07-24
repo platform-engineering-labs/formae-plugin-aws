@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -70,9 +71,9 @@ func parseNativeID(nativeID string) (bucket, key string, err error) {
 }
 
 const (
-	maxDownloadBytes    = 256 << 20
+	maxDownloadBytes     = 256 << 20
 	maxDecompressedBytes = 256 << 20
-	fetchTimeout        = 5 * time.Minute
+	fetchTimeout         = 5 * time.Minute
 )
 
 // resolveBodyWithCloser returns an io.Reader for the object body and a closer function.
@@ -576,6 +577,24 @@ func (o *Object) List(ctx context.Context, request *resource.ListRequest) (*reso
 	return o.listWithClient(ctx, client, request)
 }
 
+// bucketRegionFromRedirect returns the bucket's home region when err is an S3
+// 301 PermanentRedirect that carries an x-amz-bucket-region header, so the
+// caller can retry the request against the correct region.
+func bucketRegionFromRedirect(err error) (string, bool) {
+	var respErr *smithyhttp.ResponseError
+	if !errors.As(err, &respErr) {
+		return "", false
+	}
+	if respErr.HTTPStatusCode() != http.StatusMovedPermanently || respErr.Response == nil {
+		return "", false
+	}
+	region := respErr.Response.Header.Get("x-amz-bucket-region")
+	if region == "" {
+		return "", false
+	}
+	return region, true
+}
+
 func (o *Object) listWithClient(ctx context.Context, client s3ObjectClient, request *resource.ListRequest) (*resource.ListResult, error) {
 	if request.AdditionalProperties == nil {
 		return nil, fmt.Errorf("BucketName required for listing S3 objects")
@@ -595,7 +614,16 @@ func (o *Object) listWithClient(ctx context.Context, client s3ObjectClient, requ
 
 	resp, err := client.ListObjectsV2(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list objects in bucket %s: %w", bucketName, err)
+		// The S3 bucket namespace is global but ListObjectsV2 must be addressed
+		// to the bucket's home region. A bucket in another region than the
+		// configured client answers with a 301 PermanentRedirect carrying the
+		// real region in the x-amz-bucket-region header; retry there.
+		if region, ok := bucketRegionFromRedirect(err); ok {
+			resp, err = client.ListObjectsV2(ctx, input, func(o *s3.Options) { o.Region = region })
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to list objects in bucket %s: %w", bucketName, err)
+		}
 	}
 
 	var nativeIDs []string
