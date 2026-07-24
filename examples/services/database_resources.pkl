@@ -75,7 +75,7 @@ class DatabaseResources {
     hidden dbInstance: dbinstance.DBInstance = new {
         label = "\(team)-db-instance"
         dbInstanceIdentifier = "\(team)-db-instance"
-        allocatedStorage = 20
+        allocatedStorage = "20"
         dbInstanceClass = types.dbRawSizeFromSize(size)
         engine = "mysql"
         engineVersion = "8.0"

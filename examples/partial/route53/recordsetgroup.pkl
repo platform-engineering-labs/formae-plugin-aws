@@ -4,17 +4,17 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
-amends "@formae/forma.pkl"
+extends "@formae/forma.pkl"
 import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 import "@aws/route53/hostedzone.pkl"
 import "@aws/route53/recordsetgroup.pkl"
 
-properties {
-    name = new formae.Prop {
-        flag = "name"
-        default = "example.com"
-    }
+properties: Props
+
+class Props {
+    /// Domain name for the hosted zone
+    name: String = "example.com"
 }
 
 forma {
@@ -35,7 +35,7 @@ forma {
     // Create the hosted zone first
     local zone = new hostedzone.HostedZone {
         label = "example-zone"
-        name = properties.name.value
+        name = properties.name
     }
     zone
 
