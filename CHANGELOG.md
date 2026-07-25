@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
+## [0.1.15]
+
+### Changed
+
+- Genuine secret-value fields are now typed `formae.SecretValue` so their values are hashed at rest end-to-end (previously stored in cleartext on the read/actual-state path). Covers `AWS::SecretsManager::Secret` `secretString`; `AWS::RDS::DBInstance` `masterUserPassword`/`tdeCredentialPassword`; `AWS::RDS::DBCluster` `masterUserPassword`; `AWS::EC2::VerifiedAccessTrustProvider`, `AWS::ElasticLoadBalancingV2::Listener` and `AWS::ElasticLoadBalancingV2::ListenerRule` `clientSecret`; `AWS::EC2::VPNConnection` `preSharedKey`; `AWS::IAM::ServerCertificate` `privateKey`; `AWS::IAM::User` login-profile `password`; and `AWS::Lambda::Permission` `eventSourceToken`. Requires a formae agent on the matching release.
+
 ## [0.1.13]
 
 ### Added
