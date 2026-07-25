@@ -140,6 +140,8 @@ github.com/platform-engineering-labs/formae/pkg/model v0.1.25-0.20260528030337-9
 github.com/platform-engineering-labs/formae/pkg/model v0.1.25-0.20260528030337-9ae690b3715c/go.mod h1:1dmsFwoaJZkHevBsAIZr068CWzG7de1VNz7PFWvM3Z8=
 github.com/platform-engineering-labs/formae/pkg/model v0.1.26-0.20260723233823-5d2d78366521 h1:qvg0Hy1CqaE8ZyWK91Sd3YVVjzCIv+kelFnsLE5K+fc=
 github.com/platform-engineering-labs/formae/pkg/model v0.1.26-0.20260723233823-5d2d78366521/go.mod h1:1dmsFwoaJZkHevBsAIZr068CWzG7de1VNz7PFWvM3Z8=
+github.com/platform-engineering-labs/formae/pkg/model v0.1.26 h1:80p843bmz9sLTtUFveMGWYeGcpRjvceyVxUgPvlApqs=
+github.com/platform-engineering-labs/formae/pkg/model v0.1.26/go.mod h1:1dmsFwoaJZkHevBsAIZr068CWzG7de1VNz7PFWvM3Z8=
 github.com/platform-engineering-labs/formae/pkg/plugin v0.4.1 h1:dg8TBQVJR8DVF28bvmzAG4Ms1Id0yIr6Kd8c3UTO3iw=
 github.com/platform-engineering-labs/formae/pkg/plugin v0.4.1/go.mod h1:ZFXMfeZljHVDWQTSeJ4dj2EG3iTjdrxQjm7DpvOYUXk=
 github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.5-0.20260528030337-9ae690b3715c h1:Hm+eUI17d9hgtAMYS7kqfyI7MpgQ8epjBHAeAkJ/AvI=
