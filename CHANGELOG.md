@@ -16,9 +16,31 @@ formae agent.
 
 ## [0.1.15]
 
+### Added
+
+- `AWS::CloudTrail::Trail` support. You can now author and discover CloudTrail trails declaratively. Management and S3 data-event selectors are modelled, including advanced event selectors with `resources.ARN` `StartsWith`; selector lists apply as atomic (wholesale-replace) updates to match `put-event-selectors`, and booleans AWS echoes on read are treated as provider defaults to avoid perpetual drift. Discovery labels a trail by its `TrailName` (trails carry no `Name` tag), and `AWS::S3::BucketPolicy` gains a resolvable so a trail can order after its delivery bucket's policy.
+- `AWS::CodeBuild::ImageBuild` support. You can now build a container image from a supplied Dockerfile via AWS CodeBuild, push it to ECR, and pin a downstream consumer (an ECS task definition, a Kubernetes pod) to exactly the image produced, making an image build a declarative step inside formae instead of an out-of-band `docker build`/`push`. The resource idempotently ensures an internal IAM service role and CodeBuild project (or adopts a supplied `serviceRoleArn`), runs the build, and exposes the pushed image's **immutable digest** as resolvables, `imageRef` assembled as `repo@sha256:…` from the exported digest, alongside `imageDigest` and `imageUri`, so a consumer pins to the digest rather than a mutable tag. `AWS::ECR::Repository` gains a `repositoryUri` resolvable to feed the build's target repository.
+
 ### Changed
 
 - Genuine secret-value fields are now typed `formae.SecretValue` so their values are hashed at rest end-to-end (previously stored in cleartext on the read/actual-state path). Covers `AWS::SecretsManager::Secret` `secretString`; `AWS::RDS::DBInstance` `masterUserPassword`/`tdeCredentialPassword`; `AWS::RDS::DBCluster` `masterUserPassword`; `AWS::EC2::VerifiedAccessTrustProvider`, `AWS::ElasticLoadBalancingV2::Listener` and `AWS::ElasticLoadBalancingV2::ListenerRule` `clientSecret`; `AWS::EC2::VPNConnection` `preSharedKey`; `AWS::IAM::ServerCertificate` `privateKey`; `AWS::IAM::User` login-profile `password`; and `AWS::Lambda::Permission` `eventSourceToken`. Requires a formae agent on the matching release.
+- Requires formae 0.88.0 or newer; `minFormaeVersion` is bumped to 0.88.0 accordingly.
+
+### Fixed
+
+- `AWS::EKS::Cluster` no longer plans a destructive replace on every reconcile. The parent `accessConfig` field was annotated `createOnly`, `writeOnly`, and `hasProviderDefault` at once: `writeOnly` stripped `accessConfig` from the read-back actual state, so an unchanged declared `accessConfig` appeared only in the desired state and emitted a spurious add op, and because the field was also `createOnly` that phantom op flagged the cluster for a roughly fifteen-minute destroy-and-recreate that takes every workload on it down. The annotations now match the CloudControl contract: `accessConfig` keeps only `hasProviderDefault` (AWS auto-populates `authenticationMode`, a mutable in-place field), and the write-once `bootstrapClusterCreatorAdminPermissions` child is `createOnly` alongside its existing `writeOnly`. An unchanged cluster now reconciles as a no-op and an auth-mode change applies in place instead of replacing the cluster.
+- S3 object discovery no longer skips buckets that live in another region. `ListObjectsV2` must be addressed to a bucket's home region; a bucket in a different region than the configured client answered with a `301 PermanentRedirect`, so discovery logged a list error and skipped that bucket's objects. The list path now reads the home region from the redirect's `x-amz-bucket-region` header and retries the request against that region.
+- Network Firewall `LoggingConfiguration` discovery no longer errors every cycle. CloudControl does not support the `LIST` action for `AWS::NetworkFirewall::LoggingConfiguration` (it returns `UnsupportedActionException`), so background discovery hit a 400 on this type each cycle. A logging configuration is a per-firewall singleton, so the plugin now registers a custom `List`, scoped to one firewall via the `FirewallArn` list parameter and reading that firewall's logging configuration, with the `Firewall` declared as the discovery parent.
+
+## [0.1.14]
+
+### Changed
+
+- Requires formae 0.87.1 or newer. This release gates IAM role inline-policy enrichment on the caller's prior model, carried by `ReadRequest.PriorProperties`, which the agent populates from formae 0.87.1. `minFormaeVersion` is bumped to 0.87.1 accordingly.
+
+### Fixed
+
+- An IAM `Role` whose inline policies are managed as standalone `AWS::IAM::RolePolicy` resources no longer has its updates rejected or its sibling-managed policies wiped. The role's read enriched `Properties.Policies` with the role's inline policies whenever the role had any, regardless of how the caller modelled them; for a caller managing them as standalone resources the stored row has no `Policies` key, so the enriched read registered as drift, rejecting every pending update on the role and risking a reconcile that wiped the sibling-managed policies (since `Role.policies` is atomic). Enrichment is now gated on the caller's prior model: policies are embedded only when the prior model is unknown (a create, a status read-back, or discovery) or already declares `Policies`; a known prior that omits `Policies` suppresses the embed. This keeps the no-phantom-drift behaviour for roles that declare inline policies (0.1.13) while unbreaking callers that manage them as standalone resources.
 
 ## [0.1.13]
 
