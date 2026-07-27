@@ -16,9 +16,33 @@ formae agent.
 
 ## [0.1.15]
 
+Requires formae >= 0.88.0.
+
+### Added
+
+- `AWS::CloudTrail::Trail` support. You can now manage CloudTrail trails declaratively, including multi-region trails, log-file validation, and advanced event selectors that scope which management and S3 data events are recorded. Data-event selectors can be narrowed to specific object-key prefixes, so a trail that audits only certain buckets or prefixes stays affordable. Changing a trail's event selectors applies in place.
+- `AWS::CodeBuild::ImageBuild` support. This resource builds a container image from a Dockerfile you supply and pushes it to an ECR repository using AWS CodeBuild, with no separate build pipeline to wire up. The built image is exposed as resolvables, including its immutable digest (`imageBuild.res.imageRef`) and its `repo:tag` URI, so a consumer such as an ECS task definition can reference the exact image that was just built through the resource graph.
+- Lambda `LayerVersion` now exposes a resolvable. A layer version's ARN can be referenced by other resources, for example an `AWS::Lambda::LayerVersionPermission` or a function's `layers` list, through the resource graph instead of a hand-written ARN. Previously there was no way to reference it.
+
 ### Changed
 
-- Genuine secret-value fields are now typed `formae.SecretValue` so their values are hashed at rest end-to-end (previously stored in cleartext on the read/actual-state path). Covers `AWS::SecretsManager::Secret` `secretString`; `AWS::RDS::DBInstance` `masterUserPassword`/`tdeCredentialPassword`; `AWS::RDS::DBCluster` `masterUserPassword`; `AWS::EC2::VerifiedAccessTrustProvider`, `AWS::ElasticLoadBalancingV2::Listener` and `AWS::ElasticLoadBalancingV2::ListenerRule` `clientSecret`; `AWS::EC2::VPNConnection` `preSharedKey`; `AWS::IAM::ServerCertificate` `privateKey`; `AWS::IAM::User` login-profile `password`; and `AWS::Lambda::Permission` `eventSourceToken`. Requires a formae agent on the matching release.
+- Genuine secret-value fields are now typed `formae.SecretValue` so their values are hashed at rest end-to-end (previously stored in cleartext on the read/actual-state path). Covers `AWS::SecretsManager::Secret` `secretString`; `AWS::RDS::DBInstance` `masterUserPassword`/`tdeCredentialPassword`; `AWS::RDS::DBCluster` `masterUserPassword`; `AWS::EC2::VerifiedAccessTrustProvider`, `AWS::ElasticLoadBalancingV2::Listener` and `AWS::ElasticLoadBalancingV2::ListenerRule` `clientSecret`; `AWS::EC2::VPNConnection` `preSharedKey`; `AWS::IAM::ServerCertificate` `privateKey`; `AWS::IAM::User` login-profile `password`; and `AWS::Lambda::Permission` `eventSourceToken`.
+
+### Fixed
+
+- An `AWS::EKS::Cluster` no longer plans a destructive replacement on an unchanged reconcile. Re-applying an unchanged cluster in reconcile mode was triggering a full destroy-and-recreate, a slow replacement that would have destroyed everything running on the cluster. A misannotation on the cluster's access-configuration made every no-op reconcile look like a change to an immutable field; the cluster now reconciles as a no-op, and an in-place authentication-mode change applies as an update rather than a replacement.
+- A `Lambda::Version` no longer shows a phantom update on every reconcile. AWS records a runtime policy and a code hash on each published version even when you didn't set them, so a version that hadn't changed kept re-proposing an update. Those provider-populated values are now absorbed, and an unchanged version reconciles as a no-op.
+- An `AWS::ElasticLoadBalancingV2::ListenerRule` no longer shows a phantom update on every reconcile. AWS returns an expanded forward configuration and a duplicate flat list of a condition's values even when the rule was written with the simpler forms, so the read never matched what was declared. Those provider-populated values are now absorbed.
+- S3 objects in a bucket that lives in a different region than the target are now discovered. Object listing has to be addressed to the bucket's own region, so discovery previously logged an error and skipped every object in an out-of-region bucket. The plugin now follows the region redirect and lists those objects.
+- Network Firewall logging configurations are now discovered instead of logging an error on every discovery cycle. AWS does not support listing this resource type through its control-plane API, so discovery never surfaced a firewall's logging configuration. The plugin now reads each firewall's logging configuration directly, so an existing configuration is picked up as an unmanaged resource.
+
+## [0.1.14]
+
+Requires formae >= 0.87.1.
+
+### Fixed
+
+- An IAM `Role` that manages its inline policies as standalone `AWS::IAM::RolePolicy` resources no longer has those policies pulled into the role's own state. The previous release taught a role to read its inline policies back so that a role declaring them under `policies` reconciles cleanly; that read-back is now limited to roles that actually manage their policies inline, so managing a role's policies as separate `RolePolicy` resources no longer conflicts with the role.
 
 ## [0.1.13]
 
