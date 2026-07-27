@@ -813,19 +813,37 @@ aws efs describe-access-points --region "$REGION" 2>/dev/null | \
 done
 
 # --- Network Firewall (before VPCs/subnets)
-# The networkfirewall conformance fixture creates a Firewall, FirewallPolicy
-# and stateful RuleGroup, all named with `nfw-*` prefixes. They have a strict
-# deletion order — a policy can't be deleted while a firewall references it,
-# and a rule group can't be deleted while a policy references it — and the
-# firewall plants ENIs in the dedicated firewall subnets, so its deletion must
-# complete before the VPC/subnet sweeps below. The fixture's VPC is untagged
-# and its subnets carry only `nfw-*` Name tags (not $FORMAE_PREFIX), so they're
-# reclaimed by the orphan-untagged-VPC sweep — but only once these firewalls
-# are gone and their ENIs released.
+# The networkfirewall conformance fixtures create Firewalls, FirewallPolicies
+# and stateful RuleGroups across four fixture files, each with its own prefix:
+# `nfw-*` (networkfirewall), `nfwp-*` (networkfirewall-firewallpolicy),
+# `nfwlog-*` (networkfirewall-loggingconfiguration) and the rule-group-only
+# fixture's `formae-plugin-sdk-test-rg-*`. They have a strict deletion order —
+# a policy can't be deleted while a firewall references it, and a rule group
+# can't be deleted while a policy references it — and the firewall plants ENIs
+# in the dedicated firewall subnets, so its deletion must complete before the
+# VPC/subnet sweeps below. The fixtures' VPCs are untagged and their subnets
+# carry only `nfw*-*` Name tags (not $FORMAE_PREFIX), so they're reclaimed by
+# the orphan-untagged-VPC sweep — but only once these firewalls are gone and
+# their ENIs released.
+#
+# nfw_is_test: true if a Network Firewall resource name belongs to a test
+# fixture. Matches every fixture prefix (`nfw`, which also covers `nfwp`/
+# `nfwlog`) plus the shared test prefixes. Historically this only matched
+# `nfw-allowlist-*`/`nfw-policy-*`/`nfw-firewall-*`, so the nfwp-/nfwlog-/
+# formae-prefixed resources leaked every run until the account hit the
+# NetworkFirewall service limit (ServiceLimitExceeded on RuleGroup create).
+nfw_is_test() {
+    local name="$1"
+    [[ "$name" == nfw* \
+        || "$name" == *"$FORMAE_PREFIX"* \
+        || "$name" == *"$SDK_PREFIX"* \
+        || "$name" == *"$TEST_PREFIX"* ]]
+}
+
 echo "Cleaning Network Firewall test firewalls..."
 NFW_TEST_FIREWALLS=()
 while IFS= read -r fw_name; do
-    [[ -n "$fw_name" && "$fw_name" == nfw-firewall-* ]] && NFW_TEST_FIREWALLS+=("$fw_name")
+    [[ -n "$fw_name" ]] && nfw_is_test "$fw_name" && NFW_TEST_FIREWALLS+=("$fw_name")
 done < <(aws network-firewall list-firewalls --region "$REGION" --query "Firewalls[].FirewallName" --output text 2>/dev/null | tr '\t' '\n')
 
 for fw_name in "${NFW_TEST_FIREWALLS[@]}"; do
@@ -848,7 +866,7 @@ if [ ${#NFW_TEST_FIREWALLS[@]} -gt 0 ]; then
     while [ $waited -lt 300 ]; do
         remaining=0
         while IFS= read -r fw_name; do
-            [[ -n "$fw_name" && "$fw_name" == nfw-firewall-* ]] && remaining=$((remaining + 1))
+            [[ -n "$fw_name" ]] && nfw_is_test "$fw_name" && remaining=$((remaining + 1))
         done < <(aws network-firewall list-firewalls --region "$REGION" --query "Firewalls[].FirewallName" --output text 2>/dev/null | tr '\t' '\n')
         [ "$remaining" = "0" ] && break
         sleep 10
@@ -861,7 +879,7 @@ fi
 echo "Cleaning Network Firewall test firewall policies..."
 aws network-firewall list-firewall-policies --region "$REGION" \
     --query "FirewallPolicies[].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r pol_name; do
-    if [[ -n "$pol_name" && "$pol_name" == nfw-policy-* ]]; then
+    if [[ -n "$pol_name" ]] && nfw_is_test "$pol_name"; then
         echo "  Deleting Network Firewall firewall policy: $pol_name"
         aws network-firewall delete-firewall-policy --firewall-policy-name "$pol_name" --region "$REGION" 2>/dev/null || true
     fi
@@ -871,22 +889,26 @@ done
 echo "Cleaning Network Firewall test rule groups..."
 aws network-firewall list-rule-groups --region "$REGION" --type STATEFUL \
     --query "RuleGroups[].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r rg_name; do
-    if [[ -n "$rg_name" && "$rg_name" == nfw-allowlist-* ]]; then
+    if [[ -n "$rg_name" ]] && nfw_is_test "$rg_name"; then
         echo "  Deleting Network Firewall rule group: $rg_name"
         aws network-firewall delete-rule-group --rule-group-name "$rg_name" --type STATEFUL --region "$REGION" 2>/dev/null || true
     fi
 done
 
-# Delete the firewall's CloudWatch log group (`/formae/test/nfw-*`). The generic
-# log-group sweep further below only matches $TEST_PREFIX (plugin-sdk-test), so
-# this prefix would otherwise be missed.
+# Delete the firewall's CloudWatch log group. The logging fixture names it
+# `/formae/nfw/plugin-sdk-test-*`; the generic log-group sweep further below
+# matches $TEST_PREFIX (plugin-sdk-test) as a prefix and so misses anything
+# under the `/formae/nfw/` namespace. Sweep both `/formae/nfw/` and the legacy
+# `/formae/test/nfw-` prefix here.
 echo "Cleaning Network Firewall test log groups..."
-aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "/formae/test/nfw-" \
-    --query "logGroups[].logGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r lg; do
-    if [[ -n "$lg" ]]; then
-        echo "  Deleting Network Firewall log group: $lg"
-        aws logs delete-log-group --log-group-name "$lg" --region "$REGION" 2>/dev/null || true
-    fi
+for lg_prefix in "/formae/nfw/" "/formae/test/nfw-"; do
+    aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "$lg_prefix" \
+        --query "logGroups[].logGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r lg; do
+        if [[ -n "$lg" ]]; then
+            echo "  Deleting Network Firewall log group: $lg"
+            aws logs delete-log-group --log-group-name "$lg" --region "$REGION" 2>/dev/null || true
+        fi
+    done
 done
 
 # ============================================================================
