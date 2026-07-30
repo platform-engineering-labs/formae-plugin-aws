@@ -180,8 +180,8 @@ echo "Cleaning S3 test buckets..."
 aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
     if [[ -n "$bucket" ]]; then
         # The CloudTrail log bucket (formae-plugin-sdk-test-ct-logs-*) is a
-        # PERSISTENT prerequisite (Option B / PLA-302) provisioned + emptied in
-        # section 8b-ct below; never delete it here.
+        # PERSISTENT prerequisite provisioned + emptied in section 8b-ct below;
+        # never delete it here.
         if [[ "$bucket" == formae-plugin-sdk-test-ct-logs-* ]]; then
             echo "  Skipping persistent CloudTrail log bucket: $bucket"
             continue
@@ -196,12 +196,11 @@ done
 
 # 8b-ct. Provision + empty the PERSISTENT CloudTrail log-delivery bucket.
 # This bucket is a persistent conformance prerequisite for the cloudtrail-trail
-# fixture (Option B / PLA-302): CloudTrail deposits placeholder/log objects into
-# it, and CloudControl refuses to delete a non-empty bucket, so the fixture
-# references this externally-owned bucket by name instead of managing it. We
-# therefore CREATE it if absent and EMPTY it here, but never DELETE it (unlike
-# section 8b). The self-contained forceDestroy-managed version is tracked in
-# PLA-345. Every step is guarded so it never aborts the cleanup script.
+# fixture: CloudTrail deposits placeholder/log objects into it, and CloudControl
+# refuses to delete a non-empty bucket, so the fixture references this
+# externally-owned bucket by name instead of managing it. We therefore CREATE it
+# if absent and EMPTY it here, but never DELETE it (unlike section 8b). Every
+# step is guarded so it never aborts the cleanup script.
 echo "Provisioning + emptying persistent CloudTrail log bucket..."
 if acct=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && [[ -n "$acct" && "$acct" != "None" ]]; then
     ct_bucket="formae-plugin-sdk-test-ct-logs-${acct}"

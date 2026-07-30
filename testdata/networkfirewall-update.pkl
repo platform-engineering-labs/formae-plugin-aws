@@ -10,7 +10,7 @@
 // mutually exclusive, so the update must REPLACE the list — a per-element
 // remove+add leaves both present and AWS rejects it
 // ("aws:drop_strict / aws:drop_established cannot exist together"). Exercises
-// the updateMethod=Atomic schema hint on the *DefaultActions lists. See PLA-37.
+// the updateMethod=Atomic schema hint on the *DefaultActions lists.
 
 amends "@formae/forma.pkl"
 import "@formae/formae.pkl"
