@@ -42,6 +42,13 @@ open class AnalyticsConfiguration extends formae.SubResource {
     tagFilters: Listing<aws.Tag>?
 }
 
+typealias EncryptionType = "NONE"|"SSE-C"
+
+@aws.SubResourceHint
+open class BlockedEncryptionTypes extends formae.SubResource {
+    encryptionType: Listing<EncryptionType>?
+}
+
 @aws.SubResourceHint
 open class BucketEncryption extends formae.SubResource {
     serverSideEncryptionConfiguration: Listing<ServerSideEncryptionRule>
@@ -477,6 +484,8 @@ open class ServerSideEncryptionByDefault extends formae.SubResource {
 
 @aws.SubResourceHint
 open class ServerSideEncryptionRule extends formae.SubResource {
+    blockedEncryptionTypes: BlockedEncryptionTypes?
+
     bucketKeyEnabled: Boolean?
 
     serverSideEncryptionByDefault: ServerSideEncryptionByDefault?
