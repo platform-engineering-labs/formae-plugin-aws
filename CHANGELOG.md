@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
+## [Unreleased]
+
+### Added
+
+- S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
+  `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
+  buckets that block SSE-C round-trip through extract and reconcile instead of
+  having the setting stripped on bring-under-management.
+
 ## [0.1.16]
 
 ### Changed
