@@ -49,9 +49,6 @@ const (
 // Non-default shapes (CODE_DEPLOY / EXTERNAL controllers, DAEMON scheduling,
 // classic-ELB attachments) fall through to generic CCAPI Status via the shape
 // gate in Create/Update.
-//
-// Design: ~/dev/personal/engineering-notes/formae-plugin-aws/design/2026-05-18-ecs-service-stability-tracking.md
-// Bug:    ~/dev/personal/engineering-notes/formae-plugin-aws/2026-05-17-ecs-service-create-should-report-inprogress-until-deployment-stable.md
 type Service struct {
 	cfg                *config.Config
 	ccxClientFactory   func(*config.Config) (ccxClient, error)
