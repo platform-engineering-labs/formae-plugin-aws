@@ -50,7 +50,9 @@ func (m *mockSMClient) GetSecretValue(ctx context.Context, input *secretsmanager
 
 func TestSecret_Read_AlwaysEnrichesSecretValue(t *testing.T) {
 	// Read unconditionally enriches: the secret value is always fetched and
-	// merged into the result properties.
+	// merged into the result properties regardless of the RedactSensitive flag.
+	// Setting RedactSensitive=true proves the plugin no longer short-circuits on
+	// that flag (the whole point of this branch's removal).
 	ctx := context.Background()
 	ccxMock := &mockCCXReader{}
 	smMock := &mockSMClient{}
@@ -68,9 +70,12 @@ func TestSecret_Read_AlwaysEnrichesSecretValue(t *testing.T) {
 	}, nil)
 
 	s := &Secret{cfg: &config.Config{}}
+	// RedactSensitive=true is the flag the old code used to skip enrichment.
+	// With the flag removed, enrichment must still fire.
 	result, err := s.readWithClients(ctx, ccxMock, smMock, &resource.ReadRequest{
-		NativeID:     "my-secret-id",
-		ResourceType: "AWS::SecretsManager::Secret",
+		NativeID:        "my-secret-id",
+		ResourceType:    "AWS::SecretsManager::Secret",
+		RedactSensitive: true,
 	})
 
 	require.NoError(t, err)
@@ -79,6 +84,45 @@ func TestSecret_Read_AlwaysEnrichesSecretValue(t *testing.T) {
 	var props map[string]any
 	require.NoError(t, json.Unmarshal([]byte(result.Properties), &props))
 	assert.Equal(t, secretVal, props["SecretString"], "SecretString must be present in result")
+
+	ccxMock.AssertExpectations(t)
+	smMock.AssertExpectations(t)
+}
+
+func TestSecret_Read_SecretBinaryNotEnriched(t *testing.T) {
+	// SecretBinary is intentionally excluded from enrichment: the agent's
+	// opaque-hashing table only covers SecretString for this resource type.
+	// Returning raw binary data would persist it as base64 plaintext at rest.
+	// This test asserts the absence of SecretBinary in the result properties
+	// when the AWS API returns a binary secret.
+	ctx := context.Background()
+	ccxMock := &mockCCXReader{}
+	smMock := &mockSMClient{}
+
+	ccxMock.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::SecretsManager::Secret",
+		Properties:   `{"Name":"binary-secret"}`,
+	}, nil)
+
+	smMock.On("GetSecretValue", ctx, mock.Anything).Return(&secretsmanager.GetSecretValueOutput{
+		SecretBinary: []byte("binary-payload"),
+	}, nil)
+
+	s := &Secret{cfg: &config.Config{}}
+	result, err := s.readWithClients(ctx, ccxMock, smMock, &resource.ReadRequest{
+		NativeID:     "binary-secret-id",
+		ResourceType: "AWS::SecretsManager::Secret",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var props map[string]any
+	require.NoError(t, json.Unmarshal([]byte(result.Properties), &props))
+	_, hasSecretBinary := props["SecretBinary"]
+	assert.False(t, hasSecretBinary, "SecretBinary must not be present in result (no opaque coverage in agent)")
+	_, hasSecretString := props["SecretString"]
+	assert.False(t, hasSecretString, "SecretString must not be present when the secret has no string value")
 
 	ccxMock.AssertExpectations(t)
 	smMock.AssertExpectations(t)

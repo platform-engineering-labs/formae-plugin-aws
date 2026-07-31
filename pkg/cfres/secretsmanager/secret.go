@@ -98,9 +98,12 @@ func (s *Secret) readWithClients(ctx context.Context, ccxClient ccxReader, smCli
 	if secret.SecretString != nil {
 		props["SecretString"] = *secret.SecretString
 	}
-	if secret.SecretBinary != nil {
-		props["SecretBinary"] = secret.SecretBinary
-	}
+	// SecretBinary is intentionally not enriched here. The agent's opaque-hashing
+	// table (persist_value_transformer.knownOpaqueFields) only covers SecretString
+	// for this resource type; returning SecretBinary as a plain []byte would store
+	// the raw binary secret as base64 plaintext at rest with no hashing. Binary
+	// secrets remain unresolvable via formae until the agent core and this plugin's
+	// schema are updated in concert to add SecretBinary opaque coverage.
 
 	completeProps, err := json.Marshal(props)
 	if err != nil {
