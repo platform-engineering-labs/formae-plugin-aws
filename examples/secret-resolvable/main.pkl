@@ -115,7 +115,7 @@ forma {
         engine = "postgres"
         engineVersion = "13"
         masterUsername = "testuser"
-        masterUserPassword = dbSecret.res.secretString
+        masterUserPassword = dbSecret.res.secretValue
         dbSubnetGroupName = dbSubnetGroup.res.dbSubnetGroupName
         vpcSecurityGroups { dbSecurityGroup.res.groupId }
         storageEncrypted = true
