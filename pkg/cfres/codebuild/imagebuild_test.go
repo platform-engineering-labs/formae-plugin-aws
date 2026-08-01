@@ -409,12 +409,35 @@ func TestReadFoundAndNotFound(t *testing.T) {
 
 func updateProps(t *testing.T, in imageBuildInput) json.RawMessage {
 	t.Helper()
-	js, err := json.Marshal(map[string]any{
+	props := map[string]any{
 		"EcrRepositoryUri": in.EcrRepositoryURI,
 		"ImageTag":         in.ImageTag,
 		"Dockerfile":       in.Dockerfile,
 		"ProjectName":      in.ProjectName,
-	})
+	}
+	if len(in.BuildArgs) > 0 {
+		props["BuildArgs"] = in.BuildArgs
+	}
+	js, err := json.Marshal(props)
+	require.NoError(t, err)
+	return js
+}
+
+// priorProps renders a resource row the way Update receives it: the inputs the last
+// apply declared, merged with the outputs it recorded.
+func priorProps(t *testing.T, in imageBuildInput, out imageBuildOutputs) json.RawMessage {
+	t.Helper()
+	merged := map[string]any{}
+	for _, part := range []any{in, out} {
+		js, err := json.Marshal(part)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(js, &m))
+		for k, v := range m {
+			merged[k] = v
+		}
+	}
+	js, err := json.Marshal(merged)
 	require.NoError(t, err)
 	return js
 }
@@ -467,7 +490,9 @@ func TestUpdateAdoptsLegacyHashWithoutRebuilding(t *testing.T) {
 
 	desired := validInput()
 	project := validProject()
-	priorJSON, _ := json.Marshal(imageBuildOutputs{
+	// The row records the same inputs as the desired state: nothing about this
+	// resource's own declaration changed, only the hash scheme did.
+	priorJSON := priorProps(t, desired, imageBuildOutputs{
 		BuildConfigHash: legacyBuildConfigHash,
 		ImageDigest:     "sha256:cafe",
 		ImageRef:        desired.EcrRepositoryURI + "@sha256:cafe",
@@ -507,7 +532,7 @@ func TestUpdateRebuildsWhenLegacyHashDigestNoLongerResolves(t *testing.T) {
 	p := newTestProvisioner(cb, ecr)
 
 	desired := validInput()
-	priorJSON, _ := json.Marshal(imageBuildOutputs{
+	priorJSON := priorProps(t, desired, imageBuildOutputs{
 		BuildConfigHash: legacyBuildConfigHash,
 		ImageDigest:     "sha256:gone",
 	})
@@ -527,6 +552,133 @@ func TestUpdateRebuildsWhenLegacyHashDigestNoLongerResolves(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
 	cb.AssertCalled(t, "StartBuild", mock.Anything, mock.Anything)
+}
+
+// TestUpdateRebuildsWhenLegacyHashAndInputsChanged asserts adoption never swallows a
+// real change to this resource's own declaration. The upgrade that introduced the
+// current hash scheme also forces a forma edit, so an operator can easily change the
+// Dockerfile or a build arg in the same edit that migrates the resource; adopting
+// there would persist a hash claiming the new inputs were built and leave the
+// declared Dockerfile and the deployed image permanently diverged.
+func TestUpdateRebuildsWhenLegacyHashAndInputsChanged(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*imageBuildInput)
+	}{
+		{"dockerfile", func(in *imageBuildInput) {
+			in.Dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.21\nRUN true\n"
+		}},
+		{"buildArgs-value", func(in *imageBuildInput) { in.BuildArgs = map[string]string{"VERSION": "2.0.0"} }},
+		{"buildArgs-added", func(in *imageBuildInput) {
+			in.BuildArgs = map[string]string{"VERSION": "1.0.0", "EXTRA": "x"}
+		}},
+		{"buildArgs-removed", func(in *imageBuildInput) { in.BuildArgs = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cb := &mockCodeBuildClient{}
+			ecr := &mockECRClient{}
+			p := newTestProvisioner(cb, ecr)
+
+			recorded := validInput()
+			recorded.BuildArgs = map[string]string{"VERSION": "1.0.0"}
+			desired := recorded
+			tc.mutate(&desired)
+
+			priorJSON := priorProps(t, recorded, imageBuildOutputs{
+				BuildConfigHash: legacyBuildConfigHash,
+				ImageDigest:     "sha256:cafe",
+			})
+
+			expectProjectLookup(cb, validProject())
+			// Everything about ECR says the recorded image is still there, so the
+			// changed input is the only thing that can force the rebuild.
+			ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+				ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+			}, nil)
+			cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+				Build: &codebuildtypes.Build{Id: aws.String("proj:build-6"), TimeoutInMinutes: aws.Int32(30)},
+			}, nil)
+
+			res, err := p.Update(context.Background(), &resource.UpdateRequest{
+				NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+				PriorProperties:   priorJSON,
+				DesiredProperties: updateProps(t, desired),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+			cb.AssertNumberOfCalls(t, "StartBuild", 1)
+			// A changed input decides the rebuild on its own; the recorded image being
+			// intact does not enter into it.
+			ecr.AssertNotCalled(t, "DescribeImages", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// TestUpdateRebuildsWhenLegacyHashAndBuildArgsRestructured asserts the prior/desired
+// input comparison is exact rather than a comparison of rendered text: a build-arg
+// value containing a newline must not be able to render identically to a genuinely
+// different set of args and so pass as unchanged.
+func TestUpdateRebuildsWhenLegacyHashAndBuildArgsRestructured(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	recorded := validInput()
+	recorded.BuildArgs = map[string]string{"A": "1\nB=2"}
+	desired := validInput()
+	desired.BuildArgs = map[string]string{"A": "1", "B": "2"}
+
+	priorJSON := priorProps(t, recorded, imageBuildOutputs{
+		BuildConfigHash: legacyBuildConfigHash,
+		ImageDigest:     "sha256:cafe",
+	})
+
+	expectProjectLookup(cb, validProject())
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil)
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-7"), TimeoutInMinutes: aws.Int32(30)},
+	}, nil)
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+		PriorProperties:   priorJSON,
+		DesiredProperties: updateProps(t, desired),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	cb.AssertNumberOfCalls(t, "StartBuild", 1)
+}
+
+// TestUpdateAdoptsLegacyHashWhenPriorRecordedNoInputs asserts a row that carries no
+// recorded Dockerfile still migrates. Its inputs cannot be compared, so requiring a
+// match would strand it on a rebuild that re-pushes an existing tag.
+func TestUpdateAdoptsLegacyHashWhenPriorRecordedNoInputs(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	desired := validInput()
+	priorJSON, err := json.Marshal(imageBuildOutputs{
+		BuildConfigHash: legacyBuildConfigHash,
+		ImageDigest:     "sha256:cafe",
+	})
+	require.NoError(t, err)
+
+	expectProjectLookup(cb, validProject())
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil)
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+		PriorProperties:   priorJSON,
+		DesiredProperties: updateProps(t, desired),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
 }
 
 // TestUpdateRebuildsWhenProjectFingerprintChanges asserts a mutation of the

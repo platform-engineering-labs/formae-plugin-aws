@@ -8,6 +8,7 @@ package codebuild
 
 import (
 	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -164,21 +165,100 @@ func TestBuildConfigHashBodyIsCanonical(t *testing.T) {
 		{Name: aws.String("ZONE"), Value: aws.String("b"), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 		{Name: aws.String("AREA"), Value: aws.String("a"), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 	}
-	project.Cache = &codebuildtypes.ProjectCache{Type: codebuildtypes.CacheTypeLocal}
+	project.Cache = &codebuildtypes.ProjectCache{
+		Type: codebuildtypes.CacheTypeLocal,
+		Modes: []codebuildtypes.CacheMode{
+			codebuildtypes.CacheModeLocalSourceCache,
+			codebuildtypes.CacheModeLocalDockerLayerCache,
+		},
+	}
 
-	want := "v=" + generatorVersion + "\n" +
-		"dockerfile=" + in.Dockerfile + "\n" +
-		"arg=ALPHA=2\n" +
-		"arg=ZED=1\n" +
-		"project=" + testBuildProject + "\n" +
-		"project.environmentType=LINUX_CONTAINER\n" +
-		"project.computeType=BUILD_GENERAL1_SMALL\n" +
-		"project.image=aws/codebuild/standard:7.0\n" +
+	// Every value is quoted, so a value containing a newline or an '=' cannot render
+	// as extra lines and make two different configurations hash alike.
+	want := "v=\"" + generatorVersion + "\"\n" +
+		"dockerfile=" + strconv.Quote(in.Dockerfile) + "\n" +
+		"arg=\"ALPHA\"=\"2\"\n" +
+		"arg=\"ZED\"=\"1\"\n" +
+		"project=\"" + testBuildProject + "\"\n" +
+		"project.environmentType=\"LINUX_CONTAINER\"\n" +
+		"project.computeType=\"BUILD_GENERAL1_SMALL\"\n" +
+		"project.image=\"aws/codebuild/standard:7.0\"\n" +
 		"project.privilegedMode=true\n" +
-		"project.environmentVariable=AREA=PLAINTEXT=a\n" +
-		"project.environmentVariable=ZONE=PLAINTEXT=b\n" +
-		"project.cacheType=LOCAL\n"
+		"project.environmentVariable=\"AREA\"=\"PLAINTEXT\"=\"a\"\n" +
+		"project.environmentVariable=\"ZONE\"=\"PLAINTEXT\"=\"b\"\n" +
+		"project.cacheType=\"LOCAL\"\n" +
+		"project.cacheMode=\"LOCAL_DOCKER_LAYER_CACHE\"\n" +
+		"project.cacheMode=\"LOCAL_SOURCE_CACHE\"\n" +
+		"project.cacheLocation=\"\"\n"
 	assert.Equal(t, want, buildConfigHashBody(in, &project))
+}
+
+// TestBuildConfigHashEscapesValues asserts values are escaped rather than
+// concatenated raw: a build-arg value containing a newline must not be able to
+// render as an additional line and collide with a genuinely different set of args.
+func TestBuildConfigHashEscapesValues(t *testing.T) {
+	project := validProject()
+
+	forged := validInput()
+	forged.BuildArgs = map[string]string{"A": "1\narg=B=2"}
+	genuine := validInput()
+	genuine.BuildArgs = map[string]string{"A": "1", "B": "2"}
+	assert.NotEqual(t, computeBuildConfigHash(forged, &project), computeBuildConfigHash(genuine, &project))
+
+	// The same for a project environment variable, whose value the plugin does not
+	// author at all.
+	a := validProject()
+	a.Environment.EnvironmentVariables = []codebuildtypes.EnvironmentVariable{
+		{Name: aws.String("A"), Value: aws.String("1\nproject.environmentVariable=\"B\"=\"PLAINTEXT\"=\"2\""), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
+	}
+	b := validProject()
+	b.Environment.EnvironmentVariables = []codebuildtypes.EnvironmentVariable{
+		{Name: aws.String("A"), Value: aws.String("1"), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
+		{Name: aws.String("B"), Value: aws.String("2"), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
+	}
+	assert.NotEqual(t, computeBuildConfigHash(validInput(), &a), computeBuildConfigHash(validInput(), &b))
+}
+
+// TestBuildConfigHashSensitiveToCacheModesAndLocation asserts the cache fingerprint
+// covers more than the cache type. Docker layer caching is what lets a build reuse
+// previously built layers, and it is selected by the cache mode with the type
+// unchanged at LOCAL — so a mode flip has to invalidate the built image.
+func TestBuildConfigHashSensitiveToCacheModesAndLocation(t *testing.T) {
+	sourceCache := validProject()
+	sourceCache.Cache = &codebuildtypes.ProjectCache{
+		Type:  codebuildtypes.CacheTypeLocal,
+		Modes: []codebuildtypes.CacheMode{codebuildtypes.CacheModeLocalSourceCache},
+	}
+	layerCache := validProject()
+	layerCache.Cache = &codebuildtypes.ProjectCache{
+		Type:  codebuildtypes.CacheTypeLocal,
+		Modes: []codebuildtypes.CacheMode{codebuildtypes.CacheModeLocalDockerLayerCache},
+	}
+	assert.NotEqual(t,
+		computeBuildConfigHash(validInput(), &sourceCache),
+		computeBuildConfigHash(validInput(), &layerCache))
+
+	// Mode ordering is not significant.
+	both := []codebuildtypes.CacheMode{codebuildtypes.CacheModeLocalSourceCache, codebuildtypes.CacheModeLocalDockerLayerCache}
+	forward := validProject()
+	forward.Cache = &codebuildtypes.ProjectCache{Type: codebuildtypes.CacheTypeLocal, Modes: both}
+	reversed := validProject()
+	reversed.Cache = &codebuildtypes.ProjectCache{
+		Type:  codebuildtypes.CacheTypeLocal,
+		Modes: []codebuildtypes.CacheMode{both[1], both[0]},
+	}
+	assert.Equal(t,
+		computeBuildConfigHash(validInput(), &forward),
+		computeBuildConfigHash(validInput(), &reversed))
+
+	// An S3 cache reads and writes a specific bucket/prefix, so the location counts.
+	here := validProject()
+	here.Cache = &codebuildtypes.ProjectCache{Type: codebuildtypes.CacheTypeS3, Location: aws.String("bucket/a")}
+	there := validProject()
+	there.Cache = &codebuildtypes.ProjectCache{Type: codebuildtypes.CacheTypeS3, Location: aws.String("bucket/b")}
+	assert.NotEqual(t,
+		computeBuildConfigHash(validInput(), &here),
+		computeBuildConfigHash(validInput(), &there))
 }
 
 // TestBuildConfigHashSensitiveToProjectFingerprint asserts every fingerprint

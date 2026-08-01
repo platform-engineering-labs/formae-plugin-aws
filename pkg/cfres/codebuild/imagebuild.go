@@ -491,9 +491,13 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 	if err := json.Unmarshal(request.DesiredProperties, &desired); err != nil {
 		return nil, fmt.Errorf("ImageBuild: invalid DesiredProperties: %w", err)
 	}
+	// The prior row carries both the outputs the last build recorded and the inputs
+	// it was built from; the adoption path below needs the inputs as well.
 	var prior imageBuildOutputs
+	var priorInputs imageBuildInput
 	if len(request.PriorProperties) > 0 {
 		_ = json.Unmarshal(request.PriorProperties, &prior)
+		_ = json.Unmarshal(request.PriorProperties, &priorInputs)
 	}
 
 	if err := validateInput(desired); err != nil {
@@ -512,8 +516,12 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 	// inputs, so it can never match. Adopt it instead of rebuilding: the recorded
 	// image still being under the declared tag is what the comparison is really
 	// asking, and a rebuild would re-push an existing tag, which an immutable
-	// repository rejects. Genuine input changes after the adoption rebuild as normal.
-	adoptLegacy := isLegacyBuildConfigHash(prior.BuildConfigHash)
+	// repository rejects. Adoption is confined to that migration — it requires this
+	// resource's own inputs to be unchanged, so a Dockerfile edit made in the same
+	// apply is built rather than silently recorded as already built. Input changes
+	// after the adoption rebuild as normal.
+	adoptLegacy := isLegacyBuildConfigHash(prior.BuildConfigHash) &&
+		priorInputsUnchanged(priorInputs, desired)
 
 	// Rebuild only when the build-affecting inputs changed, or the declared tag no
 	// longer resolves to the recorded digest in ECR (missing, or moved out of band).
@@ -523,6 +531,13 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 			return nil, err
 		}
 		if matches {
+			if adoptLegacy {
+				// A skipped build the operator may have expected to run is worth
+				// saying out loud, since the reason is a hash-scheme change rather
+				// than anything in their forma.
+				plugin.LoggerFromContext(ctx).Info("ImageBuild: adopting build-config hash recorded under an earlier scheme; the pushed image is unchanged, so no build is run",
+					"imageUri", imageURI(ref.URI, desired.ImageTag), "imageDigest", prior.ImageDigest)
+			}
 			outputs := prior
 			outputs.ImageTag = desired.ImageTag
 			// Persist the current hash, so an adopted legacy hash is compared like

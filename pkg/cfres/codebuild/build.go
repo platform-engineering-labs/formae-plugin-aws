@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -220,19 +221,22 @@ func computeBuildConfigHash(in imageBuildInput, project *codebuildtypes.Project)
 }
 
 // buildConfigHashBody renders the canonical, hashed representation of everything
-// that determines the image a build produces. Map-valued inputs are emitted in a
-// canonical order so an identical configuration always renders identically.
+// that determines the image a build produces. Map- and list-valued inputs are
+// emitted in a canonical order, and every value is quoted, so an identical
+// configuration always renders identically and two different configurations never
+// render alike — a Dockerfile or a build-arg value containing a newline would
+// otherwise render as extra lines of the body.
 func buildConfigHashBody(in imageBuildInput, project *codebuildtypes.Project) string {
 	var b strings.Builder
-	b.WriteString("v=" + generatorVersion + "\n")
-	b.WriteString("dockerfile=" + in.Dockerfile + "\n")
+	b.WriteString("v=" + strconv.Quote(generatorVersion) + "\n")
+	b.WriteString("dockerfile=" + strconv.Quote(in.Dockerfile) + "\n")
 	keys := make([]string, 0, len(in.BuildArgs))
 	for k := range in.BuildArgs {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		b.WriteString("arg=" + k + "=" + in.BuildArgs[k] + "\n")
+		b.WriteString("arg=" + strconv.Quote(k) + "=" + strconv.Quote(in.BuildArgs[k]) + "\n")
 	}
 	b.WriteString(projectFingerprint(project))
 	return b.String()
@@ -248,13 +252,15 @@ func buildConfigHashBody(in imageBuildInput, project *codebuildtypes.Project) st
 // left out, so churn on them does not force a rebuild.
 func projectFingerprint(project *codebuildtypes.Project) string {
 	var (
-		name        string
-		envType     codebuildtypes.EnvironmentType
-		computeType codebuildtypes.ComputeType
-		image       string
-		privileged  bool
-		envVars     []codebuildtypes.EnvironmentVariable
-		cacheType   codebuildtypes.CacheType
+		name          string
+		envType       codebuildtypes.EnvironmentType
+		computeType   codebuildtypes.ComputeType
+		image         string
+		privileged    bool
+		envVars       []codebuildtypes.EnvironmentVariable
+		cacheType     codebuildtypes.CacheType
+		cacheModes    []codebuildtypes.CacheMode
+		cacheLocation string
 	)
 	if project != nil {
 		name = aws.ToString(project.Name)
@@ -265,8 +271,10 @@ func projectFingerprint(project *codebuildtypes.Project) string {
 			privileged = aws.ToBool(env.PrivilegedMode)
 			envVars = env.EnvironmentVariables
 		}
-		if project.Cache != nil {
-			cacheType = project.Cache.Type
+		if cache := project.Cache; cache != nil {
+			cacheType = cache.Type
+			cacheModes = cache.Modes
+			cacheLocation = aws.ToString(cache.Location)
 		}
 	}
 
@@ -276,20 +284,37 @@ func projectFingerprint(project *codebuildtypes.Project) string {
 	// is a different build input than a plaintext literal.
 	varLines := make([]string, 0, len(envVars))
 	for _, v := range envVars {
-		varLines = append(varLines, "project.environmentVariable="+aws.ToString(v.Name)+"="+string(v.Type)+"="+aws.ToString(v.Value)+"\n")
+		varLines = append(varLines, "project.environmentVariable="+
+			strconv.Quote(aws.ToString(v.Name))+"="+
+			strconv.Quote(string(v.Type))+"="+
+			strconv.Quote(aws.ToString(v.Value))+"\n")
 	}
 	sort.Strings(varLines)
 
+	// The cache mode is what selects Docker layer caching — the thing that lets a
+	// build reuse previously built layers — and it changes with the cache type left
+	// at LOCAL, so the type alone would not see it. The location is the bucket and
+	// prefix an S3 cache reads and writes.
+	modeLines := make([]string, 0, len(cacheModes))
+	for _, m := range cacheModes {
+		modeLines = append(modeLines, "project.cacheMode="+strconv.Quote(string(m))+"\n")
+	}
+	sort.Strings(modeLines)
+
 	var b strings.Builder
-	b.WriteString("project=" + name + "\n")
-	b.WriteString("project.environmentType=" + string(envType) + "\n")
-	b.WriteString("project.computeType=" + string(computeType) + "\n")
-	b.WriteString("project.image=" + image + "\n")
+	b.WriteString("project=" + strconv.Quote(name) + "\n")
+	b.WriteString("project.environmentType=" + strconv.Quote(string(envType)) + "\n")
+	b.WriteString("project.computeType=" + strconv.Quote(string(computeType)) + "\n")
+	b.WriteString("project.image=" + strconv.Quote(image) + "\n")
 	b.WriteString("project.privilegedMode=" + strconv.FormatBool(privileged) + "\n")
 	for _, l := range varLines {
 		b.WriteString(l)
 	}
-	b.WriteString("project.cacheType=" + string(cacheType) + "\n")
+	b.WriteString("project.cacheType=" + strconv.Quote(string(cacheType)) + "\n")
+	for _, l := range modeLines {
+		b.WriteString(l)
+	}
+	b.WriteString("project.cacheLocation=" + strconv.Quote(cacheLocation) + "\n")
 	return b.String()
 }
 
@@ -297,8 +322,35 @@ func projectFingerprint(project *codebuildtypes.Project) string {
 // prefix. Such a hash was taken over a different set of inputs, so it can neither
 // match nor be meaningfully compared against a current one — it only says that
 // some earlier build produced the recorded image.
+//
+// This recognizes exactly the one format that came before the prefix. A future
+// scheme bump wants the general form of the same rule — adopt a prior hash under
+// any scheme other than the current one, not just a bare-hex one — otherwise that
+// bump reopens the same forced re-push of an already pushed tag this predicate
+// exists to prevent.
 func isLegacyBuildConfigHash(hash string) bool {
 	return legacyBuildConfigHashPattern.MatchString(hash)
+}
+
+// priorInputsUnchanged reports whether this resource's own build-affecting inputs
+// are unchanged since the recorded build, which is the condition under which a
+// hash from an older scheme may be adopted rather than rebuilt. Adoption also
+// writes the current hash back, so adopting across a changed Dockerfile or build
+// arg would record that the new inputs had been built and leave the declared
+// Dockerfile and the deployed image permanently diverged — the following apply
+// would compare equal and never build the change.
+//
+// A row that recorded no Dockerfile at all cannot be compared, and is treated as
+// unchanged so it can still migrate: the alternative is a rebuild that re-pushes an
+// existing tag, which an immutable repository rejects outright.
+func priorInputsUnchanged(prior, desired imageBuildInput) bool {
+	if prior.Dockerfile == "" {
+		return true
+	}
+	// Compared as maps rather than as their rendered form, so a value containing a
+	// newline cannot render like a different set of args and pass as unchanged.
+	return prior.Dockerfile == desired.Dockerfile &&
+		maps.Equal(prior.BuildArgs, desired.BuildArgs)
 }
 
 // imageURI returns the mutable registry/repo:tag reference.
