@@ -25,15 +25,19 @@ import "../aws.pkl"
 
 const type = "AWS::CodeBuild::Project"
 
+// These mirror the CodeBuild API's own enumerations. The CloudFormation schema
+// declares no enum on the corresponding properties, so verify-schema cannot
+// catch a missing member — an omitted value just makes a valid configuration
+// undeclarable. Reconcile against the API enumerations when adding one.
 typealias SourceType = "BITBUCKET"|"CODECOMMIT"|"CODEPIPELINE"|"GITHUB"|"GITHUB_ENTERPRISE"|"GITLAB"|"GITLAB_SELF_MANAGED"|"NO_SOURCE"|"S3"
 
 typealias ArtifactsType = "CODEPIPELINE"|"NO_ARTIFACTS"|"S3"
 
 typealias ArtifactsPackaging = "NONE"|"ZIP"
 
-typealias EnvironmentType = "ARM_CONTAINER"|"ARM_LAMBDA_CONTAINER"|"LINUX_CONTAINER"|"LINUX_GPU_CONTAINER"|"LINUX_LAMBDA_CONTAINER"|"MAC_ARM"|"WINDOWS_SERVER_2019_CONTAINER"|"WINDOWS_SERVER_2022_CONTAINER"
+typealias EnvironmentType = "ARM_CONTAINER"|"ARM_EC2"|"ARM_LAMBDA_CONTAINER"|"LINUX_CONTAINER"|"LINUX_EC2"|"LINUX_GPU_CONTAINER"|"LINUX_LAMBDA_CONTAINER"|"MAC_ARM"|"WINDOWS_CONTAINER"|"WINDOWS_EC2"|"WINDOWS_SERVER_2019_CONTAINER"|"WINDOWS_SERVER_2022_CONTAINER"
 
-typealias ComputeType = "ATTRIBUTE_BASED_COMPUTE"|"BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"|"BUILD_GENERAL1_XLARGE"|"BUILD_GENERAL1_2XLARGE"|"BUILD_LAMBDA_1GB"|"BUILD_LAMBDA_2GB"|"BUILD_LAMBDA_4GB"|"BUILD_LAMBDA_8GB"|"BUILD_LAMBDA_10GB"
+typealias ComputeType = "ATTRIBUTE_BASED_COMPUTE"|"BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"|"BUILD_GENERAL1_XLARGE"|"BUILD_GENERAL1_2XLARGE"|"BUILD_LAMBDA_1GB"|"BUILD_LAMBDA_2GB"|"BUILD_LAMBDA_4GB"|"BUILD_LAMBDA_8GB"|"BUILD_LAMBDA_10GB"|"CUSTOM_INSTANCE_TYPE"
 
 typealias ImagePullCredentialsType = "CODEBUILD"|"SERVICE_ROLE"
 
@@ -67,7 +71,8 @@ open class Artifacts extends formae.SubResource {
 
     name: String?
 
-    // CodeBuild returns Packaging = "NONE" on a project created without it.
+    // CodeBuild documents "NONE" as the default packaging; confirm against a
+    // conformance run.
     @aws.FieldHint { hasProviderDefault = true }
     packaging: ArtifactsPackaging?
 }
@@ -97,8 +102,8 @@ open class Environment extends formae.SubResource {
     /// Required for a build that runs Docker itself (docker-in-docker).
     privilegedMode: Boolean?
 
-    // CodeBuild returns ImagePullCredentialsType = "CODEBUILD" on a project
-    // created without it.
+    // CodeBuild documents "CODEBUILD" as the default; confirm against a
+    // conformance run.
     @aws.FieldHint { hasProviderDefault = true }
     imagePullCredentialsType: ImagePullCredentialsType?
 
@@ -131,11 +136,17 @@ open class CloudWatchLogs extends formae.SubResource {
 /// S3 destination for build logs.
 @aws.SubResourceHint
 open class S3Logs extends formae.SubResource {
+    // Populated as "DISABLED" when the caller declared no S3 log destination at
+    // all; confirm against a conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
     status: LogsStatus
 
     /// `<bucket-name>/<path-prefix>`.
     location: (String|formae.Resolvable)?
 
+    // Populated as false alongside a defaulted status; confirm against a
+    // conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
     encryptionDisabled: Boolean?
 }
 
@@ -144,6 +155,10 @@ open class S3Logs extends formae.SubResource {
 open class LogsConfig extends formae.SubResource {
     cloudWatchLogs: CloudWatchLogs?
 
+    // A read of a project is expected to return both log destinations, filling
+    // in a disabled S3 destination even when only CloudWatch logs were
+    // declared; confirm against a conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
     s3Logs: S3Logs?
 }
 
@@ -187,20 +202,22 @@ open class Project extends formae.Resource {
     @aws.FieldHint
     environment: Environment
 
-    // CodeBuild returns Cache = {Type = "NO_CACHE"} on a project created
-    // without it.
+    // CodeBuild documents "NO_CACHE" as the default cache type, and a read of a
+    // project created without a cache is expected to come back as
+    // {Type = "NO_CACHE"}; confirm against a conformance run.
     @aws.FieldHint { hasProviderDefault = true }
     cache: Cache?
 
     @aws.FieldHint
     logsConfig: LogsConfig?
 
-    // CodeBuild returns TimeoutInMinutes = 60 on a project created without it.
+    // CodeBuild documents 60 as the default build timeout; confirm against a
+    // conformance run.
     @aws.FieldHint { hasProviderDefault = true }
     timeoutInMinutes: Int?
 
-    // CodeBuild returns QueuedTimeoutInMinutes = 480 on a project created
-    // without it.
+    // CodeBuild documents 480 as the default queued timeout; confirm against a
+    // conformance run.
     @aws.FieldHint { hasProviderDefault = true }
     queuedTimeoutInMinutes: Int?
 
