@@ -9,6 +9,7 @@ package codebuild
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -190,6 +191,9 @@ func TestCreateRejectsCrossRegionRepository(t *testing.T) {
 	_, err := p.Create(context.Background(), &resource.CreateRequest{Properties: props})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must match the target region")
+	// The check exists to run before anything is called, so the project is not even
+	// looked up.
+	cb.AssertNotCalled(t, "BatchGetProjects", mock.Anything, mock.Anything)
 	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
 }
 
@@ -257,14 +261,17 @@ func TestCreateRejectsNonLinuxContainerProject(t *testing.T) {
 // collects the result from the pushed image, not from an artifact.
 func TestCreateRejectsProjectWithSourceOrArtifacts(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		mutate  func(*codebuildtypes.Project)
-		message string
+		name   string
+		mutate func(*codebuildtypes.Project)
+		// required is the type the message must name as required, got the offending
+		// value it must report (empty when the block is absent entirely).
+		required string
+		got      string
 	}{
-		{"source", func(pr *codebuildtypes.Project) { pr.Source.Type = codebuildtypes.SourceTypeS3 }, "NO_SOURCE"},
-		{"source-absent", func(pr *codebuildtypes.Project) { pr.Source = nil }, "NO_SOURCE"},
-		{"artifacts", func(pr *codebuildtypes.Project) { pr.Artifacts.Type = codebuildtypes.ArtifactsTypeS3 }, "NO_ARTIFACTS"},
-		{"artifacts-absent", func(pr *codebuildtypes.Project) { pr.Artifacts = nil }, "NO_ARTIFACTS"},
+		{"source", func(pr *codebuildtypes.Project) { pr.Source.Type = codebuildtypes.SourceTypeS3 }, "NO_SOURCE", "S3"},
+		{"source-absent", func(pr *codebuildtypes.Project) { pr.Source = nil }, "NO_SOURCE", ""},
+		{"artifacts", func(pr *codebuildtypes.Project) { pr.Artifacts.Type = codebuildtypes.ArtifactsTypeS3 }, "NO_ARTIFACTS", "S3"},
+		{"artifacts-absent", func(pr *codebuildtypes.Project) { pr.Artifacts = nil }, "NO_ARTIFACTS", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cb := &mockCodeBuildClient{}
@@ -276,7 +283,9 @@ func TestCreateRejectsProjectWithSourceOrArtifacts(t *testing.T) {
 
 			_, err := p.Create(context.Background(), &resource.CreateRequest{Properties: createProps(t)})
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.message)
+			// The message names both the required type and the offending value, so an
+			// operator can see what the project actually declares.
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q, got %q", tc.required, tc.got))
 			cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
 		})
 	}
@@ -464,6 +473,34 @@ func TestUpdateRebuildsWhenHashChanges(t *testing.T) {
 	assert.Equal(t, "sha256:old", state.PriorDigest)
 	// A rebuild reuses the pre-flight read rather than fetching the project again.
 	cb.AssertNumberOfCalls(t, "BatchGetProjects", 1)
+}
+
+// TestUpdateRejectsMisconfiguredProject asserts the pre-flight rejection applies to
+// the Update path too, not just Create: an Update whose referenced project can no
+// longer run the build fails with the same message and dispatches nothing. One
+// representative rejection stands in for all four, which Create covers in full.
+func TestUpdateRejectsMisconfiguredProject(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	project := validProject()
+	project.Environment.PrivilegedMode = aws.Bool(false)
+	expectProjectLookup(cb, project)
+
+	desired := validInput()
+	desired.Dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.21\n"
+	priorJSON, _ := json.Marshal(imageBuildOutputs{BuildConfigHash: "stale-hash", ImageDigest: "sha256:old"})
+
+	_, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+		PriorProperties:   priorJSON,
+		DesiredProperties: updateProps(t, desired),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "privilegedMode")
+	assert.Contains(t, err.Error(), testBuildProject)
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
 }
 
 // TestUpdateRebuildsWhenTagDrifted asserts the no-op skip only fires when the

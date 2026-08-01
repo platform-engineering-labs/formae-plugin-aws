@@ -686,6 +686,11 @@ func isProjectAlreadyExists(err error) bool {
 	return errors.As(err, &exists)
 }
 
+func isCodeBuildNotFound(err error) bool {
+	var rnf *codebuildtypes.ResourceNotFoundException
+	return errors.As(err, &rnf)
+}
+
 // isAssumeRolePropagationError reports whether a CreateProject or UpdateProject
 // error is the transient "CodeBuild cannot assume the freshly-created role yet"
 // IAM-propagation race, which clears on retry.

@@ -254,12 +254,31 @@ func preflightProject(ctx context.Context, client codeBuildClientInterface, proj
 	// Everything the build needs arrives per build, and its result is the pushed
 	// image rather than an artifact.
 	if project.Source == nil || project.Source.Type != codebuildtypes.SourceTypeNoSource {
-		return nil, fmt.Errorf("ImageBuild: build project %q must use source.type %q", projectName, codebuildtypes.SourceTypeNoSource)
+		return nil, fmt.Errorf("ImageBuild: build project %q must use source.type %q, got %q",
+			projectName, codebuildtypes.SourceTypeNoSource, sourceType(project.Source))
 	}
 	if project.Artifacts == nil || project.Artifacts.Type != codebuildtypes.ArtifactsTypeNoArtifacts {
-		return nil, fmt.Errorf("ImageBuild: build project %q must use artifacts.type %q", projectName, codebuildtypes.ArtifactsTypeNoArtifacts)
+		return nil, fmt.Errorf("ImageBuild: build project %q must use artifacts.type %q, got %q",
+			projectName, codebuildtypes.ArtifactsTypeNoArtifacts, artifactsType(project.Artifacts))
 	}
 	return project, nil
+}
+
+// sourceType and artifactsType report a project's declared source and artifacts
+// type for a rejection message, rendering an absent block as the empty string so
+// the message names the offending value in every case.
+func sourceType(source *codebuildtypes.ProjectSource) codebuildtypes.SourceType {
+	if source == nil {
+		return ""
+	}
+	return source.Type
+}
+
+func artifactsType(artifacts *codebuildtypes.ProjectArtifacts) codebuildtypes.ArtifactsType {
+	if artifacts == nil {
+		return ""
+	}
+	return artifacts.Type
 }
 
 // startBuild dispatches a build on the pre-flight-validated project and returns an
@@ -722,11 +741,6 @@ func (a *ImageBuild) List(_ context.Context, _ *resource.ListRequest) (*resource
 }
 
 // ── error classification ────────────────────────────────────────
-
-func isCodeBuildNotFound(err error) bool {
-	var rnf *codebuildtypes.ResourceNotFoundException
-	return errors.As(err, &rnf)
-}
 
 func isECRImageNotFound(err error) bool {
 	var inf *ecrtypes.ImageNotFoundException
