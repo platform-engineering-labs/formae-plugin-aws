@@ -102,8 +102,8 @@ Those surface as real AWS errors from the build.
 
 ## The `LOCAL_DOCKER_LAYER_CACHE` caveat
 
-The example declares `cache { type = "NO_CACHE" }`. CodeBuild also offers a
-local cache:
+The example declares no `cache`, so the project gets AWS's own default of
+`NO_CACHE`. CodeBuild also offers a local cache:
 
 ```pkl
 cache {
@@ -135,7 +135,7 @@ resulting image's declared inputs:
 So:
 
 - **One project per image build** — enable the layer cache freely.
-- **A project shared by several image builds** — leave it `NO_CACHE`.
+- **A project shared by several image builds** — leave the cache alone.
 
 Sharing a project is otherwise supported and reasonable: several `ImageBuild`
 resources may name the same `projectName`, teardown of one stops only the builds
@@ -161,7 +161,8 @@ new build is a change to that consumer rather than an invisible re-tag.
 Rebuilds are gated on a hash over everything that determines what gets built —
 the Dockerfile, the build args, the build-spec generator, and a fingerprint of
 the project the build runs on (its name, environment type, compute type, builder
-image, privileged mode, project-level environment variables and cache type).
+image, privileged mode, project-level environment variables and cache
+configuration).
 Re-applying an unchanged forma does not rebuild. Changing the Dockerfile, a
 build arg, or the project's builder image does.
 
@@ -195,6 +196,11 @@ repository.
   repository is a good fit for the digest-pinning pattern, but it means a given
   tag can be pushed exactly once. Bump `releaseTag` for every change to the
   Dockerfile or build args; re-pushing an existing tag fails at the registry.
+- **The log group name.** `/aws/codebuild/<project name>` is the path CodeBuild
+  itself would use, which is why the example declares it there — but if your
+  account already has a CodeBuild project of that name, the group already exists
+  and the create fails with an already-exists error. Pick a different
+  `logGroupName` (any path works) or a different `appName`.
 - **Build args as inputs, not secrets.** `buildArgs` values are part of the
   build's hashed inputs and are visible in the build's environment. Fetch
   secrets inside the build from Secrets Manager or Parameter Store instead.

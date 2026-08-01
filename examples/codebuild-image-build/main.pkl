@@ -51,10 +51,10 @@ local dockerfileContent = """
 
   RUN apk add --no-cache ca-certificates
 
-  LABEL org.opencontainers.image.title="checkout-api"
+  LABEL org.opencontainers.image.title="\(appName)"
   LABEL org.opencontainers.image.version="${APP_VERSION}"
 
-  CMD ["/bin/sh", "-c", "echo checkout-api ${APP_VERSION}"]
+  CMD ["/bin/sh", "-c", "echo \(appName) ${APP_VERSION}"]
   """
 
 // ── Declared resources ──────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ local dockerfileContent = """
 // Where the image is pushed. `repositoryUri` is resolved into the build below,
 // so the account-qualified registry hostname never has to be written by hand.
 local appRepo = new repository.Repository {
-  label = "checkout-api-repo"
+  label = "\(appName)-repo"
   repositoryName = appName
   imageScanningConfiguration {
     scanOnPush = true
@@ -77,7 +77,7 @@ local appRepo = new repository.Repository {
 // (and tags, and a KMS key if you need one) expressible: a service-created log
 // group never expires.
 local buildLogs = new loggroup.LogGroup {
-  label = "checkout-api-build-logs"
+  label = "\(appName)-build-logs"
   logGroupName = "/aws/codebuild/\(appName)-image-builder"
   retentionInDays = 30
   tags {
@@ -89,7 +89,7 @@ local buildLogs = new loggroup.LogGroup {
 // two resources declared above, so this role can build and push this one image
 // and nothing else.
 local buildRole = new role.Role {
-  label = "checkout-api-build-role"
+  label = "\(appName)-build-role"
   roleName = "\(appName)-image-builder"
   description = "Runs the \(appName) container image build"
   assumeRolePolicyDocument {
@@ -157,7 +157,7 @@ local buildRole = new role.Role {
 // (privileged LINUX_CONTAINER, NO_SOURCE, NO_ARTIFACTS) are checked before any
 // build starts, so a wrong value here fails fast with a message naming it.
 local imageBuilder = new project.Project {
-  label = "checkout-api-image-builder"
+  label = "\(appName)-image-builder"
   name = "\(appName)-image-builder"
   description = "Builds and pushes the \(appName) container image"
   serviceRole = buildRole.res.arn
@@ -188,13 +188,11 @@ local imageBuilder = new project.Project {
     privilegedMode = true
   }
 
-  // NO_CACHE is the safe default. LOCAL with LOCAL_DOCKER_LAYER_CACHE speeds up
-  // repeated builds, but the cached layers are shared by every build on the
-  // project — only enable it on a project dedicated to one image build. See the
-  // README.
-  cache {
-    type = "NO_CACHE"
-  }
+  // No `cache` is declared, so AWS applies its own default of NO_CACHE — which
+  // is the right default here. A LOCAL cache with LOCAL_DOCKER_LAYER_CACHE
+  // speeds up repeated builds, but the cached layers are shared by every build
+  // on the project, so only enable it on a project dedicated to one image
+  // build. See the README.
 
   logsConfig {
     cloudWatchLogs {
@@ -213,7 +211,7 @@ local imageBuilder = new project.Project {
 // The build itself. It creates no AWS resource of its own: it runs one build on
 // the project above, pushes the result, and exports the digest.
 local appImage = new imagebuild.ImageBuild {
-  label = "checkout-api-image"
+  label = "\(appName)-image"
   ecrRepositoryUri = appRepo.res.repositoryUri
   projectName = imageBuilder.res.name
   imageTag = releaseTag

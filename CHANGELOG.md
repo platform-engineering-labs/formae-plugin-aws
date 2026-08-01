@@ -86,8 +86,9 @@ formae agent.
   them. For each `ImageBuild` in your forma, using the values it used:
 
   ```bash
-  repo_uri="<account>.dkr.ecr.<region>.amazonaws.com/<repository>"   # its ecrRepositoryUri
-  tag="<imageTag>"                                                   # its imageTag
+  # its ecrRepositoryUri as resolved, not as written: the literal repository URI
+  repo_uri="<account>.dkr.ecr.<region>.amazonaws.com/<repository>"
+  tag="<imageTag>"
 
   short=$(printf '%s' "$repo_uri|$tag" | sha256sum | cut -c1-12)     # shasum -a 256 on macOS
 
@@ -100,20 +101,17 @@ formae agent.
   `formae-imagebuild-build`, first. A forma that supplied its own
   `serviceRoleArn` never had an internal role created for it, so it has only the
   project and that project's log group to clean up.
-- Upgrading does not force a rebuild-and-re-push of an already-built tag,
-  including on a repository with immutable tags. The rebuild gate hashes a
-  different set of inputs in this release — it now includes a fingerprint of the
-  project the build runs on, so swapping the builder image out from under a
-  build correctly invalidates the image — which means a hash recorded by an
-  earlier version can never compare equal. Rather than rebuild on that alone,
-  an update recognises a hash in the earlier format and adopts it: it persists
-  the current hash and runs no build, provided this resource's own build inputs
-  (the Dockerfile and the build args) are unchanged and the digest recorded
-  alongside the old hash still resolves under the declared tag. Without that, a
-  first apply after upgrading would re-push an existing tag, which silently
-  re-tags on a mutable repository and fails outright on an immutable one.
-  Adoption is confined to that one migration; genuine input changes, before or
-  after it, rebuild as normal.
+- Migrating an existing `ImageBuild` is not an in-place update. `projectName` is
+  part of the resource's identity, so adding it re-creates the resource: the new
+  build runs and pushes the declared tag again. On a repository with mutable tags
+  that re-tags the same content; on a repository with immutable tags the push is
+  rejected. If you have an `ImageBuild` from 0.1.15 or 0.1.16 pushing to an
+  immutable repository, **bump `imageTag` as part of the migration** so the
+  re-created resource pushes a tag that does not yet exist. Note also that the
+  rebuild gate hashes a different set of inputs in this release — it now includes
+  a fingerprint of the project the build runs on, so swapping the builder image
+  out from under a build correctly invalidates the image — so a hash recorded by
+  an earlier version is not comparable with one recorded by this one.
 
 ## [0.1.16]
 

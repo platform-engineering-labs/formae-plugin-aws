@@ -328,6 +328,15 @@ func projectFingerprint(project *codebuildtypes.Project) string {
 // any scheme other than the current one, not just a bare-hex one — otherwise that
 // bump reopens the same forced re-push of an already pushed tag this predicate
 // exists to prevent.
+//
+// Note that for the one scheme change this currently recognizes, the adoption
+// path it feeds is defence-in-depth rather than a live migration path. A row
+// carrying a bare-hex hash was written before ImageBuild referenced a project, so
+// it also carries a two-segment NativeID that the current parse rejects, and
+// adding the now-required projectName re-creates the resource rather than
+// updating it. No row any released version wrote satisfies both conditions at
+// once. The predicate and its adoption branch are kept because the next scheme
+// bump does hit exactly this case, with rows whose NativeID is current.
 func isLegacyBuildConfigHash(hash string) bool {
 	return legacyBuildConfigHashPattern.MatchString(hash)
 }
