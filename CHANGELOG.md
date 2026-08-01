@@ -113,6 +113,15 @@ formae agent.
   out from under a build correctly invalidates the image — so a hash recorded by
   an earlier version is not comparable with one recorded by this one.
 
+  One caveat on that re-create, if you actually have an `ImageBuild` under
+  management from 0.1.15 or 0.1.16: the identifier stored for it has two parts
+  (repository and tag), and this release's identifier has three (repository, tag
+  and project). The delete half of the re-create reads that stored identifier
+  and rejects it, so the re-create cannot complete on its own. Remove the old
+  resource from formae's state and delete its pushed image out of band before
+  declaring the new five-resource forma. A later release will accept the older
+  two-part identifier so this is unnecessary.
+
 ## [0.1.16]
 
 ### Changed
