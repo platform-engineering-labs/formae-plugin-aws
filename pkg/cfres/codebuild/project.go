@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	codebuildsdk "github.com/aws/aws-sdk-go-v2/service/codebuild"
 	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -326,10 +328,16 @@ func (p *Project) readWithClient(ctx context.Context, client projectClientInterf
 	return &resource.ReadResult{ResourceType: request.ResourceType, Properties: string(js)}, nil
 }
 
+// projectReader is the single call getProject needs, so both this resource's
+// client and the narrower one AWS::CodeBuild::ImageBuild uses can be passed.
+type projectReader interface {
+	BatchGetProjects(ctx context.Context, params *codebuildsdk.BatchGetProjectsInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.BatchGetProjectsOutput, error)
+}
+
 // getProject fetches a single project by name, returning (nil, nil) when it does
 // not exist. BatchGetProjects reports a missing name in ProjectsNotFound rather
 // than as an error.
-func getProject(ctx context.Context, client projectClientInterface, name string) (*codebuildtypes.Project, error) {
+func getProject(ctx context.Context, client projectReader, name string) (*codebuildtypes.Project, error) {
 	out, err := client.BatchGetProjects(ctx, &codebuildsdk.BatchGetProjectsInput{Names: []string{name}})
 	if err != nil {
 		return nil, err
@@ -676,4 +684,26 @@ func propertiesFromProject(project *codebuildtypes.Project) projectProperties {
 func isProjectAlreadyExists(err error) bool {
 	var exists *codebuildtypes.ResourceAlreadyExistsException
 	return errors.As(err, &exists)
+}
+
+// isAssumeRolePropagationError reports whether a CreateProject or UpdateProject
+// error is the transient "CodeBuild cannot assume the freshly-created role yet"
+// IAM-propagation race, which clears on retry.
+//
+// Every clause requires the message to be about assuming the role. A permanent
+// input error that merely mentions the service role — a role ARN that does not
+// exist, or one in the wrong account — is not retryable, and matching it would
+// spend the whole retry budget before surfacing the real cause.
+func isAssumeRolePropagationError(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.ErrorCode() != "InvalidInputException" {
+		return false
+	}
+	msg := strings.ToLower(apiErr.ErrorMessage())
+	return strings.Contains(msg, "cannot be assumed") ||
+		strings.Contains(msg, "not authorized to perform: sts:assumerole") ||
+		(strings.Contains(msg, "service role") && strings.Contains(msg, "assume"))
 }

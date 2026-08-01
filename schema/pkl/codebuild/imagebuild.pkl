@@ -4,6 +4,19 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
+/// Builds a container image from a supplied Dockerfile and pushes it to ECR.
+///
+/// `AWS::CodeBuild::ImageBuild` is a pure build-and-push action: it runs one
+/// build on the `AWS::CodeBuild::Project` named by `projectName` and creates no
+/// AWS resource of its own beyond the pushed image. The project, its IAM service
+/// role and its log group are declared resources in their own right.
+///
+/// Preconditions that can be checked cheaply are checked before the build starts
+/// — the project must exist and must be configured as described on
+/// `projectName`. The ones that cannot are deliberately left to surface as real
+/// AWS errors from the build itself: whether the project's network placement has
+/// egress to ECR, STS and CloudWatch Logs, and whether its service role actually
+/// grants the ECR pushes.
 module aws.codebuild.imagebuild
 
 import "@formae/formae.pkl"
@@ -34,8 +47,6 @@ open class ImageBuildResolvable extends formae.Resolvable {
     }
 }
 
-typealias ComputeType = "BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"
-
 @aws.ResourceHint {
     type = module.type
     identifier = "ImageRef"
@@ -64,24 +75,24 @@ open class ImageBuild extends formae.Resource {
     @aws.FieldHint
     buildArgs: Mapping<String, String>?
 
-    /// CodeBuild compute size for the build project. Defaults to SMALL.
-    @aws.FieldHint
-    computeType: ComputeType?
-
-    /// Build timeout in minutes. Must be shorter than the engine's async poll
-    /// deadline. Defaults to 30.
-    @aws.FieldHint
-    timeoutMinutes: (Int(this >= 5 && this <= 60))?
-
-    /// BYO CodeBuild service role ARN. When supplied the plugin never creates,
-    /// mutates, or deletes the role. Resolvable from an AWS::IAM::Role.
-    @aws.FieldHint
-    serviceRoleArn: (String|formae.Resolvable)?
-
-    /// CodeBuild build-environment image (docker-in-docker capable). Defaults to a
-    /// pinned aws/codebuild/standard image.
-    @aws.FieldHint
-    buildEnvironmentImage: String?
+    /// Name of the AWS::CodeBuild::Project to run the build on. Resolvable from
+    /// that project's `res.name`. Part of the resource identity.
+    ///
+    /// The build runs `docker build` and `docker push` inside the project, so the
+    /// project must declare `environment.type = "LINUX_CONTAINER"` with
+    /// `privilegedMode = true`, `source.type = "NO_SOURCE"` and
+    /// `artifacts.type = "NO_ARTIFACTS"`; a project that does not is rejected
+    /// before any build starts. Everything the build runs is supplied per build by
+    /// the plugin as a build spec override, so the project's own `source.buildSpec`
+    /// is never read or written and may be any placeholder. Its service role must
+    /// grant the ECR pulls and pushes for `ecrRepositoryUri` and writes to its log
+    /// group; the project's compute size, build image and build timeout apply to
+    /// the build.
+    ///
+    /// The project may be shared by several image builds: teardown stops only the
+    /// builds this resource started, and never deletes the project.
+    @aws.FieldHint { createOnly = true }
+    projectName: (String|formae.Resolvable)
 
     // ── Computed outputs ────────────────────────────────────────
 
