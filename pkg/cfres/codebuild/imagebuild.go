@@ -303,7 +303,7 @@ func (a *ImageBuild) startBuild(ctx context.Context, client codeBuildClientInter
 		Tag:             in.ImageTag,
 		ProjectName:     projectName,
 		Deadline:        deadline,
-		BuildConfigHash: computeBuildConfigHash(in),
+		BuildConfigHash: computeBuildConfigHash(in, project),
 		PriorDigest:     priorDigest,
 	}
 	return &resource.ProgressResult{
@@ -503,11 +503,21 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 	if err != nil {
 		return nil, err
 	}
-	newHash := computeBuildConfigHash(desired)
+	// The hash covers the referenced project as well as this resource's own inputs,
+	// and is taken over the project pre-flight already read, so no path — including
+	// the one that does not rebuild — pays for a second lookup.
+	newHash := computeBuildConfigHash(desired, project)
+
+	// A hash recorded before the current scheme was taken over a different set of
+	// inputs, so it can never match. Adopt it instead of rebuilding: the recorded
+	// image still being under the declared tag is what the comparison is really
+	// asking, and a rebuild would re-push an existing tag, which an immutable
+	// repository rejects. Genuine input changes after the adoption rebuild as normal.
+	adoptLegacy := isLegacyBuildConfigHash(prior.BuildConfigHash)
 
 	// Rebuild only when the build-affecting inputs changed, or the declared tag no
 	// longer resolves to the recorded digest in ECR (missing, or moved out of band).
-	if prior.BuildConfigHash != "" && prior.BuildConfigHash == newHash {
+	if prior.BuildConfigHash == newHash || adoptLegacy {
 		matches, err := a.tagMatchesDigest(ctx, request.NativeID, prior.ImageDigest)
 		if err != nil {
 			return nil, err
@@ -515,6 +525,9 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 		if matches {
 			outputs := prior
 			outputs.ImageTag = desired.ImageTag
+			// Persist the current hash, so an adopted legacy hash is compared like
+			// with like from the next update on.
+			outputs.BuildConfigHash = newHash
 			js, _ := json.Marshal(outputs)
 			return &resource.UpdateResult{ProgressResult: &resource.ProgressResult{
 				Operation:          resource.OperationUpdate,

@@ -17,13 +17,23 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 )
 
 // generatorVersion is bumped whenever the generated buildspec changes shape, so
 // that a generator change forces a rebuild via the build-config hash even when the
 // user's inputs are identical.
 const generatorVersion = "2"
+
+// buildConfigHashScheme prefixes every hash this version produces. It identifies
+// which set of inputs the hash was taken over, so a hash recorded by an earlier
+// plugin version is recognisable as belonging to a different scheme instead of
+// being compared as though it were comparable.
+const buildConfigHashScheme = "v3"
 
 const (
 	dockerfileEnvVar       = "DOCKERFILE_B64"
@@ -43,6 +53,9 @@ var (
 	// CodeBuild's own project-name rule: 2 to 255 characters of letters, digits,
 	// hyphens and underscores, starting with a letter or a digit.
 	projectNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{1,254}$`)
+	// legacyBuildConfigHashPattern matches a hash recorded before the scheme prefix
+	// existed: a bare, unprefixed sha256 hex digest.
+	legacyBuildConfigHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // imageBuildInput mirrors the Pkl schema's input fields (capitalized to match the
@@ -198,11 +211,18 @@ phases:
 // call sites read uniformly and so tests can assert on its content.
 func generateBuildspec() string { return buildspec }
 
-// computeBuildConfigHash hashes exactly the build-affecting inputs plus the
-// generator version. The compute size and build-environment image now belong to
-// the referenced project, which the build only runs on, so they are not part of
-// this resource's own inputs.
-func computeBuildConfigHash(in imageBuildInput) string {
+// computeBuildConfigHash hashes the build-affecting inputs — this resource's own
+// inputs, the generator version, and the fingerprint of the project the build runs
+// on — and returns them under the current scheme prefix.
+func computeBuildConfigHash(in imageBuildInput, project *codebuildtypes.Project) string {
+	sum := sha256.Sum256([]byte(buildConfigHashBody(in, project)))
+	return buildConfigHashScheme + ":" + hex.EncodeToString(sum[:])
+}
+
+// buildConfigHashBody renders the canonical, hashed representation of everything
+// that determines the image a build produces. Map-valued inputs are emitted in a
+// canonical order so an identical configuration always renders identically.
+func buildConfigHashBody(in imageBuildInput, project *codebuildtypes.Project) string {
 	var b strings.Builder
 	b.WriteString("v=" + generatorVersion + "\n")
 	b.WriteString("dockerfile=" + in.Dockerfile + "\n")
@@ -214,8 +234,71 @@ func computeBuildConfigHash(in imageBuildInput) string {
 	for _, k := range keys {
 		b.WriteString("arg=" + k + "=" + in.BuildArgs[k] + "\n")
 	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])
+	b.WriteString(projectFingerprint(project))
+	return b.String()
+}
+
+// projectFingerprint renders the properties of the referenced build project that
+// determine what a build on it produces: the project it runs on and its build
+// environment. The compute size and builder image belong to the project rather
+// than to this resource, but they genuinely change the built image, so a mutation
+// of the project has to invalidate it — otherwise an operator could swap the
+// builder image and be told nothing changed. Properties that do not change the
+// image a build produces (a description, the project's timeout) are deliberately
+// left out, so churn on them does not force a rebuild.
+func projectFingerprint(project *codebuildtypes.Project) string {
+	var (
+		name        string
+		envType     codebuildtypes.EnvironmentType
+		computeType codebuildtypes.ComputeType
+		image       string
+		privileged  bool
+		envVars     []codebuildtypes.EnvironmentVariable
+		cacheType   codebuildtypes.CacheType
+	)
+	if project != nil {
+		name = aws.ToString(project.Name)
+		if env := project.Environment; env != nil {
+			envType = env.Type
+			computeType = env.ComputeType
+			image = aws.ToString(env.Image)
+			privileged = aws.ToBool(env.PrivilegedMode)
+			envVars = env.EnvironmentVariables
+		}
+		if project.Cache != nil {
+			cacheType = project.Cache.Type
+		}
+	}
+
+	// The project's own environment variables are visible to the build (the plugin
+	// overrides only the ones it sets), so they are part of the fingerprint. A
+	// variable's type is too: the same name and value resolved from Parameter Store
+	// is a different build input than a plaintext literal.
+	varLines := make([]string, 0, len(envVars))
+	for _, v := range envVars {
+		varLines = append(varLines, "project.environmentVariable="+aws.ToString(v.Name)+"="+string(v.Type)+"="+aws.ToString(v.Value)+"\n")
+	}
+	sort.Strings(varLines)
+
+	var b strings.Builder
+	b.WriteString("project=" + name + "\n")
+	b.WriteString("project.environmentType=" + string(envType) + "\n")
+	b.WriteString("project.computeType=" + string(computeType) + "\n")
+	b.WriteString("project.image=" + image + "\n")
+	b.WriteString("project.privilegedMode=" + strconv.FormatBool(privileged) + "\n")
+	for _, l := range varLines {
+		b.WriteString(l)
+	}
+	b.WriteString("project.cacheType=" + string(cacheType) + "\n")
+	return b.String()
+}
+
+// isLegacyBuildConfigHash reports whether a recorded hash predates the scheme
+// prefix. Such a hash was taken over a different set of inputs, so it can neither
+// match nor be meaningfully compared against a current one — it only says that
+// some earlier build produced the recorded image.
+func isLegacyBuildConfigHash(hash string) bool {
+	return legacyBuildConfigHashPattern.MatchString(hash)
 }
 
 // imageURI returns the mutable registry/repo:tag reference.

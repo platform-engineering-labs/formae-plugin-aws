@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,10 @@ const (
 	testBuildProject = "formae-plugin-sdk-test-image-build"
 	testTag          = "0.87.0-custom.1"
 )
+
+// legacyBuildConfigHash is a build-config hash as an existing resource recorded it
+// before the hash carried a scheme prefix: a bare sha256 hex digest.
+const legacyBuildConfigHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // testNow is the clock the provisioner under test reads, so a derived deadline is
 // an exact expected value rather than a range.
@@ -420,14 +425,15 @@ func TestUpdateNoopWhenHashUnchangedAndDigestPresent(t *testing.T) {
 	p := newTestProvisioner(cb, ecr)
 
 	desired := validInput()
+	project := validProject()
 	prior := imageBuildOutputs{
-		BuildConfigHash: computeBuildConfigHash(desired),
+		BuildConfigHash: computeBuildConfigHash(desired, &project),
 		ImageDigest:     "sha256:cafe",
 		ImageRef:        desired.EcrRepositoryURI + "@sha256:cafe",
 	}
 	priorJSON, _ := json.Marshal(prior)
 
-	expectProjectLookup(cb, validProject())
+	expectProjectLookup(cb, project)
 	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
 		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
 	}, nil)
@@ -443,6 +449,127 @@ func TestUpdateNoopWhenHashUnchangedAndDigestPresent(t *testing.T) {
 	// The referenced project is validated even on the path that does not rebuild,
 	// and it is read exactly once.
 	cb.AssertNumberOfCalls(t, "BatchGetProjects", 1)
+
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
+	assert.Equal(t, prior.BuildConfigHash, out.BuildConfigHash)
+}
+
+// TestUpdateAdoptsLegacyHashWithoutRebuilding asserts a prior hash recorded in the
+// pre-scheme bare-hex format is adopted rather than read as a changed input: the
+// current hash is persisted and no build runs. Rebuilding here would re-push an
+// existing tag, which an immutable repository rejects outright, so every existing
+// resource would break on the first update after the upgrade.
+func TestUpdateAdoptsLegacyHashWithoutRebuilding(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	desired := validInput()
+	project := validProject()
+	priorJSON, _ := json.Marshal(imageBuildOutputs{
+		BuildConfigHash: legacyBuildConfigHash,
+		ImageDigest:     "sha256:cafe",
+		ImageRef:        desired.EcrRepositoryURI + "@sha256:cafe",
+		ImageURI:        desired.EcrRepositoryURI + ":" + desired.ImageTag,
+	})
+
+	expectProjectLookup(cb, project)
+	// The tag still resolves to the digest the recorded build pushed.
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil)
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+		PriorProperties:   priorJSON,
+		DesiredProperties: updateProps(t, desired),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
+	cb.AssertNumberOfCalls(t, "BatchGetProjects", 1)
+
+	// The adopted hash is persisted, so the next update compares like with like.
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
+	assert.Equal(t, computeBuildConfigHash(desired, &project), out.BuildConfigHash)
+	assert.True(t, strings.HasPrefix(out.BuildConfigHash, "v3:"), "adopted hash %q", out.BuildConfigHash)
+	assert.Equal(t, "sha256:cafe", out.ImageDigest)
+}
+
+// TestUpdateRebuildsWhenLegacyHashDigestNoLongerResolves asserts adoption is gated
+// on the recorded image still being there: a legacy hash whose digest no longer
+// resolves under the declared tag rebuilds, exactly as a current hash would.
+func TestUpdateRebuildsWhenLegacyHashDigestNoLongerResolves(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	desired := validInput()
+	priorJSON, _ := json.Marshal(imageBuildOutputs{
+		BuildConfigHash: legacyBuildConfigHash,
+		ImageDigest:     "sha256:gone",
+	})
+
+	expectProjectLookup(cb, validProject())
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).
+		Return(&ecrsdk.DescribeImagesOutput{}, &ecrtypes.ImageNotFoundException{})
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-4"), TimeoutInMinutes: aws.Int32(30)},
+	}, nil)
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+		PriorProperties:   priorJSON,
+		DesiredProperties: updateProps(t, desired),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	cb.AssertCalled(t, "StartBuild", mock.Anything, mock.Anything)
+}
+
+// TestUpdateRebuildsWhenProjectFingerprintChanges asserts a mutation of the
+// referenced project invalidates the built image even though the forma is
+// unchanged: the builder image the project runs genuinely changes what a build
+// produces.
+func TestUpdateRebuildsWhenProjectFingerprintChanges(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	desired := validInput()
+	recorded := validProject()
+	priorJSON, _ := json.Marshal(imageBuildOutputs{
+		BuildConfigHash: computeBuildConfigHash(desired, &recorded),
+		ImageDigest:     "sha256:cafe",
+	})
+
+	// The project's builder image changed out of band since the recorded build.
+	mutated := validProject()
+	mutated.Environment.Image = aws.String("aws/codebuild/standard:8.0")
+	expectProjectLookup(cb, mutated)
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-5"), TimeoutInMinutes: aws.Int32(30)},
+	}, nil)
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(desired.EcrRepositoryURI, desired.ImageTag, desired.ProjectName),
+		PriorProperties:   priorJSON,
+		DesiredProperties: updateProps(t, desired),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+	cb.AssertNumberOfCalls(t, "StartBuild", 1)
+	// The changed inputs are enough on their own: no ECR lookup is needed to decide.
+	ecr.AssertNotCalled(t, "DescribeImages", mock.Anything, mock.Anything)
+	// The rebuild reuses the pre-flight read rather than fetching the project again.
+	cb.AssertNumberOfCalls(t, "BatchGetProjects", 1)
+
+	// The rebuild records the hash of the project it actually ran on.
+	state, err := decodeRequestID(res.ProgressResult.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, computeBuildConfigHash(desired, &mutated), state.BuildConfigHash)
 }
 
 func TestUpdateRebuildsWhenHashChanges(t *testing.T) {
@@ -513,7 +640,8 @@ func TestUpdateRebuildsWhenTagDrifted(t *testing.T) {
 	p := newTestProvisioner(cb, ecr)
 
 	desired := validInput()
-	prior := imageBuildOutputs{BuildConfigHash: computeBuildConfigHash(desired), ImageDigest: "sha256:original"}
+	project := validProject()
+	prior := imageBuildOutputs{BuildConfigHash: computeBuildConfigHash(desired, &project), ImageDigest: "sha256:original"}
 	priorJSON, _ := json.Marshal(prior)
 
 	// The tag now resolves to a different image than the one we built.
