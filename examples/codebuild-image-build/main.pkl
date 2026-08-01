@@ -1,0 +1,254 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Build a container image with AWS CodeBuild and push it to ECR, with every
+ * resource the build touches declared: the repository it pushes to, the log
+ * group it writes to, the IAM role it runs as, and the build project it runs
+ * on. AWS::CodeBuild::ImageBuild itself creates nothing — it runs one build on
+ * the project named below and exports the pushed image's immutable digest.
+ *
+ * Apply:   formae apply examples/codebuild-image-build/main.pkl
+ * Destroy: formae destroy examples/codebuild-image-build/main.pkl
+ *
+ * See README.md in this directory for what each resource is for and why it is
+ * declared here rather than conjured up behind the scenes.
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/logs/loggroup.pkl"
+import "@aws/ecr/repository.pkl"
+import "@aws/codebuild/project.pkl"
+import "@aws/codebuild/imagebuild.pkl"
+
+// ── Edit these ──────────────────────────────────────────────────────────────
+// The repository, the project and the role are all regional; the ECR repository
+// must live in the same account and region as the build project.
+local awsRegion = "us-east-1"
+
+// Name of the image being built. Used for the ECR repository and, prefixed, for
+// the build project, its role and its log group.
+local appName = "checkout-api"
+
+// Tag the image is pushed under. Bump it per release: the image is consumed by
+// digest (see `imageRef` at the bottom), so the tag is a human-facing label.
+local releaseTag = "1.4.0"
+
+// The image to build. It is built verbatim from this content — there is no
+// source repository and no build context, so a COPY from the working directory
+// has nothing to copy. Bring files in through a base image or fetch them in a
+// RUN step.
+local dockerfileContent = """
+  FROM public.ecr.aws/docker/library/alpine:3.20
+
+  ARG APP_VERSION
+
+  RUN apk add --no-cache ca-certificates
+
+  LABEL org.opencontainers.image.title="checkout-api"
+  LABEL org.opencontainers.image.version="${APP_VERSION}"
+
+  CMD ["/bin/sh", "-c", "echo checkout-api ${APP_VERSION}"]
+  """
+
+// ── Declared resources ──────────────────────────────────────────────────────
+
+// Where the image is pushed. `repositoryUri` is resolved into the build below,
+// so the account-qualified registry hostname never has to be written by hand.
+local appRepo = new repository.Repository {
+  label = "checkout-api-repo"
+  repositoryName = appName
+  imageScanningConfiguration {
+    scanOnPush = true
+  }
+  tags {
+    new { key = "Application"; value = appName }
+  }
+}
+
+// Where the build's console output goes. Declaring the group rather than
+// letting CodeBuild create one on first build is what makes a retention period
+// (and tags, and a KMS key if you need one) expressible: a service-created log
+// group never expires.
+local buildLogs = new loggroup.LogGroup {
+  label = "checkout-api-build-logs"
+  logGroupName = "/aws/codebuild/\(appName)-image-builder"
+  retentionInDays = 30
+  tags {
+    new { key = "Application"; value = appName }
+  }
+}
+
+// The identity the build runs as. Every permission it holds is scoped to the
+// two resources declared above, so this role can build and push this one image
+// and nothing else.
+local buildRole = new role.Role {
+  label = "checkout-api-build-role"
+  roleName = "\(appName)-image-builder"
+  description = "Runs the \(appName) container image build"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "codebuild.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+  policies {
+    new {
+      policyName = "image-build-ecr-and-logs"
+      policyDocument {
+        ["Version"] = "2012-10-17"
+        ["Statement"] {
+          // `docker login` against ECR. The authorization token is
+          // registry-wide, so this action admits no resource scope.
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] = "ecr:GetAuthorizationToken"
+            ["Resource"] = "*"
+          }
+          // `docker push`, scoped to the one repository the image goes to.
+          // The read actions are the pull half: the push handshake resolves
+          // the tag's existing manifest, and a Dockerfile whose FROM points at
+          // this same repository needs them too.
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "ecr:BatchCheckLayerAvailability"
+              "ecr:BatchGetImage"
+              "ecr:GetDownloadUrlForLayer"
+              "ecr:InitiateLayerUpload"
+              "ecr:UploadLayerPart"
+              "ecr:CompleteLayerUpload"
+              "ecr:PutImage"
+            }
+            ["Resource"] = appRepo.res.arn
+          }
+          // Build logs. A log group's ARN already ends in ":*", so it covers
+          // the streams under the group — which is what these two actions are
+          // authorized against. logs:CreateLogGroup is deliberately absent:
+          // the group is declared above, so it exists before the build starts.
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "logs:CreateLogStream"
+              "logs:PutLogEvents"
+            }
+            ["Resource"] = buildLogs.res.arn
+          }
+        }
+      }
+    }
+  }
+}
+
+// The build project. Its compute size, builder image and timeout are the knobs
+// that govern how the build runs; the four settings the image build requires
+// (privileged LINUX_CONTAINER, NO_SOURCE, NO_ARTIFACTS) are checked before any
+// build starts, so a wrong value here fails fast with a message naming it.
+local imageBuilder = new project.Project {
+  label = "checkout-api-image-builder"
+  name = "\(appName)-image-builder"
+  description = "Builds and pushes the \(appName) container image"
+  serviceRole = buildRole.res.arn
+
+  source {
+    type = "NO_SOURCE"
+    // Placeholder. The image build supplies the spec it actually runs as a
+    // per-build override, so this one is never executed — but CodeBuild
+    // rejects a NO_SOURCE project that declares no inline spec at all.
+    buildSpec = """
+      version: 0.2
+      phases:
+        build:
+          commands:
+            - echo "build spec supplied per build"
+      """
+  }
+
+  artifacts {
+    type = "NO_ARTIFACTS"
+  }
+
+  environment {
+    type = "LINUX_CONTAINER"
+    computeType = "BUILD_GENERAL1_SMALL"
+    image = "aws/codebuild/standard:7.0"
+    // Required: the build runs docker itself.
+    privilegedMode = true
+  }
+
+  // NO_CACHE is the safe default. LOCAL with LOCAL_DOCKER_LAYER_CACHE speeds up
+  // repeated builds, but the cached layers are shared by every build on the
+  // project — only enable it on a project dedicated to one image build. See the
+  // README.
+  cache {
+    type = "NO_CACHE"
+  }
+
+  logsConfig {
+    cloudWatchLogs {
+      status = "ENABLED"
+      groupName = buildLogs.res.logGroupName
+    }
+  }
+
+  timeoutInMinutes = 30
+
+  tags {
+    new { key = "Application"; value = appName }
+  }
+}
+
+// The build itself. It creates no AWS resource of its own: it runs one build on
+// the project above, pushes the result, and exports the digest.
+local appImage = new imagebuild.ImageBuild {
+  label = "checkout-api-image"
+  ecrRepositoryUri = appRepo.res.repositoryUri
+  projectName = imageBuilder.res.name
+  imageTag = releaseTag
+  dockerfile = dockerfileContent
+  buildArgs {
+    ["APP_VERSION"] = releaseTag
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = "\(appName)-image-build"
+    description = "Container image build for \(appName), with its CodeBuild project declared"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = awsRegion
+    }
+  }
+
+  // Declaration order is documentation only — formae orders the apply from the
+  // resolvable references between these resources.
+  appRepo
+  buildLogs
+  buildRole
+  imageBuilder
+  appImage
+}
+
+// Consume the image by digest, not by tag:
+//
+//   image = appImage.res.imageRef      // <repo>@sha256:…  — immutable
+//
+// e.g. in an ECS task definition's container definition, or a Kubernetes
+// pod spec. `appImage.res.imageDigest` (the bare sha256:…) and
+// `appImage.res.imageUri` (<repo>:<tag>, mutable) are also available.

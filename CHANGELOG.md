@@ -16,6 +16,104 @@ formae agent.
   `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
   buckets that block SSE-C round-trip through extract and reconcile instead of
   having the setting stripped on bring-under-management.
+- `AWS::CodeBuild::Project` support. A CodeBuild build project is now a
+  first-class declared resource. CloudControl reports the type as
+  non-provisionable, so the plugin drives it directly through the CodeBuild API.
+  Modelled: `name`, `description`, `serviceRole`, `source` (type, inline
+  `buildSpec`, `location`), `artifacts` (type, `location`, `name`, `packaging`),
+  `environment` (type, `computeType`, `image`, `privilegedMode`,
+  `imagePullCredentialsType`, `environmentVariables`), `cache` (type,
+  `location`, `modes`), `logsConfig` (CloudWatch Logs and S3 destinations),
+  `timeoutInMinutes`, `queuedTimeoutInMinutes`, `concurrentBuildLimit`, `tags`,
+  and the assigned `arn`. A project exposes `res.name` and `res.arn`
+  resolvables, so its service role, its log group and the image build that runs
+  on it are wired through the resource graph instead of by naming convention.
+  Note that CodeBuild's update call leaves an unspecified field untouched, so
+  every modelled field is sent on every update: removing a field from the forma
+  clears it rather than leaving the previous value in place.
+
+  Deliberately not modelled in this version: `vpcConfig`, `secondarySources` /
+  `secondaryArtifacts`, `fileSystemLocations`, `buildBatchConfig`, `badge`,
+  `triggers` (webhooks), and `visibility`. A project created outside formae is
+  likely to use at least one of them, and adopting it would silently drop that
+  configuration on the first update — so the resource is **not discoverable**
+  in this version. Discovery can be enabled once the full property surface is
+  modelled.
+
+### Changed
+
+- **Breaking.** `AWS::CodeBuild::ImageBuild` is now a pure build-and-push
+  action: it creates no IAM role, no CodeBuild project and no log group.
+  It runs one build on a project you declare and name, and its only effect in
+  the account is the pushed image. Previously (0.1.15) it idempotently created
+  and updated an internal IAM service role and CodeBuild project, leaving
+  resources in the account that no forma described and that no audit of the
+  forma would predict.
+
+  To migrate a forma:
+
+  - add `projectName`, resolved from the declared project's `res.name`;
+  - remove `serviceRoleArn`, `computeType`, `buildEnvironmentImage` and
+    `timeoutMinutes`; their equivalents are now Project properties
+    (`serviceRole`, `environment.computeType`, `environment.image`,
+    `timeoutInMinutes`);
+  - declare the `AWS::CodeBuild::Project`, the `AWS::IAM::Role` it runs as, and
+    the `AWS::Logs::LogGroup` it logs to. The project must use a privileged
+    `LINUX_CONTAINER` environment with `source.type = "NO_SOURCE"` and
+    `artifacts.type = "NO_ARTIFACTS"`; a project that does not is rejected with
+    a message naming the offending value before any build starts. The project's
+    own build spec is a placeholder — the image build supplies the spec it runs
+    per build as an override, and never reads the project's.
+
+  A complete, copy-pasteable five-resource forma, with the exact IAM policy the
+  build needs, is in the
+  [`codebuild-image-build` example](https://github.com/platform-engineering-labs/formae-plugin-aws/tree/main/examples/codebuild-image-build).
+
+  **Sequencing:** do not bump the aws plugin pin in a consuming infrastructure
+  repository until that repository's forma declares the Project, Role and
+  LogGroup and passes `projectName`. `projectName` is required, so an
+  un-migrated `ImageBuild` no longer evaluates.
+- The internally-created CodeBuild projects and IAM roles from previous versions
+  are **no longer deleted when an ImageBuild is torn down**, and are not
+  adopted. Remove them once, by hand. Their names are fully derivable, so you
+  can compute the exact set rather than deleting by prefix and hoping: the
+  project was named `formae-imgbuild-` followed by the first 12 lowercase hex
+  characters of the SHA-256 of the exact string `<ecrRepositoryUri>|<imageTag>`
+  (the two values joined by a single `|`, with no trailing newline), and the
+  role was that same name with `-role` appended. The project declared no log
+  configuration, so CodeBuild created its default log group at
+  `/aws/codebuild/<project name>`; those groups are orphaned too and go with
+  them. For each `ImageBuild` in your forma, using the values it used:
+
+  ```bash
+  repo_uri="<account>.dkr.ecr.<region>.amazonaws.com/<repository>"   # its ecrRepositoryUri
+  tag="<imageTag>"                                                   # its imageTag
+
+  short=$(printf '%s' "$repo_uri|$tag" | sha256sum | cut -c1-12)     # shasum -a 256 on macOS
+
+  echo "project:   formae-imgbuild-$short"
+  echo "role:      formae-imgbuild-$short-role"
+  echo "log group: /aws/codebuild/formae-imgbuild-$short"
+  ```
+
+  Deleting the role requires deleting its inline policy, named
+  `formae-imagebuild-build`, first. A forma that supplied its own
+  `serviceRoleArn` never had an internal role created for it, so it has only the
+  project and that project's log group to clean up.
+- Upgrading does not force a rebuild-and-re-push of an already-built tag,
+  including on a repository with immutable tags. The rebuild gate hashes a
+  different set of inputs in this release — it now includes a fingerprint of the
+  project the build runs on, so swapping the builder image out from under a
+  build correctly invalidates the image — which means a hash recorded by an
+  earlier version can never compare equal. Rather than rebuild on that alone,
+  an update recognises a hash in the earlier format and adopts it: it persists
+  the current hash and runs no build, provided this resource's own build inputs
+  (the Dockerfile and the build args) are unchanged and the digest recorded
+  alongside the old hash still resolves under the declared tag. Without that, a
+  first apply after upgrading would re-push an existing tag, which silently
+  re-tags on a mutable repository and fails outright on an immutable one.
+  Adoption is confined to that one migration; genuine input changes, before or
+  after it, rebuild as normal.
 
 ## [0.1.16]
 

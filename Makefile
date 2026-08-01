@@ -66,7 +66,7 @@ lint:
 verify-schema:
 	$(GO) run github.com/platform-engineering-labs/formae/pkg/plugin/testutil/cmd/verify-schema --namespace $(PLUGIN_NAMESPACE) ./schema/pkl
 
-## verify-examples: Validate that every CloudFront/ACM example .pkl file evaluates cleanly
+## verify-examples: Validate that every CloudFront/ACM and CodeBuild example .pkl file evaluates cleanly
 ## Catches Resolvable shape regressions and cross-resource type-mismatches
 ## without requiring deploy.
 verify-examples:
@@ -74,7 +74,7 @@ verify-examples:
 		echo "Resolving examples/PklProject dependencies..."; \
 		(cd examples && pkl project resolve); \
 	fi
-	@for f in $$(find examples/cloudfront-* -name '*.pkl' 2>/dev/null); do \
+	@for f in $$(find examples/cloudfront-* examples/codebuild-* -name '*.pkl' 2>/dev/null); do \
 		echo "Evaluating $$f..."; \
 		FORMAE_TEST_RUN_ID=verify pkl eval --project-dir examples "$$f" >/dev/null || exit 1; \
 	done
