@@ -40,7 +40,17 @@ const (
 	// CodeBuild removes a project's concurrent build limit when the update sends
 	// -1; omitting the field would leave the previous limit in place.
 	clearedConcurrentBuildLimit = -1
+
+	// projectCreatedClockSkew tolerates disagreement between this host's clock
+	// and the creation timestamp CodeBuild assigns, so a project this apply
+	// really did create is not mistaken for one that already existed.
+	projectCreatedClockSkew = time.Minute
 )
+
+// errProjectExists reports a project already present under the declared name and
+// not created by this apply. An existing project is never adopted, so this is a
+// hard conflict; the retry loop wraps it with the project name.
+var errProjectExists = errors.New("a project with that name already exists and is not managed by this resource")
 
 // projectClientInterface is the subset of the CodeBuild API this resource uses.
 // *codebuild.Client satisfies it.
@@ -58,6 +68,7 @@ type Project struct {
 
 	projectFactory func(*config.Config) (projectClientInterface, error)
 
+	now           func() time.Time
 	retryAttempts int
 	retryDelay    time.Duration
 }
@@ -77,6 +88,7 @@ func init() {
 			return &Project{
 				cfg:            cfg,
 				projectFactory: defaultProjectFactory,
+				now:            func() time.Time { return time.Now().UTC() },
 				retryAttempts:  projectRetryAttempts,
 				retryDelay:     projectRetryDelay,
 			}
@@ -186,6 +198,7 @@ func (p *Project) createWithClient(ctx context.Context, client projectClientInte
 		return nil, fmt.Errorf("name is required for a CodeBuild project")
 	}
 	input := createProjectInput(props)
+	firstAttemptAt := p.now()
 
 	created, err := p.callWithRolePropagationRetry(ctx, "creating", props.Name, func(attempt int) (*codebuildtypes.Project, error) {
 		out, err := client.CreateProject(ctx, input)
@@ -196,19 +209,25 @@ func (p *Project) createWithClient(ctx context.Context, client projectClientInte
 			return nil, err
 		}
 		if attempt == 1 {
-			// The project was there before this apply touched it. formae does
-			// not adopt an existing project, so this is a hard conflict.
-			return nil, fmt.Errorf("a project with that name already exists and is not managed by this resource")
+			// The project was there before this apply touched it.
+			return nil, errProjectExists
 		}
-		// Only a retry of our own loop can see the name taken by us: an earlier
-		// attempt succeeded server-side and its response was lost. Read it back
-		// rather than failing an apply that in fact created the project.
+		// A retry can find the name taken because an earlier attempt of this
+		// loop succeeded server-side and lost its response. It can also find it
+		// taken by a project that was already there: CodeBuild validates the
+		// service role before name uniqueness, so a pre-existing project can
+		// fail attempt 1 with the propagation error and only report the
+		// collision on attempt 2. Read the project back and adopt it only once
+		// it is corroborated as this apply's own work.
 		existing, readErr := getProject(ctx, client, props.Name)
 		if readErr != nil {
 			return nil, readErr
 		}
 		if existing == nil {
 			return nil, err
+		}
+		if !createdByThisApply(existing, props.ServiceRole, firstAttemptAt) {
+			return nil, errProjectExists
 		}
 		return existing, nil
 	})
@@ -248,7 +267,7 @@ func (p *Project) callWithRolePropagationRetry(ctx context.Context, action, name
 		plugin.LoggerFromContext(ctx).Info("waiting for the CodeBuild service role to become assumable",
 			"project", name, "attempt", attempt)
 		if waitErr := p.waitBeforeRetry(ctx); waitErr != nil {
-			return nil, waitErr
+			return nil, fmt.Errorf("%s CodeBuild project %q: %w", action, name, waitErr)
 		}
 	}
 }
@@ -265,6 +284,21 @@ func (p *Project) waitBeforeRetry(ctx context.Context) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// createdByThisApply reports whether a project found under the declared name is
+// this apply's own work rather than one that already existed. A create attempt
+// that lost its response leaves a project carrying the service role this apply
+// declared, and one whose creation timestamp cannot predate the apply. Anything
+// else is a pre-existing project, which is never adopted.
+func createdByThisApply(project *codebuildtypes.Project, serviceRole string, firstAttemptAt time.Time) bool {
+	if serviceRole == "" || aws.ToString(project.ServiceRole) != serviceRole {
+		return false
+	}
+	if project.Created != nil && project.Created.Before(firstAttemptAt.Add(-projectCreatedClockSkew)) {
+		return false
+	}
+	return true
 }
 
 // ── Read ────────────────────────────────────────────────────────

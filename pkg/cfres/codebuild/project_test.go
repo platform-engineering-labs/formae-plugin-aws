@@ -19,17 +19,26 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
 const testProjectName = "formae-plugin-sdk-test-cb-project"
 
-func newTestProject(retryDelay time.Duration) *Project {
+const testProjectServiceRole = "arn:aws:iam::123456789012:role/codebuild-project-role"
+
+// testProjectApplyStart is the moment the provisioner's clock reports, so a
+// read-back project's creation timestamp can be placed before or after the apply.
+var testProjectApplyStart = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+
+func newTestProject(client *mockProjectClient, retryDelay time.Duration) *Project {
 	return &Project{
-		cfg:           &config.Config{Region: "us-east-1"},
-		retryAttempts: 3,
-		retryDelay:    retryDelay,
+		cfg:            &config.Config{Region: "us-east-1"},
+		projectFactory: func(*config.Config) (projectClientInterface, error) { return client, nil },
+		now:            func() time.Time { return testProjectApplyStart },
+		retryAttempts:  3,
+		retryDelay:     retryDelay,
 	}
 }
 
@@ -40,7 +49,7 @@ func declaredProjectProperties(t *testing.T) json.RawMessage {
 	js, err := json.Marshal(map[string]any{
 		"Name":        testProjectName,
 		"Description": "plugin sdk test project",
-		"ServiceRole": "arn:aws:iam::123456789012:role/codebuild-project-role",
+		"ServiceRole": testProjectServiceRole,
 		"Source": map[string]any{
 			"Type":      "NO_SOURCE",
 			"BuildSpec": "version: 0.2\n",
@@ -77,7 +86,7 @@ func minimalProjectProperties(t *testing.T) json.RawMessage {
 	t.Helper()
 	js, err := json.Marshal(map[string]any{
 		"Name":        testProjectName,
-		"ServiceRole": "arn:aws:iam::123456789012:role/codebuild-project-role",
+		"ServiceRole": testProjectServiceRole,
 		"Source":      map[string]any{"Type": "NO_SOURCE", "BuildSpec": "version: 0.2\n"},
 		"Artifacts":   map[string]any{"Type": "NO_ARTIFACTS"},
 		"Environment": map[string]any{
@@ -97,7 +106,7 @@ func apiProject() *codebuildtypes.Project {
 		Name:        aws.String(testProjectName),
 		Arn:         aws.String("arn:aws:codebuild:us-east-1:123456789012:project/" + testProjectName),
 		Description: aws.String("plugin sdk test project"),
-		ServiceRole: aws.String("arn:aws:iam::123456789012:role/codebuild-project-role"),
+		ServiceRole: aws.String(testProjectServiceRole),
 		Source: &codebuildtypes.ProjectSource{
 			Type:      codebuildtypes.SourceTypeNoSource,
 			Buildspec: aws.String("version: 0.2\n"),
@@ -145,7 +154,7 @@ func assumeRolePropagationError() error {
 
 func TestProjectCreateMapsPropertiesAndReturnsAPIResponse(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
 
 	client.On("CreateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.CreateProjectOutput{Project: apiProject()}, nil).Once()
@@ -164,7 +173,7 @@ func TestProjectCreateMapsPropertiesAndReturnsAPIResponse(t *testing.T) {
 	in := client.Calls[0].Arguments.Get(1).(*codebuildsdk.CreateProjectInput)
 	assert.Equal(t, testProjectName, aws.ToString(in.Name))
 	assert.Equal(t, "plugin sdk test project", aws.ToString(in.Description))
-	assert.Equal(t, "arn:aws:iam::123456789012:role/codebuild-project-role", aws.ToString(in.ServiceRole))
+	assert.Equal(t, testProjectServiceRole, aws.ToString(in.ServiceRole))
 	require.NotNil(t, in.Source)
 	assert.Equal(t, codebuildtypes.SourceTypeNoSource, in.Source.Type)
 	assert.Equal(t, "version: 0.2\n", aws.ToString(in.Source.Buildspec))
@@ -202,7 +211,7 @@ func TestProjectCreateMapsPropertiesAndReturnsAPIResponse(t *testing.T) {
 
 func TestProjectCreateRetriesOnAssumeRolePropagation(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
 
 	client.On("CreateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.CreateProjectOutput{}, assumeRolePropagationError()).Once()
@@ -220,7 +229,7 @@ func TestProjectCreateRetriesOnAssumeRolePropagation(t *testing.T) {
 
 func TestProjectUpdateRetriesOnAssumeRolePropagation(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
 
 	client.On("UpdateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.UpdateProjectOutput{}, assumeRolePropagationError()).Once()
@@ -244,7 +253,7 @@ func TestProjectUpdateRetriesOnAssumeRolePropagation(t *testing.T) {
 func TestProjectCreateCancelledDuringRetryWaitReturnsPromptly(t *testing.T) {
 	client := &mockProjectClient{}
 	const retryDelay = 30 * time.Second
-	p := newTestProject(retryDelay)
+	p := newTestProject(client, retryDelay)
 
 	client.On("CreateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.CreateProjectOutput{}, assumeRolePropagationError())
@@ -271,7 +280,7 @@ func TestProjectCreateCancelledDuringRetryWaitReturnsPromptly(t *testing.T) {
 // nothing is adopted.
 func TestProjectCreateRejectsExistingProject(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
 
 	client.On("CreateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.CreateProjectOutput{}, &codebuildtypes.ResourceAlreadyExistsException{
@@ -289,13 +298,40 @@ func TestProjectCreateRejectsExistingProject(t *testing.T) {
 	client.AssertNumberOfCalls(t, "CreateProject", 1)
 }
 
+// TestProjectCreateDoesNotRetryNonPropagationFailure asserts a failure that is
+// neither the propagation race nor a name collision spends no retry budget: it is
+// surfaced after the single attempt that produced it.
+func TestProjectCreateDoesNotRetryNonPropagationFailure(t *testing.T) {
+	client := &mockProjectClient{}
+	p := newTestProject(client, time.Millisecond)
+
+	client.On("CreateProject", mock.Anything, mock.Anything).
+		Return(&codebuildsdk.CreateProjectOutput{}, &smithyAPIError{
+			code: "AccessDeniedException",
+			msg:  "not authorized to perform: codebuild:CreateProject",
+		}).Once()
+
+	_, err := p.createWithClient(context.Background(), client, &resource.CreateRequest{
+		ResourceType: projectResourceType,
+		Properties:   declaredProjectProperties(t),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), testProjectName)
+	assert.Contains(t, err.Error(), "not authorized to perform: codebuild:CreateProject")
+	client.AssertNumberOfCalls(t, "CreateProject", 1)
+	client.AssertNotCalled(t, "BatchGetProjects", mock.Anything, mock.Anything)
+}
+
 // TestProjectCreateAdoptsOwnLostCreateOnRetry asserts that a name collision seen
-// only after one of our own retries means an earlier attempt succeeded
-// server-side and lost its response: the project is read back and reported as
-// created.
+// only after one of our own retries, on a project corroborated as this apply's
+// own work, means an earlier attempt succeeded server-side and lost its
+// response: the project is read back and reported as created.
 func TestProjectCreateAdoptsOwnLostCreateOnRetry(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
+
+	ours := *apiProject()
+	ours.Created = aws.Time(testProjectApplyStart.Add(time.Second))
 
 	client.On("CreateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.CreateProjectOutput{}, assumeRolePropagationError()).Once()
@@ -304,7 +340,7 @@ func TestProjectCreateAdoptsOwnLostCreateOnRetry(t *testing.T) {
 			Message: aws.String("Project already exists: " + testProjectName),
 		}).Once()
 	client.On("BatchGetProjects", mock.Anything, mock.Anything).
-		Return(&codebuildsdk.BatchGetProjectsOutput{Projects: []codebuildtypes.Project{*apiProject()}}, nil).Once()
+		Return(&codebuildsdk.BatchGetProjectsOutput{Projects: []codebuildtypes.Project{ours}}, nil).Once()
 
 	res, err := p.createWithClient(context.Background(), client, &resource.CreateRequest{
 		ResourceType: projectResourceType,
@@ -320,9 +356,57 @@ func TestProjectCreateAdoptsOwnLostCreateOnRetry(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
+// TestProjectCreateRefusesToAdoptUncorroboratedProject covers the case a bare
+// "collision after a retry means we created it" inference gets wrong. CodeBuild
+// validates the service role before name uniqueness, so a project that already
+// existed can fail attempt 1 with the propagation error and only report the
+// collision on attempt 2 — at which point adopting it would take over a project
+// this apply never created. A read-back project is therefore adopted only when it
+// carries the declared service role and cannot predate the apply.
+func TestProjectCreateRefusesToAdoptUncorroboratedProject(t *testing.T) {
+	foreignRole := *apiProject()
+	foreignRole.ServiceRole = aws.String("arn:aws:iam::123456789012:role/someone-elses-role")
+	foreignRole.Created = aws.Time(testProjectApplyStart.Add(time.Second))
+
+	predatesApply := *apiProject()
+	predatesApply.Created = aws.Time(testProjectApplyStart.Add(-24 * time.Hour))
+
+	for _, tc := range []struct {
+		name  string
+		found codebuildtypes.Project
+	}{
+		{"different-service-role", foreignRole},
+		{"created-before-this-apply", predatesApply},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockProjectClient{}
+			p := newTestProject(client, time.Millisecond)
+
+			client.On("CreateProject", mock.Anything, mock.Anything).
+				Return(&codebuildsdk.CreateProjectOutput{}, assumeRolePropagationError()).Once()
+			client.On("CreateProject", mock.Anything, mock.Anything).
+				Return(&codebuildsdk.CreateProjectOutput{}, &codebuildtypes.ResourceAlreadyExistsException{
+					Message: aws.String("Project already exists: " + testProjectName),
+				}).Once()
+			client.On("BatchGetProjects", mock.Anything, mock.Anything).
+				Return(&codebuildsdk.BatchGetProjectsOutput{Projects: []codebuildtypes.Project{tc.found}}, nil).Once()
+
+			res, err := p.createWithClient(context.Background(), client, &resource.CreateRequest{
+				ResourceType: projectResourceType,
+				Properties:   declaredProjectProperties(t),
+			})
+			require.Error(t, err)
+			assert.Nil(t, res)
+			assert.Contains(t, err.Error(), testProjectName)
+			assert.Contains(t, err.Error(), "already exists")
+			client.AssertNumberOfCalls(t, "CreateProject", 2)
+		})
+	}
+}
+
 func TestProjectReadMapsProject(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
 
 	client.On("BatchGetProjects", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.BatchGetProjectsOutput{Projects: []codebuildtypes.Project{*apiProject()}}, nil).Once()
@@ -343,7 +427,7 @@ func TestProjectReadMapsProject(t *testing.T) {
 	assert.Equal(t, testProjectName, props["Name"])
 	assert.Equal(t, "arn:aws:codebuild:us-east-1:123456789012:project/"+testProjectName, props["Arn"])
 	assert.Equal(t, "plugin sdk test project", props["Description"])
-	assert.Equal(t, "arn:aws:iam::123456789012:role/codebuild-project-role", props["ServiceRole"])
+	assert.Equal(t, testProjectServiceRole, props["ServiceRole"])
 	assert.Equal(t, float64(20), props["TimeoutInMinutes"])
 	assert.Equal(t, []any{
 		map[string]any{"Key": "Environment", "Value": "test"},
@@ -367,7 +451,7 @@ func TestProjectReadMissingReturnsNotFound(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &mockProjectClient{}
-			p := newTestProject(time.Millisecond)
+			p := newTestProject(client, time.Millisecond)
 			client.On("BatchGetProjects", mock.Anything, mock.Anything).Return(tc.out, nil).Once()
 
 			res, err := p.readWithClient(context.Background(), client, &resource.ReadRequest{
@@ -387,7 +471,7 @@ func TestProjectReadMissingReturnsNotFound(t *testing.T) {
 // removed value alive.
 func TestProjectUpdateSendsClearingRepresentations(t *testing.T) {
 	client := &mockProjectClient{}
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(client, time.Millisecond)
 
 	client.On("UpdateProject", mock.Anything, mock.Anything).
 		Return(&codebuildsdk.UpdateProjectOutput{Project: apiProject()}, nil).Once()
@@ -436,7 +520,7 @@ func TestProjectDelete(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &mockProjectClient{}
-			p := newTestProject(time.Millisecond)
+			p := newTestProject(client, time.Millisecond)
 			client.On("DeleteProject", mock.Anything, mock.Anything).
 				Return(&codebuildsdk.DeleteProjectOutput{}, tc.deleteErr).Once()
 
@@ -456,15 +540,83 @@ func TestProjectDelete(t *testing.T) {
 }
 
 func TestProjectListReturnsEmpty(t *testing.T) {
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(nil, time.Millisecond)
 	res, err := p.List(context.Background(), &resource.ListRequest{ResourceType: projectResourceType})
 	require.NoError(t, err)
 	assert.Empty(t, res.NativeIDs)
 }
 
 func TestProjectStatusIsNotImplemented(t *testing.T) {
-	p := newTestProject(time.Millisecond)
+	p := newTestProject(nil, time.Millisecond)
 	_, err := p.Status(context.Background(), &resource.StatusRequest{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not implemented")
+}
+
+// TestProjectExportedMethodsDelegateThroughFactory drives the four entry points
+// the engine actually calls, so a wrapper wired to the wrong operation or client
+// cannot ship: each one must reach its client method and report the operation it
+// was asked for.
+func TestProjectExportedMethodsDelegateThroughFactory(t *testing.T) {
+	client := &mockProjectClient{}
+	p := newTestProject(client, time.Millisecond)
+	ctx := context.Background()
+
+	client.On("CreateProject", mock.Anything, mock.Anything).
+		Return(&codebuildsdk.CreateProjectOutput{Project: apiProject()}, nil).Once()
+	client.On("UpdateProject", mock.Anything, mock.Anything).
+		Return(&codebuildsdk.UpdateProjectOutput{Project: apiProject()}, nil).Once()
+	client.On("BatchGetProjects", mock.Anything, mock.Anything).
+		Return(&codebuildsdk.BatchGetProjectsOutput{Projects: []codebuildtypes.Project{*apiProject()}}, nil).Once()
+	client.On("DeleteProject", mock.Anything, mock.Anything).
+		Return(&codebuildsdk.DeleteProjectOutput{}, nil).Once()
+
+	createRes, err := p.Create(ctx, &resource.CreateRequest{
+		ResourceType: projectResourceType,
+		Properties:   declaredProjectProperties(t),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationCreate, createRes.ProgressResult.Operation)
+	assert.Equal(t, testProjectName, createRes.ProgressResult.NativeID)
+
+	updateRes, err := p.Update(ctx, &resource.UpdateRequest{
+		ResourceType:      projectResourceType,
+		NativeID:          testProjectName,
+		DesiredProperties: declaredProjectProperties(t),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationUpdate, updateRes.ProgressResult.Operation)
+
+	readRes, err := p.Read(ctx, &resource.ReadRequest{
+		ResourceType: projectResourceType,
+		NativeID:     testProjectName,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, readRes.Properties)
+
+	deleteRes, err := p.Delete(ctx, &resource.DeleteRequest{
+		ResourceType: projectResourceType,
+		NativeID:     testProjectName,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationDelete, deleteRes.ProgressResult.Operation)
+
+	client.AssertExpectations(t)
+}
+
+// TestProjectRegistersOperations asserts the registered operation set matches the
+// implemented one: CheckStatus must stay unregistered, since Create and Update
+// complete synchronously and Status only returns an error.
+func TestProjectRegistersOperations(t *testing.T) {
+	for _, op := range []resource.Operation{
+		resource.OperationCreate,
+		resource.OperationRead,
+		resource.OperationUpdate,
+		resource.OperationDelete,
+		resource.OperationList,
+	} {
+		assert.True(t, registry.HasProvisioner(projectResourceType, op), "operation %s must be registered", op)
+	}
+	assert.False(t, registry.HasProvisioner(projectResourceType, resource.OperationCheckStatus),
+		"CheckStatus must not be registered")
 }
