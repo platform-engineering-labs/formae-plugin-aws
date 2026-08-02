@@ -1,0 +1,243 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+/// AWS CodeBuild build project.
+///
+/// `AWS::CodeBuild::Project` is NON_PROVISIONABLE in CloudControl, so this
+/// resource is managed by a hand-written provisioner over the CodeBuild API
+/// rather than the generic CloudControl path.
+///
+/// Deliberately unsupported in this version — declaring any of them has no
+/// effect because the schema does not model them: `vpcConfig`,
+/// `secondarySources` / `secondarySourceVersions`, `secondaryArtifacts`,
+/// `fileSystemLocations`, `buildBatchConfig`, `badge`, `triggers` (webhooks),
+/// and `visibility`. A project created outside formae is likely to use at least
+/// one of them, and adopting it would silently drop that configuration on the
+/// first update — so the resource is non-discoverable here. Discovery can be
+/// enabled once the full property surface is modelled.
+module aws.codebuild.project
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::CodeBuild::Project"
+
+// These mirror the CodeBuild API's own enumerations. The CloudFormation schema
+// declares no enum on the corresponding properties, so verify-schema cannot
+// catch a missing member — an omitted value just makes a valid configuration
+// undeclarable. Reconcile against the API enumerations when adding one.
+typealias SourceType = "BITBUCKET"|"CODECOMMIT"|"CODEPIPELINE"|"GITHUB"|"GITHUB_ENTERPRISE"|"GITLAB"|"GITLAB_SELF_MANAGED"|"NO_SOURCE"|"S3"
+
+typealias ArtifactsType = "CODEPIPELINE"|"NO_ARTIFACTS"|"S3"
+
+typealias ArtifactsPackaging = "NONE"|"ZIP"
+
+typealias EnvironmentType = "ARM_CONTAINER"|"ARM_EC2"|"ARM_LAMBDA_CONTAINER"|"LINUX_CONTAINER"|"LINUX_EC2"|"LINUX_GPU_CONTAINER"|"LINUX_LAMBDA_CONTAINER"|"MAC_ARM"|"WINDOWS_CONTAINER"|"WINDOWS_EC2"|"WINDOWS_SERVER_2019_CONTAINER"|"WINDOWS_SERVER_2022_CONTAINER"
+
+typealias ComputeType = "ATTRIBUTE_BASED_COMPUTE"|"BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"|"BUILD_GENERAL1_XLARGE"|"BUILD_GENERAL1_2XLARGE"|"BUILD_LAMBDA_1GB"|"BUILD_LAMBDA_2GB"|"BUILD_LAMBDA_4GB"|"BUILD_LAMBDA_8GB"|"BUILD_LAMBDA_10GB"|"CUSTOM_INSTANCE_TYPE"
+
+typealias ImagePullCredentialsType = "CODEBUILD"|"SERVICE_ROLE"
+
+typealias EnvironmentVariableType = "PARAMETER_STORE"|"PLAINTEXT"|"SECRETS_MANAGER"
+
+typealias CacheType = "LOCAL"|"NO_CACHE"|"S3"
+
+typealias CacheMode = "LOCAL_CUSTOM_CACHE"|"LOCAL_DOCKER_LAYER_CACHE"|"LOCAL_SOURCE_CACHE"
+
+typealias LogsStatus = "DISABLED"|"ENABLED"
+
+/// Where the build gets its source from. `secondarySources` are not modelled.
+@aws.SubResourceHint
+open class Source extends formae.SubResource {
+    type: SourceType
+
+    /// Inline build spec. When omitted CodeBuild reads `buildspec.yml` from the
+    /// source root; with `type = "NO_SOURCE"` an inline build spec is required.
+    buildSpec: String?
+
+    location: (String|formae.Resolvable)?
+}
+
+/// Where the build writes its output artifacts. `secondaryArtifacts` are not
+/// modelled.
+@aws.SubResourceHint
+open class Artifacts extends formae.SubResource {
+    type: ArtifactsType
+
+    location: (String|formae.Resolvable)?
+
+    name: String?
+
+    // CodeBuild documents "NONE" as the default packaging; confirm against a
+    // conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    packaging: ArtifactsPackaging?
+}
+
+/// A build environment variable. Plaintext values are stored and returned as
+/// declared; PARAMETER_STORE / SECRETS_MANAGER values hold the name of the
+/// parameter or secret, not its content.
+@aws.SubResourceHint
+open class EnvironmentVariable extends formae.SubResource {
+    name: String
+
+    value: (String|formae.Resolvable)
+
+    type: EnvironmentVariableType?
+}
+
+/// The build compute environment.
+@aws.SubResourceHint
+open class Environment extends formae.SubResource {
+    type: EnvironmentType
+
+    computeType: ComputeType
+
+    /// Build image, e.g. `aws/codebuild/standard:7.0` or an ECR image URI.
+    image: (String|formae.Resolvable)
+
+    /// Required for a build that runs Docker itself (docker-in-docker).
+    privilegedMode: Boolean?
+
+    // CodeBuild documents "CODEBUILD" as the default; confirm against a
+    // conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    imagePullCredentialsType: ImagePullCredentialsType?
+
+    environmentVariables: Listing<EnvironmentVariable>?
+}
+
+/// Build cache settings. `modes` applies to `type = "LOCAL"` only; `location`
+/// (bucket/prefix) applies to `type = "S3"` only.
+@aws.SubResourceHint
+open class Cache extends formae.SubResource {
+    type: CacheType
+
+    location: (String|formae.Resolvable)?
+
+    modes: Listing<CacheMode>?
+}
+
+/// CloudWatch Logs destination for build logs.
+@aws.SubResourceHint
+open class CloudWatchLogs extends formae.SubResource {
+    status: LogsStatus
+
+    /// Log group to write to. Resolvable from an AWS::Logs::LogGroup's
+    /// `logGroupName`.
+    groupName: (String|formae.Resolvable)?
+
+    streamName: String?
+}
+
+/// S3 destination for build logs.
+@aws.SubResourceHint
+open class S3Logs extends formae.SubResource {
+    // Populated as "DISABLED" when the caller declared no S3 log destination at
+    // all; confirm against a conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    status: LogsStatus
+
+    /// `<bucket-name>/<path-prefix>`.
+    location: (String|formae.Resolvable)?
+
+    // Populated as false alongside a defaulted status; confirm against a
+    // conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    encryptionDisabled: Boolean?
+}
+
+/// Build log destinations. Either or both may be enabled.
+@aws.SubResourceHint
+open class LogsConfig extends formae.SubResource {
+    cloudWatchLogs: CloudWatchLogs?
+
+    // A read of a project is expected to return both log destinations, filling
+    // in a disabled S3 destination even when only CloudWatch logs were
+    // declared; confirm against a conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    s3Logs: S3Logs?
+}
+
+open class ProjectResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden name: ProjectResolvable = (this) {
+        property = "Name"
+    }
+
+    hidden arn: ProjectResolvable = (this) {
+        property = "Arn"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Name"
+    discoverable = false
+}
+open class Project extends formae.Resource {
+
+    /// Project name — the resource identity. Changing it replaces the project.
+    @aws.FieldHint { createOnly = true }
+    name: String
+
+    @aws.FieldHint
+    description: String?
+
+    /// ARN of the IAM role CodeBuild assumes to run builds. Resolvable from an
+    /// AWS::IAM::Role's `arn`.
+    @aws.FieldHint
+    serviceRole: (String|formae.Resolvable)
+
+    @aws.FieldHint
+    source: Source
+
+    @aws.FieldHint
+    artifacts: Artifacts
+
+    @aws.FieldHint
+    environment: Environment
+
+    // CodeBuild documents "NO_CACHE" as the default cache type, and a read of a
+    // project created without a cache is expected to come back as
+    // {Type = "NO_CACHE"}; confirm against a conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    cache: Cache?
+
+    @aws.FieldHint
+    logsConfig: LogsConfig?
+
+    // CodeBuild documents 60 as the default build timeout; confirm against a
+    // conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    timeoutInMinutes: Int?
+
+    // CodeBuild documents 480 as the default queued timeout; confirm against a
+    // conformance run.
+    @aws.FieldHint { hasProviderDefault = true }
+    queuedTimeoutInMinutes: Int?
+
+    @aws.FieldHint
+    concurrentBuildLimit: Int?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    /// ARN of the project, assigned by CodeBuild.
+    @aws.FieldHint { hasProviderDefault = true }
+    arn: String?
+
+    local parent = this
+
+    hidden res: ProjectResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

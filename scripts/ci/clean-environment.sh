@@ -1744,5 +1744,36 @@ aws iam list-roles --path-prefix "/aws-service-role/autoscaling.amazonaws.com/" 
     fi
 done
 
+# CodeBuild projects. A project is a leaf as far as this sweep is concerned:
+# deleting it leaves any builds it started to finish on their own, and its
+# service role and log group are reaped by their own sweeps above. Matching is a
+# positive match on the three test prefixes only, so a project created outside
+# the conformance fixtures is never touched.
+echo "Cleaning CodeBuild test projects..."
+aws codebuild list-projects --region "$REGION" \
+    --query "projects[?contains(@, '$FORMAE_PREFIX') || contains(@, '$SDK_PREFIX') || contains(@, '$TEST_PREFIX')]" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r cb_project; do
+    if [[ -n "$cb_project" ]]; then
+        echo "  Deleting CodeBuild project: $cb_project"
+        aws codebuild delete-project --name "$cb_project" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
+# CodeBuild default log groups. A project whose build logs are not pointed at a
+# declared log group writes to `/aws/codebuild/<project-name>`, a group created
+# by the build rather than by the fixture, which outlives the project it belongs
+# to. The generic CloudWatch sweep above matches only "$TEST_PREFIX", so a group
+# under a project named with one of the other two prefixes survives it; match all
+# three here, restricted to the CodeBuild path.
+echo "Cleaning CodeBuild test log groups..."
+aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "/aws/codebuild/" \
+    --query "logGroups[?contains(logGroupName, '$FORMAE_PREFIX') || contains(logGroupName, '$SDK_PREFIX') || contains(logGroupName, '$TEST_PREFIX')].logGroupName" \
+    --output text 2>/dev/null | tr '\t' '\n' | while read -r cb_log_group; do
+    if [[ -n "$cb_log_group" ]]; then
+        echo "  Deleting CodeBuild log group: $cb_log_group"
+        aws logs delete-log-group --log-group-name "$cb_log_group" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 echo ""
 echo "=== Cleanup complete ==="

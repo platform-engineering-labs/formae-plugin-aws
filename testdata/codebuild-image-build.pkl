@@ -9,11 +9,26 @@ import "@formae/formae.pkl"
 
 import "@aws/aws.pkl"
 
+import "@aws/iam/role.pkl"
+import "@aws/logs/loggroup.pkl"
 import "@aws/ecr/repository.pkl"
+import "@aws/codebuild/project.pkl"
 import "@aws/codebuild/imagebuild.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-codebuild-image-build-\(testRunID)"
+local logGroupNameValue = "/formae/plugin-sdk-test/codebuild-image-build/\(testRunID)"
+
+// Placeholder build spec. The ImageBuild supplies the spec it runs as a per-build
+// override, so the project's own spec is never read — it only has to be a
+// well-formed spec the CodeBuild API accepts at create time.
+local testBuildSpec = """
+  version: 0.2
+  phases:
+    build:
+      commands:
+        - echo "plugin sdk test"
+  """
 
 // Push target for the built image. Deleting the ImageBuild removes the image it
 // pushed (scoped to its own tag), so this repository is empty by the time the
@@ -21,6 +36,111 @@ local stackName = "plugin-sdk-test-codebuild-image-build-\(testRunID)"
 local testRepo = new repository.Repository {
   label = "test-ecr-for-image-build"
   repositoryName = "formae-plugin-sdk-test-imgbuild-\(testRunID)"
+}
+
+// CloudWatch Logs destination for the build's logs.
+local testLogGroup = new loggroup.LogGroup {
+  label = "test-loggroup-for-image-build"
+  logGroupName = logGroupNameValue
+  retentionInDays = 1
+}
+
+// Service role the build runs as. It carries exactly what the generated
+// image-build spec does and nothing more: an ECR authorization token, pulls and
+// pushes against the one repository the image is pushed to, and log writes into
+// the declared log group.
+//
+// logs:CreateLogGroup is deliberately absent. The log group is a declared
+// resource that the project depends on, so it already exists when the build
+// starts; a build that turned out to need the permission would be telling us the
+// dependency edge is broken rather than that the policy is short a statement.
+local buildRole = new role.Role {
+  label = "image-build-project-role"
+  roleName = "formae-sdk-test-imgbuild-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "codebuild.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+  policies {
+    new {
+      policyName = "image-build-ecr-and-logs"
+      policyDocument {
+        ["Version"] = "2012-10-17"
+        ["Statement"] {
+          // `aws ecr get-login-password` in the pre_build phase. The token is
+          // registry-wide, so this action admits no resource scope.
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] = "ecr:GetAuthorizationToken"
+            ["Resource"] = "*"
+          }
+          // `docker push` in the build phase, against the one repository the
+          // image is pushed to.
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "ecr:BatchCheckLayerAvailability"
+              "ecr:BatchGetImage"
+              "ecr:GetDownloadUrlForLayer"
+              "ecr:InitiateLayerUpload"
+              "ecr:UploadLayerPart"
+              "ecr:CompleteLayerUpload"
+              "ecr:PutImage"
+            }
+            ["Resource"] = testRepo.res.arn
+          }
+          // Build logs. A log group's ARN already carries a ":*" suffix, so it
+          // covers the log streams under the group — which is what these two
+          // actions are authorized against.
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "logs:CreateLogStream"
+              "logs:PutLogEvents"
+            }
+            ["Resource"] = testLogGroup.res.arn
+          }
+        }
+      }
+    }
+  }
+}
+
+// Build project the image build runs on. NO_SOURCE + NO_ARTIFACTS and a
+// privileged Linux container are what the ImageBuild pre-flight requires.
+local testProject = new project.Project {
+  label = "test-project-for-image-build"
+  name = "formae-plugin-sdk-test-imgbuild-project-\(testRunID)"
+  description = "Plugin SDK test project for ImageBuild"
+  serviceRole = buildRole.res.arn
+  source {
+    type = "NO_SOURCE"
+    buildSpec = testBuildSpec
+  }
+  artifacts {
+    type = "NO_ARTIFACTS"
+  }
+  environment {
+    type = "LINUX_CONTAINER"
+    computeType = "BUILD_GENERAL1_SMALL"
+    image = "aws/codebuild/standard:7.0"
+    privilegedMode = true
+  }
+  logsConfig {
+    cloudWatchLogs {
+      status = "ENABLED"
+      groupName = testLogGroup.res.logGroupName
+    }
+  }
+  timeoutInMinutes = 20
 }
 
 forma {
@@ -36,8 +156,17 @@ forma {
     }
   }
 
-  // ECR repository dependency (referenced as a resolvable below).
+  // Service role the build project runs as (referenced as a resolvable below).
+  buildRole
+
+  // Log group the build writes its logs to (referenced as a resolvable below).
+  testLogGroup
+
+  // ECR repository the image is pushed to (referenced as a resolvable below).
   testRepo
+
+  // Build project the image build runs on (referenced as a resolvable below).
+  testProject
 
   // Resource under test — last, singleton, and a leaf. A tiny literal Dockerfile
   // over a cheap public base keeps the build fast while still exercising a real
@@ -47,6 +176,6 @@ forma {
     ecrRepositoryUri = testRepo.res.repositoryUri
     imageTag = "sdk-test-\(testRunID)"
     dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\n"
-    timeoutMinutes = 20
+    projectName = testProject.res.name
   }
 }

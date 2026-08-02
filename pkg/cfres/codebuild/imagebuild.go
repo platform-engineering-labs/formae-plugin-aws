@@ -18,9 +18,6 @@ import (
 	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	ecrsdk "github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
-	iamsdk "github.com/aws/aws-sdk-go-v2/service/iam"
-	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
-	"github.com/aws/smithy-go"
 
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -36,13 +33,17 @@ const resourceType = "AWS::CodeBuild::ImageBuild"
 // provisioning slack) before declaring failure.
 const pollDeadlineBuffer = 10 * time.Minute
 
+// defaultBuildTimeoutMinutes is CodeBuild's own default build timeout, used to
+// derive the poll deadline when StartBuild's response does not report the timeout
+// it resolved for the build.
+const defaultBuildTimeoutMinutes = 60
+
 // codeBuildClientInterface is the subset of the CodeBuild API this resource uses.
+// It carries no project lifecycle call: the build project is a declared resource
+// of its own (AWS::CodeBuild::Project) that this resource only references.
 // *codebuild.Client satisfies it.
 type codeBuildClientInterface interface {
 	BatchGetProjects(ctx context.Context, params *codebuildsdk.BatchGetProjectsInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.BatchGetProjectsOutput, error)
-	CreateProject(ctx context.Context, params *codebuildsdk.CreateProjectInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.CreateProjectOutput, error)
-	UpdateProject(ctx context.Context, params *codebuildsdk.UpdateProjectInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.UpdateProjectOutput, error)
-	DeleteProject(ctx context.Context, params *codebuildsdk.DeleteProjectInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.DeleteProjectOutput, error)
 	StartBuild(ctx context.Context, params *codebuildsdk.StartBuildInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.StartBuildOutput, error)
 	BatchGetBuilds(ctx context.Context, params *codebuildsdk.BatchGetBuildsInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.BatchGetBuildsOutput, error)
 	ListBuildsForProject(ctx context.Context, params *codebuildsdk.ListBuildsForProjectInput, optFns ...func(*codebuildsdk.Options)) (*codebuildsdk.ListBuildsForProjectOutput, error)
@@ -55,27 +56,17 @@ type ecrClientInterface interface {
 	BatchDeleteImage(ctx context.Context, params *ecrsdk.BatchDeleteImageInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.BatchDeleteImageOutput, error)
 }
 
-// iamClientInterface is the subset of the IAM API this resource uses to manage the
-// internal CodeBuild service role.
-type iamClientInterface interface {
-	GetRole(ctx context.Context, params *iamsdk.GetRoleInput, optFns ...func(*iamsdk.Options)) (*iamsdk.GetRoleOutput, error)
-	CreateRole(ctx context.Context, params *iamsdk.CreateRoleInput, optFns ...func(*iamsdk.Options)) (*iamsdk.CreateRoleOutput, error)
-	PutRolePolicy(ctx context.Context, params *iamsdk.PutRolePolicyInput, optFns ...func(*iamsdk.Options)) (*iamsdk.PutRolePolicyOutput, error)
-	DeleteRolePolicy(ctx context.Context, params *iamsdk.DeleteRolePolicyInput, optFns ...func(*iamsdk.Options)) (*iamsdk.DeleteRolePolicyOutput, error)
-	DeleteRole(ctx context.Context, params *iamsdk.DeleteRoleInput, optFns ...func(*iamsdk.Options)) (*iamsdk.DeleteRoleOutput, error)
-}
-
 // ImageBuild is the synthetic build-during-apply provisioner that builds and
-// pushes a container image from a caller-supplied Dockerfile.
+// pushes a container image from a caller-supplied Dockerfile. It runs the build on
+// a declared AWS::CodeBuild::Project and creates no AWS resource of its own beyond
+// the pushed image.
 type ImageBuild struct {
 	cfg *config.Config
 
 	codeBuildFactory func(*config.Config) (codeBuildClientInterface, error)
 	ecrFactory       func(*config.Config) (ecrClientInterface, error)
-	iamFactory       func(*config.Config) (iamClientInterface, error)
 
-	now   func() time.Time
-	sleep func(time.Duration)
+	now func() time.Time
 }
 
 var _ prov.Provisioner = &ImageBuild{}
@@ -95,9 +86,7 @@ func init() {
 				cfg:              cfg,
 				codeBuildFactory: defaultCodeBuildFactory,
 				ecrFactory:       defaultEcrFactory,
-				iamFactory:       defaultIamFactory,
 				now:              func() time.Time { return time.Now().UTC() },
-				sleep:            time.Sleep,
 			}
 		})
 }
@@ -118,26 +107,21 @@ func defaultEcrFactory(cfg *config.Config) (ecrClientInterface, error) {
 	return ecrsdk.NewFromConfig(awsCfg), nil
 }
 
-func defaultIamFactory(cfg *config.Config) (iamClientInterface, error) {
-	awsCfg, err := cfg.ToAwsConfig(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return iamsdk.NewFromConfig(awsCfg), nil
-}
-
 // ── NativeID / RequestID codecs ─────────────────────────────────
 
-// encodeNativeID joins the push target into the composite identity. Neither the
-// repository URI nor the tag can contain '|', so SplitN round-trips cleanly.
-func encodeNativeID(repoURI, tag string) string { return repoURI + "|" + tag }
+// encodeNativeID joins the push target and the build project into the composite
+// identity. None of the repository URI, the tag, or the project name can contain
+// '|', so SplitN round-trips cleanly.
+func encodeNativeID(repoURI, tag, projectName string) string {
+	return repoURI + "|" + tag + "|" + projectName
+}
 
-func parseNativeID(nativeID string) (repoURI, tag string, err error) {
-	parts := strings.SplitN(nativeID, "|", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("invalid NativeID %q: expected <repositoryUri>|<tag>", nativeID)
+func parseNativeID(nativeID string) (repoURI, tag, projectName string, err error) {
+	parts := strings.SplitN(nativeID, "|", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", fmt.Errorf("invalid NativeID %q: expected <repositoryUri>|<tag>|<projectName>", nativeID)
 	}
-	return parts[0], parts[1], nil
+	return parts[0], parts[1], parts[2], nil
 }
 
 // requestState is what a build's RequestID carries so Status can poll the exact
@@ -145,12 +129,14 @@ func parseNativeID(nativeID string) (repoURI, tag string, err error) {
 // is the digest this resource previously had under the same tag (empty on Create);
 // once the new build succeeds Status prunes it so an in-place rebuild does not leave
 // the old manifest behind as an untagged image. None of the fields can contain '|'
-// (a repository URI, a tag, an RFC3339 time, a hex hash, and a sha256: digest).
+// (a repository URI, a tag, a project name, an RFC3339 time, a hex hash, and a
+// sha256: digest).
 type requestState struct {
 	Operation       string
 	BuildID         string
 	RepoURI         string
 	Tag             string
+	ProjectName     string
 	Deadline        time.Time
 	BuildConfigHash string
 	PriorDigest     string
@@ -162,6 +148,7 @@ func encodeRequestID(s requestState) string {
 		s.BuildID,
 		s.RepoURI,
 		s.Tag,
+		s.ProjectName,
 		s.Deadline.UTC().Format(time.RFC3339),
 		s.BuildConfigHash,
 		s.PriorDigest,
@@ -169,11 +156,11 @@ func encodeRequestID(s requestState) string {
 }
 
 func decodeRequestID(requestID string) (requestState, error) {
-	parts := strings.SplitN(requestID, "|", 7)
-	if len(parts) != 7 {
+	parts := strings.SplitN(requestID, "|", 8)
+	if len(parts) != 8 {
 		return requestState{}, fmt.Errorf("invalid RequestID %q", requestID)
 	}
-	deadline, err := time.Parse(time.RFC3339, parts[4])
+	deadline, err := time.Parse(time.RFC3339, parts[5])
 	if err != nil {
 		return requestState{}, fmt.Errorf("invalid deadline in RequestID: %w", err)
 	}
@@ -182,9 +169,10 @@ func decodeRequestID(requestID string) (requestState, error) {
 		BuildID:         parts[1],
 		RepoURI:         parts[2],
 		Tag:             parts[3],
+		ProjectName:     parts[4],
 		Deadline:        deadline,
-		BuildConfigHash: parts[5],
-		PriorDigest:     parts[6],
+		BuildConfigHash: parts[6],
+		PriorDigest:     parts[7],
 	}, nil
 }
 
@@ -195,184 +183,145 @@ func (a *ImageBuild) Create(ctx context.Context, request *resource.CreateRequest
 	if err := json.Unmarshal(request.Properties, &in); err != nil {
 		return nil, fmt.Errorf("ImageBuild: invalid Properties: %w", err)
 	}
-	pr, err := a.startBuild(ctx, in, resource.OperationCreate, "")
+	if err := validateInput(in); err != nil {
+		return nil, fmt.Errorf("ImageBuild: %w", err)
+	}
+	client, ref, project, err := a.preflight(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	pr, err := a.startBuild(ctx, client, in, ref, project, resource.OperationCreate, "")
 	if err != nil {
 		return nil, err
 	}
 	return &resource.CreateResult{ProgressResult: pr}, nil
 }
 
-// startBuild validates inputs, ensures the internal role and project exist, kicks
-// off a build, and returns an InProgress ProgressResult carrying the poll state.
-// priorDigest is the digest currently recorded under the tag (empty on Create); it
-// is carried through so Status can prune it once the new build succeeds.
-func (a *ImageBuild) startBuild(ctx context.Context, in imageBuildInput, op resource.Operation, priorDigest string) (*resource.ProgressResult, error) {
-	if err := validateInput(in); err != nil {
-		return nil, fmt.Errorf("ImageBuild: %w", err)
-	}
-	n := normalizeInput(in)
-	ref, err := parseEcrRepositoryURI(n.EcrRepositoryURI)
+// preflight resolves the push target and the referenced build project, rejecting
+// anything the build could not possibly succeed against. It performs the single
+// read of the project; every path that needs the project takes it from here rather
+// than fetching it again.
+//
+// Preconditions that cannot be checked cheaply are deliberately left to the build:
+// whether the project's VPC configuration has egress to ECR, STS and CloudWatch
+// Logs, and whether its service role actually grants the ECR pushes, surface as
+// real AWS errors from the build itself.
+func (a *ImageBuild) preflight(ctx context.Context, in imageBuildInput) (codeBuildClientInterface, ecrRepositoryRef, *codebuildtypes.Project, error) {
+	ref, err := parseEcrRepositoryURI(in.EcrRepositoryURI)
 	if err != nil {
-		return nil, fmt.Errorf("ImageBuild: %w", err)
+		return nil, ecrRepositoryRef{}, nil, fmt.Errorf("ImageBuild: %w", err)
 	}
-	// The CodeBuild project, its IAM role, its log group, and the ECR API clients
-	// all run in the target's region, and the internal role's inline policy is
-	// scoped to the target account. The push target must therefore be an ECR
-	// repository in that same region (v1 also assumes the same account); a
-	// cross-region repository would build but then fail to log or to be read/deleted.
+	// The build project, its log group, and the ECR API clients all run in the
+	// target's region. The push target must therefore be an ECR repository in that
+	// same region (v1 also assumes the same account); a cross-region repository
+	// would build but then fail to be read or deleted.
 	if a.cfg.Region != "" && ref.Region != a.cfg.Region {
-		return nil, fmt.Errorf("ImageBuild: ecrRepositoryUri region %q must match the target region %q", ref.Region, a.cfg.Region)
-	}
-	projectName, roleName := resourceNames(ref.URI, n.ImageTag)
-
-	cbClient, err := a.codeBuildFactory(a.cfg)
-	if err != nil {
-		return nil, err
-	}
-	iamClient, err := a.iamFactory(a.cfg)
-	if err != nil {
-		return nil, err
+		return nil, ecrRepositoryRef{}, nil, fmt.Errorf("ImageBuild: ecrRepositoryUri region %q must match the target region %q", ref.Region, a.cfg.Region)
 	}
 
-	roleArn, err := a.ensureRole(ctx, iamClient, n, ref, roleName, projectName)
+	client, err := a.codeBuildFactory(a.cfg)
 	if err != nil {
-		return nil, err
+		return nil, ecrRepositoryRef{}, nil, err
 	}
-	if err := a.ensureProject(ctx, cbClient, n, projectName, roleArn); err != nil {
-		return nil, err
+	project, err := preflightProject(ctx, client, in.ProjectName)
+	if err != nil {
+		return nil, ecrRepositoryRef{}, nil, err
 	}
+	return client, ref, project, nil
+}
 
-	buildID, err := a.dispatchBuild(ctx, cbClient, projectName, ref, n.ImageTag, n.Dockerfile, n.BuildArgs)
+// preflightProject reads the referenced project and rejects a configuration the
+// generated build cannot run under, so a misconfigured project fails immediately
+// with an actionable message rather than after a full build attempt.
+func preflightProject(ctx context.Context, client codeBuildClientInterface, projectName string) (*codebuildtypes.Project, error) {
+	project, err := getProject(ctx, client, projectName)
+	if err != nil {
+		return nil, fmt.Errorf("ImageBuild: looking up build project %q: %w", projectName, err)
+	}
+	if project == nil {
+		return nil, fmt.Errorf("ImageBuild: build project %q does not exist; declare it as an AWS::CodeBuild::Project", projectName)
+	}
+	env := project.Environment
+	// The build runs docker itself, so the project's environment must be privileged.
+	if env == nil || !aws.ToBool(env.PrivilegedMode) {
+		return nil, fmt.Errorf("ImageBuild: build project %q must set environment.privilegedMode to true to run a docker build", projectName)
+	}
+	// The generated buildspec is a Linux container shell script.
+	if env.Type != codebuildtypes.EnvironmentTypeLinuxContainer {
+		return nil, fmt.Errorf("ImageBuild: build project %q must use environment.type %q, got %q",
+			projectName, codebuildtypes.EnvironmentTypeLinuxContainer, env.Type)
+	}
+	// Everything the build needs arrives per build, and its result is the pushed
+	// image rather than an artifact.
+	if project.Source == nil || project.Source.Type != codebuildtypes.SourceTypeNoSource {
+		return nil, fmt.Errorf("ImageBuild: build project %q must use source.type %q, got %q",
+			projectName, codebuildtypes.SourceTypeNoSource, sourceType(project.Source))
+	}
+	if project.Artifacts == nil || project.Artifacts.Type != codebuildtypes.ArtifactsTypeNoArtifacts {
+		return nil, fmt.Errorf("ImageBuild: build project %q must use artifacts.type %q, got %q",
+			projectName, codebuildtypes.ArtifactsTypeNoArtifacts, artifactsType(project.Artifacts))
+	}
+	return project, nil
+}
+
+// sourceType and artifactsType report a project's declared source and artifacts
+// type for a rejection message, rendering an absent block as the empty string so
+// the message names the offending value in every case.
+func sourceType(source *codebuildtypes.ProjectSource) codebuildtypes.SourceType {
+	if source == nil {
+		return ""
+	}
+	return source.Type
+}
+
+func artifactsType(artifacts *codebuildtypes.ProjectArtifacts) codebuildtypes.ArtifactsType {
+	if artifacts == nil {
+		return ""
+	}
+	return artifacts.Type
+}
+
+// startBuild dispatches a build on the pre-flight-validated project and returns an
+// InProgress ProgressResult carrying the poll state. priorDigest is the digest
+// currently recorded under the tag (empty on Create); it is carried through so
+// Status can prune it once the new build succeeds.
+func (a *ImageBuild) startBuild(ctx context.Context, client codeBuildClientInterface, in imageBuildInput, ref ecrRepositoryRef, project *codebuildtypes.Project, op resource.Operation, priorDigest string) (*resource.ProgressResult, error) {
+	projectName := aws.ToString(project.Name)
+
+	buildID, timeoutMinutes, err := a.dispatchBuild(ctx, client, projectName, ref, in.ImageTag, in.Dockerfile, in.BuildArgs)
 	if err != nil {
 		return nil, err
 	}
 	plugin.LoggerFromContext(ctx).Info("ImageBuild: build started",
-		"project", projectName, "buildId", buildID, "imageUri", imageURI(ref.URI, n.ImageTag))
+		"project", projectName, "buildId", buildID, "imageUri", imageURI(ref.URI, in.ImageTag))
 
-	deadline := a.now().Add(time.Duration(n.TimeoutMinutes)*time.Minute + pollDeadlineBuffer)
+	deadline := a.now().Add(time.Duration(timeoutMinutes)*time.Minute + pollDeadlineBuffer)
 	state := requestState{
 		Operation:       string(op),
 		BuildID:         buildID,
 		RepoURI:         ref.URI,
-		Tag:             n.ImageTag,
+		Tag:             in.ImageTag,
+		ProjectName:     projectName,
 		Deadline:        deadline,
-		BuildConfigHash: computeBuildConfigHash(n),
+		BuildConfigHash: computeBuildConfigHash(in, project),
 		PriorDigest:     priorDigest,
 	}
 	return &resource.ProgressResult{
 		Operation:       op,
 		OperationStatus: resource.OperationStatusInProgress,
-		NativeID:        encodeNativeID(ref.URI, n.ImageTag),
+		NativeID:        encodeNativeID(ref.URI, in.ImageTag, projectName),
 		RequestID:       encodeRequestID(state),
 	}, nil
 }
 
-// ensureRole adopts a BYO role when serviceRoleArn is set, otherwise idempotently
-// creates the internal role and (re)writes its inline policy. It returns the role
-// ARN CodeBuild should assume.
-func (a *ImageBuild) ensureRole(ctx context.Context, client iamClientInterface, in imageBuildInput, ref ecrRepositoryRef, roleName, projectName string) (string, error) {
-	if in.ServiceRoleArn != "" {
-		// BYO role: the plugin never creates, mutates, or deletes it.
-		return in.ServiceRoleArn, nil
-	}
-
-	var roleArn string
-	getOut, err := client.GetRole(ctx, &iamsdk.GetRoleInput{RoleName: aws.String(roleName)})
-	switch {
-	case err == nil:
-		roleArn = aws.ToString(getOut.Role.Arn)
-	case isIAMNotFound(err):
-		createOut, cerr := client.CreateRole(ctx, &iamsdk.CreateRoleInput{
-			RoleName:                 aws.String(roleName),
-			AssumeRolePolicyDocument: aws.String(buildTrustPolicy()),
-			Description:              aws.String("formae-managed CodeBuild service role for building a container image"),
-		})
-		if cerr != nil {
-			return "", fmt.Errorf("ImageBuild: creating service role: %w", cerr)
-		}
-		roleArn = aws.ToString(createOut.Role.Arn)
-	default:
-		return "", fmt.Errorf("ImageBuild: getting service role: %w", err)
-	}
-
-	if _, err := client.PutRolePolicy(ctx, &iamsdk.PutRolePolicyInput{
-		RoleName:       aws.String(roleName),
-		PolicyName:     aws.String(inlinePolicyName),
-		PolicyDocument: aws.String(buildInlinePolicy(ref, projectName)),
-	}); err != nil {
-		return "", fmt.Errorf("ImageBuild: putting role policy: %w", err)
-	}
-	return roleArn, nil
-}
-
-// ensureProject creates or updates the internal CodeBuild project. A freshly
-// created role can lag IAM propagation, so project creation retries briefly on the
-// CodeBuild "cannot assume role" error.
-func (a *ImageBuild) ensureProject(ctx context.Context, client codeBuildClientInterface, in imageBuildInput, projectName, roleArn string) error {
-	getOut, err := client.BatchGetProjects(ctx, &codebuildsdk.BatchGetProjectsInput{Names: []string{projectName}})
-	if err != nil {
-		return fmt.Errorf("ImageBuild: looking up build project: %w", err)
-	}
-	exists := len(getOut.Projects) > 0
-
-	env := &codebuildtypes.ProjectEnvironment{
-		Type:                     codebuildtypes.EnvironmentTypeLinuxContainer,
-		ComputeType:              codebuildtypes.ComputeType(in.ComputeType),
-		Image:                    aws.String(in.BuildEnvironmentImage),
-		PrivilegedMode:           aws.Bool(true),
-		ImagePullCredentialsType: codebuildtypes.ImagePullCredentialsTypeCodebuild,
-	}
-	source := &codebuildtypes.ProjectSource{
-		Type:      codebuildtypes.SourceTypeNoSource,
-		Buildspec: aws.String(generateBuildspec()),
-	}
-	artifacts := &codebuildtypes.ProjectArtifacts{Type: codebuildtypes.ArtifactsTypeNoArtifacts}
-	timeout := aws.Int32(int32(in.TimeoutMinutes))
-
-	if exists {
-		_, err := client.UpdateProject(ctx, &codebuildsdk.UpdateProjectInput{
-			Name:             aws.String(projectName),
-			Source:           source,
-			Artifacts:        artifacts,
-			Environment:      env,
-			ServiceRole:      aws.String(roleArn),
-			TimeoutInMinutes: timeout,
-		})
-		if err != nil {
-			return fmt.Errorf("ImageBuild: updating build project: %w", err)
-		}
-		return nil
-	}
-
-	create := func() error {
-		_, err := client.CreateProject(ctx, &codebuildsdk.CreateProjectInput{
-			Name:             aws.String(projectName),
-			Source:           source,
-			Artifacts:        artifacts,
-			Environment:      env,
-			ServiceRole:      aws.String(roleArn),
-			TimeoutInMinutes: timeout,
-		})
-		return err
-	}
-	const maxAttempts = 8
-	for attempt := 1; ; attempt++ {
-		err := create()
-		if err == nil {
-			return nil
-		}
-		if attempt >= maxAttempts || !isAssumeRolePropagationError(err) {
-			return fmt.Errorf("ImageBuild: creating build project: %w", err)
-		}
-		a.sleep(3 * time.Second)
-	}
-}
-
-// dispatchBuild starts the build with the per-build environment overrides and
-// returns the build id.
-func (a *ImageBuild) dispatchBuild(ctx context.Context, client codeBuildClientInterface, projectName string, ref ecrRepositoryRef, tag, dockerfile string, buildArgs map[string]string) (string, error) {
+// dispatchBuild starts the build with the generated buildspec and the per-build
+// environment overrides, and returns the build id along with the timeout CodeBuild
+// resolved for it. The project's own buildspec is never read or written: the build
+// this resource runs is defined entirely by the override.
+func (a *ImageBuild) dispatchBuild(ctx context.Context, client codeBuildClientInterface, projectName string, ref ecrRepositoryRef, tag, dockerfile string, buildArgs map[string]string) (string, int32, error) {
 	out, err := client.StartBuild(ctx, &codebuildsdk.StartBuildInput{
-		ProjectName: aws.String(projectName),
+		ProjectName:       aws.String(projectName),
+		BuildspecOverride: aws.String(generateBuildspec()),
 		EnvironmentVariablesOverride: []codebuildtypes.EnvironmentVariable{
 			{Name: aws.String(dockerfileEnvVar), Value: aws.String(base64.StdEncoding.EncodeToString([]byte(dockerfile))), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
 			{Name: aws.String(buildArgsEnvVar), Value: aws.String(base64.StdEncoding.EncodeToString([]byte(buildArgsFile(buildArgs)))), Type: codebuildtypes.EnvironmentVariableTypePlaintext},
@@ -382,12 +331,18 @@ func (a *ImageBuild) dispatchBuild(ctx context.Context, client codeBuildClientIn
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("ImageBuild: starting build: %w", err)
+		return "", 0, fmt.Errorf("ImageBuild: starting build: %w", err)
 	}
 	if out.Build == nil || out.Build.Id == nil {
-		return "", fmt.Errorf("ImageBuild: StartBuild did not return a build id")
+		return "", 0, fmt.Errorf("ImageBuild: StartBuild did not return a build id")
 	}
-	return aws.ToString(out.Build.Id), nil
+	// The deadline follows the timeout CodeBuild resolved for this build, which
+	// takes the project's timeout and any override into account.
+	timeoutMinutes := int32(defaultBuildTimeoutMinutes)
+	if t := aws.ToInt32(out.Build.TimeoutInMinutes); t > 0 {
+		timeoutMinutes = t
+	}
+	return aws.ToString(out.Build.Id), timeoutMinutes, nil
 }
 
 // ── Status ──────────────────────────────────────────────────────
@@ -417,7 +372,7 @@ func (a *ImageBuild) Status(ctx context.Context, request *resource.StatusRequest
 
 	pr := &resource.ProgressResult{
 		Operation: op,
-		NativeID:  encodeNativeID(state.RepoURI, state.Tag),
+		NativeID:  encodeNativeID(state.RepoURI, state.Tag, state.ProjectName),
 		RequestID: request.RequestID,
 	}
 
@@ -490,7 +445,7 @@ func buildOutputsFromExports(exports []codebuildtypes.ExportedEnvironmentVariabl
 // ── Read ────────────────────────────────────────────────────────
 
 func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
-	repoURI, tag, err := parseNativeID(request.NativeID)
+	repoURI, tag, _, err := parseNativeID(request.NativeID)
 	if err != nil {
 		return nil, err
 	}
@@ -536,26 +491,58 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 	if err := json.Unmarshal(request.DesiredProperties, &desired); err != nil {
 		return nil, fmt.Errorf("ImageBuild: invalid DesiredProperties: %w", err)
 	}
+	// The prior row carries both the outputs the last build recorded and the inputs
+	// it was built from; the adoption path below needs the inputs as well.
 	var prior imageBuildOutputs
+	var priorInputs imageBuildInput
 	if len(request.PriorProperties) > 0 {
 		_ = json.Unmarshal(request.PriorProperties, &prior)
+		_ = json.Unmarshal(request.PriorProperties, &priorInputs)
 	}
 
 	if err := validateInput(desired); err != nil {
 		return nil, fmt.Errorf("ImageBuild: %w", err)
 	}
-	newHash := computeBuildConfigHash(desired)
+	client, ref, project, err := a.preflight(ctx, desired)
+	if err != nil {
+		return nil, err
+	}
+	// The hash covers the referenced project as well as this resource's own inputs,
+	// and is taken over the project pre-flight already read, so no path — including
+	// the one that does not rebuild — pays for a second lookup.
+	newHash := computeBuildConfigHash(desired, project)
+
+	// A hash recorded before the current scheme was taken over a different set of
+	// inputs, so it can never match. Adopt it instead of rebuilding: the recorded
+	// image still being under the declared tag is what the comparison is really
+	// asking, and a rebuild would re-push an existing tag, which an immutable
+	// repository rejects. Adoption is confined to that migration — it requires this
+	// resource's own inputs to be unchanged, so a Dockerfile edit made in the same
+	// apply is built rather than silently recorded as already built. Input changes
+	// after the adoption rebuild as normal.
+	adoptLegacy := isLegacyBuildConfigHash(prior.BuildConfigHash) &&
+		priorInputsUnchanged(priorInputs, desired)
 
 	// Rebuild only when the build-affecting inputs changed, or the declared tag no
 	// longer resolves to the recorded digest in ECR (missing, or moved out of band).
-	if prior.BuildConfigHash != "" && prior.BuildConfigHash == newHash {
+	if prior.BuildConfigHash == newHash || adoptLegacy {
 		matches, err := a.tagMatchesDigest(ctx, request.NativeID, prior.ImageDigest)
 		if err != nil {
 			return nil, err
 		}
 		if matches {
+			if adoptLegacy {
+				// A skipped build the operator may have expected to run is worth
+				// saying out loud, since the reason is a hash-scheme change rather
+				// than anything in their forma.
+				plugin.LoggerFromContext(ctx).Info("ImageBuild: adopting build-config hash recorded under an earlier scheme; the pushed image is unchanged, so no build is run",
+					"imageUri", imageURI(ref.URI, desired.ImageTag), "imageDigest", prior.ImageDigest)
+			}
 			outputs := prior
 			outputs.ImageTag = desired.ImageTag
+			// Persist the current hash, so an adopted legacy hash is compared like
+			// with like from the next update on.
+			outputs.BuildConfigHash = newHash
 			js, _ := json.Marshal(outputs)
 			return &resource.UpdateResult{ProgressResult: &resource.ProgressResult{
 				Operation:          resource.OperationUpdate,
@@ -566,7 +553,7 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 		}
 	}
 
-	pr, err := a.startBuild(ctx, desired, resource.OperationUpdate, prior.ImageDigest)
+	pr, err := a.startBuild(ctx, client, desired, ref, project, resource.OperationUpdate, prior.ImageDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +568,7 @@ func (a *ImageBuild) tagMatchesDigest(ctx context.Context, nativeID, digest stri
 	if digest == "" {
 		return false, nil
 	}
-	repoURI, tag, err := parseNativeID(nativeID)
+	repoURI, tag, _, err := parseNativeID(nativeID)
 	if err != nil {
 		return false, err
 	}
@@ -612,29 +599,20 @@ func (a *ImageBuild) tagMatchesDigest(ctx context.Context, nativeID, digest stri
 // ── Delete ──────────────────────────────────────────────────────
 
 func (a *ImageBuild) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	repoURI, tag, err := parseNativeID(request.NativeID)
+	repoURI, tag, projectName, err := parseNativeID(request.NativeID)
 	if err != nil {
 		return nil, err
 	}
-	projectName, roleName := resourceNames(repoURI, tag)
 
 	cbClient, err := a.codeBuildFactory(a.cfg)
 	if err != nil {
 		return nil, err
 	}
-	iamClient, err := a.iamFactory(a.cfg)
-	if err != nil {
-		return nil, err
-	}
 
-	// Stop any in-flight build for the project before deleting it.
-	a.stopInFlightBuilds(ctx, cbClient, projectName)
-
-	// An already-gone project is success: a partially-completed delete must be
-	// retryable through to cleaning up the pushed image and role below.
-	if _, err := cbClient.DeleteProject(ctx, &codebuildsdk.DeleteProjectInput{Name: aws.String(projectName)}); err != nil && !isCodeBuildNotFound(err) {
-		return nil, fmt.Errorf("ImageBuild: deleting build project: %w", err)
-	}
+	// Stop this resource's own in-flight builds. The project is declared and torn
+	// down separately, and may be shared with other image builds, so neither the
+	// project nor anyone else's builds are touched here.
+	a.stopInFlightBuilds(ctx, cbClient, projectName, imageURI(repoURI, tag))
 
 	// Remove the image this resource pushed so the push-target repository is left
 	// empty and can itself be torn down. Deletion is scoped to exactly the tag this
@@ -642,23 +620,6 @@ func (a *ImageBuild) Delete(ctx context.Context, request *resource.DeleteRequest
 	// already-gone image or repository is success.
 	if err := a.deletePushedImage(ctx, repoURI, tag); err != nil {
 		return nil, err
-	}
-
-	// Only remove the service role when it exists under this plugin's deterministic
-	// internal name. A BYO-role deployment never creates that role (its role has a
-	// caller-owned ARN), so the lookup misses and the caller's role is left
-	// untouched per the schema contract — and a BYO deployment that does not grant
-	// the agent IAM access does not fail teardown on an AccessDenied delete.
-	if a.internalRoleExists(ctx, iamClient, roleName) {
-		if _, err := iamClient.DeleteRolePolicy(ctx, &iamsdk.DeleteRolePolicyInput{
-			RoleName:   aws.String(roleName),
-			PolicyName: aws.String(inlinePolicyName),
-		}); err != nil && !isIAMNotFound(err) {
-			return nil, fmt.Errorf("ImageBuild: deleting role policy: %w", err)
-		}
-		if _, err := iamClient.DeleteRole(ctx, &iamsdk.DeleteRoleInput{RoleName: aws.String(roleName)}); err != nil && !isIAMNotFound(err) {
-			return nil, fmt.Errorf("ImageBuild: deleting role: %w", err)
-		}
 	}
 
 	return &resource.DeleteResult{ProgressResult: &resource.ProgressResult{
@@ -677,7 +638,7 @@ func (a *ImageBuild) Delete(ctx context.Context, request *resource.DeleteRequest
 // prior digest as the new build succeeds (see prunePriorDigest), so a normal
 // build/rebuild/delete cycle leaves the repository empty. A tag moved out of band
 // would delete whatever it now points at (the recorded push digest is not available
-// at delete time — the request carries only the repository URI and tag).
+// at delete time — the request carries only the repository URI, tag and project).
 func (a *ImageBuild) deletePushedImage(ctx context.Context, repoURI, tag string) error {
 	ref, err := parseEcrRepositoryURI(repoURI)
 	if err != nil {
@@ -762,26 +723,12 @@ func (a *ImageBuild) prunePriorDigest(ctx context.Context, repoURI, digest strin
 	}
 }
 
-// internalRoleExists reports whether the internally-managed service role is present
-// under its deterministic name. A NotFound (a BYO deployment that never created it,
-// or an already-completed delete) means there is nothing of ours to remove. Any
-// other lookup error (e.g. a BYO deployment that grants the agent no IAM access) is
-// also treated as "not ours to delete" so teardown is never blocked, but is logged
-// so an orphaned internally-managed role stays observable.
-func (a *ImageBuild) internalRoleExists(ctx context.Context, client iamClientInterface, roleName string) bool {
-	if _, err := client.GetRole(ctx, &iamsdk.GetRoleInput{RoleName: aws.String(roleName)}); err != nil {
-		if !isIAMNotFound(err) {
-			plugin.LoggerFromContext(ctx).Warn("ImageBuild: skipping internal role cleanup; role lookup failed",
-				"role", roleName, "error", err.Error())
-		}
-		return false
-	}
-	return true
-}
-
-// stopInFlightBuilds best-effort stops any running build for the project so the
-// project can be deleted. Any error here is non-fatal to the delete.
-func (a *ImageBuild) stopInFlightBuilds(ctx context.Context, client codeBuildClientInterface, projectName string) {
+// stopInFlightBuilds best-effort stops the running builds this resource started on
+// the referenced project, identified by the push target they carry. The project can
+// be shared with other image builds, so a build for any other push target — or one
+// started by something else entirely — is left running. Any error here is non-fatal
+// to the delete.
+func (a *ImageBuild) stopInFlightBuilds(ctx context.Context, client codeBuildClientInterface, projectName, targetImageURI string) {
 	listOut, err := client.ListBuildsForProject(ctx, &codebuildsdk.ListBuildsForProjectInput{ProjectName: aws.String(projectName)})
 	if err != nil || len(listOut.Ids) == 0 {
 		return
@@ -791,10 +738,29 @@ func (a *ImageBuild) stopInFlightBuilds(ctx context.Context, client codeBuildCli
 		return
 	}
 	for _, b := range buildsOut.Builds {
-		if b.BuildStatus == codebuildtypes.StatusTypeInProgress {
-			_, _ = client.StopBuild(ctx, &codebuildsdk.StopBuildInput{Id: b.Id})
+		if b.BuildStatus != codebuildtypes.StatusTypeInProgress {
+			continue
+		}
+		if buildImageURI(b) != targetImageURI {
+			continue
+		}
+		_, _ = client.StopBuild(ctx, &codebuildsdk.StopBuildInput{Id: b.Id})
+	}
+}
+
+// buildImageURI returns the push target a build was started for, taken from the
+// IMAGE_URI environment variable this resource sets on every build it dispatches.
+// A build started by anything else has no such variable and returns "".
+func buildImageURI(build codebuildtypes.Build) string {
+	if build.Environment == nil {
+		return ""
+	}
+	for _, v := range build.Environment.EnvironmentVariables {
+		if aws.ToString(v.Name) == imageURIEnvVar {
+			return aws.ToString(v.Value)
 		}
 	}
+	return ""
 }
 
 func (a *ImageBuild) List(_ context.Context, _ *resource.ListRequest) (*resource.ListResult, error) {
@@ -804,16 +770,6 @@ func (a *ImageBuild) List(_ context.Context, _ *resource.ListRequest) (*resource
 
 // ── error classification ────────────────────────────────────────
 
-func isIAMNotFound(err error) bool {
-	var nse *iamtypes.NoSuchEntityException
-	return errors.As(err, &nse)
-}
-
-func isCodeBuildNotFound(err error) bool {
-	var rnf *codebuildtypes.ResourceNotFoundException
-	return errors.As(err, &rnf)
-}
-
 func isECRImageNotFound(err error) bool {
 	var inf *ecrtypes.ImageNotFoundException
 	if errors.As(err, &inf) {
@@ -821,19 +777,4 @@ func isECRImageNotFound(err error) bool {
 	}
 	var rnf *ecrtypes.RepositoryNotFoundException
 	return errors.As(err, &rnf)
-}
-
-// isAssumeRolePropagationError reports whether a CreateProject error is the
-// transient "CodeBuild cannot assume the freshly-created role yet" IAM-propagation
-// race, which clears on retry.
-func isAssumeRolePropagationError(err error) bool {
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) {
-		return false
-	}
-	if apiErr.ErrorCode() != "InvalidInputException" {
-		return false
-	}
-	msg := strings.ToLower(apiErr.ErrorMessage())
-	return strings.Contains(msg, "cannot be assumed") || strings.Contains(msg, "not authorized to perform: sts:assumerole") || strings.Contains(msg, "service role")
 }
