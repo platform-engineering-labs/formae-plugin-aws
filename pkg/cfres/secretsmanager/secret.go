@@ -20,6 +20,16 @@ import (
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
 )
 
+// ccxReader is the subset of ccx.Client used by Secret.Read.
+type ccxReader interface {
+	ReadResource(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error)
+}
+
+// secretValueGetter is the subset of secretsmanager.Client used by Secret.Read.
+type secretValueGetter interface {
+	GetSecretValue(ctx context.Context, params *secretsmanager.GetSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
+}
+
 type Secret struct {
 	cfg *config.Config
 }
@@ -39,23 +49,12 @@ func init() {
 		})
 }
 
-// Read enhances Cloud Control read with actual secret value
+// Read enhances Cloud Control read with actual secret value.
 func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	ccxClient, err := ccx.NewClient(s.cfg)
 	if err != nil {
 		plugin.LoggerFromContext(ctx).Error("SecretsManager: Failed to create ccx client", "error", err)
 		return nil, err
-	}
-
-	result, err := ccxClient.ReadResource(ctx, request)
-	if err != nil {
-		plugin.LoggerFromContext(ctx).Error("SecretsManager: Cloud Control ReadResource failed", "error", err)
-		return nil, err
-	}
-
-	// Don't bother enriching with secret value when RedactSensitive is set
-	if request.RedactSensitive {
-		return result, nil
 	}
 
 	awsCfg, err := s.cfg.ToAwsConfig(ctx)
@@ -64,9 +63,18 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 		return nil, err
 	}
 
-	secretsClient := secretsmanager.NewFromConfig(awsCfg)
+	return s.readWithClients(ctx, ccxClient, secretsmanager.NewFromConfig(awsCfg), request)
+}
 
-	secret, err := secretsClient.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+// readWithClients performs the enriched read using injectable clients (enables unit testing).
+func (s *Secret) readWithClients(ctx context.Context, ccxClient ccxReader, smClient secretValueGetter, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	result, err := ccxClient.ReadResource(ctx, request)
+	if err != nil {
+		plugin.LoggerFromContext(ctx).Error("SecretsManager: Cloud Control ReadResource failed", "error", err)
+		return nil, err
+	}
+
+	secret, err := smClient.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: &request.NativeID,
 	})
 	if err != nil {
@@ -90,9 +98,12 @@ func (s *Secret) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 	if secret.SecretString != nil {
 		props["SecretString"] = *secret.SecretString
 	}
-	if secret.SecretBinary != nil {
-		props["SecretBinary"] = secret.SecretBinary
-	}
+	// SecretBinary is intentionally not enriched here. The agent's opaque-hashing
+	// table (persist_value_transformer.knownOpaqueFields) only covers SecretString
+	// for this resource type; returning SecretBinary as a plain []byte would store
+	// the raw binary secret as base64 plaintext at rest with no hashing. Binary
+	// secrets remain unresolvable via formae until the agent core and this plugin's
+	// schema are updated in concert to add SecretBinary opaque coverage.
 
 	completeProps, err := json.Marshal(props)
 	if err != nil {
