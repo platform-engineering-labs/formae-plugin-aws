@@ -49,10 +49,9 @@ func (m *mockSMClient) GetSecretValue(ctx context.Context, input *secretsmanager
 }
 
 func TestSecret_Read_AlwaysEnrichesSecretValue(t *testing.T) {
-	// Read unconditionally enriches: the secret value is always fetched and
-	// merged into the result properties regardless of the RedactSensitive flag.
-	// Setting RedactSensitive=true proves the plugin no longer short-circuits on
-	// that flag (the whole point of this branch's removal).
+	// Read unconditionally enriches: the secret value is always fetched from
+	// SecretsManager and merged into the result properties. The agent decides
+	// how to store it (opaque hashing), so the plugin never withholds it.
 	ctx := context.Background()
 	ccxMock := &mockCCXReader{}
 	smMock := &mockSMClient{}
@@ -70,12 +69,9 @@ func TestSecret_Read_AlwaysEnrichesSecretValue(t *testing.T) {
 	}, nil)
 
 	s := &Secret{cfg: &config.Config{}}
-	// RedactSensitive=true is the flag the old code used to skip enrichment.
-	// With the flag removed, enrichment must still fire.
 	result, err := s.readWithClients(ctx, ccxMock, smMock, &resource.ReadRequest{
-		NativeID:        "my-secret-id",
-		ResourceType:    "AWS::SecretsManager::Secret",
-		RedactSensitive: true,
+		NativeID:     "my-secret-id",
+		ResourceType: "AWS::SecretsManager::Secret",
 	})
 
 	require.NoError(t, err)
