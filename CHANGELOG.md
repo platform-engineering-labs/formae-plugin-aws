@@ -39,6 +39,19 @@ formae agent.
   configuration on the first update — so the resource is **not discoverable**
   in this version. Discovery can be enabled once the full property surface is
   modelled.
+- `AWS::Lambda::Version` now exposes a `res.functionArn` resolvable carrying
+  its qualified (versioned) function ARN, so a CloudFront distribution's
+  `lambdaFunctionAssociations` entry can reference a published version by
+  reference instead of a hand-edited literal ARN pin. Lambda@Edge rejects
+  `$LATEST`, so the association has always needed a versioned ARN; previously
+  that ARN had to be copied in by hand. Note the caveat this doesn't remove:
+  every field on `Version` is create-only, so a function code change publishes
+  a *replacement* version rather than updating the existing one. The safe
+  order is publish the new version, re-point the distribution at it, wait for
+  CloudFront to propagate the change, and only then delete the old version,
+  and a replicated Lambda@Edge version can stay undeletable for a while after
+  the association is removed. Exposing the resolvable removes the hand-edit;
+  it does not change that ordering.
 
 ### Changed
 
