@@ -26,6 +26,16 @@ local targetQueue = new queue.Queue {
   queueName = "formae-plugin-sdk-test-rule-queue-\(testRunID)"
 }
 
+// Second queue. No target points at it here; the update fixture adds a second
+// rule target for it, so it has to exist up front for that step to exercise a
+// pure targets update. It is also declared here so the destroy step, which runs
+// against this file, owns it. Otherwise it outlives the forma and is left
+// behind in the shared test account on every run.
+local secondQueue = new queue.Queue {
+  label = "plugin-sdk-test-rule-queue-2"
+  queueName = "formae-plugin-sdk-test-rule-queue2-\(testRunID)"
+}
+
 local testRule = new rule.Rule {
   label = "plugin-sdk-test-rule"
   name = "formae-plugin-sdk-test-rule-\(testRunID)"
@@ -49,5 +59,6 @@ forma {
   new formae.Target { label = "aws-target"; config = new aws.Config { region = "us-east-1" } }
   eventBus
   targetQueue
+  secondQueue
   testRule
 }
