@@ -172,17 +172,46 @@ jobs:
         # are unaffected — they finish well under the bound.
         run: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=90
 
-      - name: Dump formae client log on failure
+      # The harness writes the agent log inside its per-test temp directory and
+      # retains that directory when a test fails, printing the surviving path.
+      # It is NOT at ~/.pel/formae/log/client.log, which is where this step used
+      # to look: nothing ever wrote there, so the step printed "No client.log"
+      # and still reported success, which is how it stayed broken.
+      #
+      # Stage only formae-test.log. The directory also holds the generated agent
+      # config, which contains the network cookie, and this repository's build
+      # artifacts are public.
+      - name: Collect retained agent log on failure
         if: failure()
+        id: collect-log
         run: |
-          LOG="$HOME/.pel/formae/log/client.log"
-          if [ -f "$LOG" ]; then
-            echo "::group::client.log (last 400 lines)"
-            tail -400 "$LOG"
-            echo "::endgroup::"
-          else
-            echo "No client.log at $LOG"
+          shopt -s nullglob
+          logs=(/tmp/formae-test-*/formae-test.log)
+          if [ ${#logs[@]} -eq 0 ]; then
+            echo "No retained agent log under /tmp/formae-test-*/formae-test.log"
+            echo "The harness retains its temp directory only when a test fails;"
+            echo "a failure before the harness started leaves nothing to collect."
+            exit 0
           fi
+          mkdir -p "$RUNNER_TEMP/agent-logs"
+          for log in "${logs[@]}"; do
+            dir=$(basename "$(dirname "$log")")
+            cp "$log" "$RUNNER_TEMP/agent-logs/$dir.log"
+          done
+          echo "Collected ${#logs[@]} agent log(s):"
+          ls -la "$RUNNER_TEMP/agent-logs"
+          echo "::group::tail of the most recent agent log"
+          tail -400 "$(ls -t "$RUNNER_TEMP"/agent-logs/*.log | head -1)"
+          echo "::endgroup::"
+
+      - name: Upload retained agent log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-log-${{ matrix.test-case }}
+          path: ${{ runner.temp }}/agent-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
   post-cleanup:
     needs: [conformance-tests]

@@ -191,6 +191,37 @@ jobs:
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
 
+      # These jobs previously left nothing behind on failure but the Go test
+      # output, which names the phase that failed and not the resource that
+      # caused it. Mirrors nightly.yml; see the comment there on the path and on
+      # why only formae-test.log is staged.
+      - name: Collect retained agent log on failure
+        if: failure()
+        run: |
+          shopt -s nullglob
+          logs=(/tmp/formae-test-*/formae-test.log)
+          if [ ${#logs[@]} -eq 0 ]; then
+            echo "No retained agent log under /tmp/formae-test-*/formae-test.log"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/agent-logs"
+          for log in "${logs[@]}"; do
+            dir=$(basename "$(dirname "$log")")
+            cp "$log" "$RUNNER_TEMP/agent-logs/$dir.log"
+          done
+          echo "::group::tail of the most recent agent log"
+          tail -400 "$(ls -t "$RUNNER_TEMP"/agent-logs/*.log | head -1)"
+          echo "::endgroup::"
+
+      - name: Upload retained agent log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-log-${{ matrix.test-case }}
+          path: ${{ runner.temp }}/agent-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # Clean up test resources after all conformance tests (always runs)
   post-cleanup:
     needs: [conformance-tests]
