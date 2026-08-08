@@ -59,6 +59,9 @@ jobs:
       - name: Verify schema
         run: make verify-schema
 
+      - name: Verify examples
+        run: make verify-examples
+
   # Integration tests run against real AWS resources (Route53, EC2, etc.)
   # These are self-contained: each test creates and cleans up its own resources.
   test-integration:
