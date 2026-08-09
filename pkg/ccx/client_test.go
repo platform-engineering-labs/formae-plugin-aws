@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
@@ -380,6 +381,170 @@ func TestUpdateResource_InProgress_DoesNotRead(t *testing.T) {
 	require.Nil(t, result.ProgressResult.ResourceProperties)
 	// GetResource should only be called once (existence check), not twice (no post-update Read)
 	mockAPI.AssertNumberOfCalls(t, "GetResource", 1)
+}
+
+// testWatchedBudget stands in for the production watched-call budget so the
+// budget-exhaustion tests exit on the first declined backoff instead of
+// burning seconds of wall clock.
+const testWatchedBudget = 25 * time.Millisecond
+
+// throttledGetResource makes every subsequent GetResource throttle — the
+// recoverable condition the enrichment retry loop rides until the watched-call
+// budget stops it.
+func throttledGetResource(mockAPI *mockCloudControlAPI) {
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceOutput)(nil),
+		ccOpError(&cctypes.ThrottlingException{Message: aws.String("Rate exceeded")}),
+	)
+}
+
+func TestCreateResource_SynchronousSuccess_EnrichmentBudgetExhausted_ReturnsInProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI, watchedBudget: testWatchedBudget}
+
+	mockAPI.On("CreateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusSuccess,
+				RequestToken:    ptr.Of("req-token-throttled"),
+				Identifier:      ptr.Of("fl-test123"),
+			},
+		}, nil,
+	)
+	throttledGetResource(mockAPI)
+
+	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
+		ResourceType: "AWS::EC2::FlowLog",
+		Properties:   json.RawMessage(`{"LogGroupName": "test"}`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"CloudControl already reported the create as successful — enrichment that outran its budget must be handed to the poll loop, not blocked on")
+	require.Equal(t, "req-token-throttled", result.ProgressResult.RequestID,
+		"the request token must survive the conversion so the operator polls the same request")
+	require.Equal(t, "fl-test123", result.ProgressResult.NativeID)
+	require.Nil(t, result.ProgressResult.ResourceProperties,
+		"no properties were read, so none may be fabricated")
+	require.Empty(t, string(result.ProgressResult.ErrorCode),
+		"an InProgress conversion is not an error condition")
+}
+
+func TestCreateResource_SynchronousSuccess_NonRecoverableReadError_StaysSuccess(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI, watchedBudget: testWatchedBudget}
+
+	mockAPI.On("CreateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.CreateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusSuccess,
+				RequestToken:    ptr.Of("req-token-unreadable"),
+				Identifier:      ptr.Of("fl-test123"),
+			},
+		}, nil,
+	)
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceOutput)(nil),
+		ccOpError(&cctypes.ResourceNotFoundException{Message: aws.String("not found")}),
+	)
+
+	result, err := client.CreateResource(context.Background(), &resource.CreateRequest{
+		ResourceType: "AWS::EC2::FlowLog",
+		Properties:   json.RawMessage(`{"LogGroupName": "test"}`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus,
+		"polling cannot fix a non-recoverable read error, so the create stays Success")
+	require.Equal(t, "fl-test123", result.ProgressResult.NativeID)
+	require.Nil(t, result.ProgressResult.ResourceProperties)
+	mockAPI.AssertNumberOfCalls(t, "GetResource", 1)
+}
+
+func TestUpdateResource_SynchronousSuccess_EnrichmentBudgetExhausted_ReturnsInProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI, watchedBudget: testWatchedBudget}
+
+	nativeID := "my-queue-url"
+	resourceType := "AWS::SQS::QueueInlinePolicy"
+
+	// The existence pre-check succeeds; every later Read (the enrichment one)
+	// is throttled.
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of(nativeID),
+			Properties: ptr.Of(`{"PolicyDocument":{}}`),
+		},
+		TypeName: ptr.Of(resourceType),
+	}, nil).Once()
+	throttledGetResource(mockAPI)
+
+	mockAPI.On("UpdateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.UpdateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusSuccess,
+				RequestToken:    ptr.Of("req-token-update-throttled"),
+				Identifier:      ptr.Of(nativeID),
+			},
+		}, nil,
+	)
+
+	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
+		NativeID:      nativeID,
+		ResourceType:  resourceType,
+		PatchDocument: ptr.Of(`[{"op":"replace","path":"/PolicyDocument","value":{"Statement":[]}}]`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"CloudControl already reported the update as successful — enrichment that outran its budget must be handed to the poll loop, not blocked on")
+	require.Equal(t, "req-token-update-throttled", result.ProgressResult.RequestID)
+	require.Equal(t, nativeID, result.ProgressResult.NativeID)
+	require.Nil(t, result.ProgressResult.ResourceProperties)
+	require.Empty(t, string(result.ProgressResult.ErrorCode))
+}
+
+func TestUpdateResource_SynchronousSuccess_NonRecoverableReadError_StaysSuccess(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	client := &Client{api: mockAPI, watchedBudget: testWatchedBudget}
+
+	nativeID := "my-queue-url"
+	resourceType := "AWS::SQS::QueueInlinePolicy"
+
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(&cloudcontrol.GetResourceOutput{
+		ResourceDescription: &cctypes.ResourceDescription{
+			Identifier: ptr.Of(nativeID),
+			Properties: ptr.Of(`{"PolicyDocument":{}}`),
+		},
+		TypeName: ptr.Of(resourceType),
+	}, nil).Once()
+	mockAPI.On("GetResource", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceOutput)(nil),
+		ccOpError(&cctypes.ResourceNotFoundException{Message: aws.String("not found")}),
+	)
+
+	mockAPI.On("UpdateResource", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.UpdateResourceOutput{
+			ProgressEvent: &cctypes.ProgressEvent{
+				OperationStatus: cctypes.OperationStatusSuccess,
+				RequestToken:    ptr.Of("req-token-update-unreadable"),
+				Identifier:      ptr.Of(nativeID),
+			},
+		}, nil,
+	)
+
+	result, err := client.UpdateResource(context.Background(), &resource.UpdateRequest{
+		NativeID:      nativeID,
+		ResourceType:  resourceType,
+		PatchDocument: ptr.Of(`[{"op":"replace","path":"/PolicyDocument","value":{"Statement":[]}}]`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus,
+		"polling cannot fix a non-recoverable read error, so the update stays Success")
+	require.Equal(t, nativeID, result.ProgressResult.NativeID)
+	require.Nil(t, result.ProgressResult.ResourceProperties)
+	mockAPI.AssertNumberOfCalls(t, "GetResource", 2)
 }
 
 func TestCreateResource_SyncCloudControlError_ReturnsFailureProgress(t *testing.T) {

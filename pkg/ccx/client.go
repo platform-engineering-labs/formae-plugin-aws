@@ -55,11 +55,48 @@ type Client struct {
 	// keeps working without going through NewClient.
 	now func() time.Time
 
+	// watchedBudget overrides defaultWatchedCallBudget for the AWS calls made
+	// inside a watchdog-observed RPC. It exists so tests can drive the
+	// budget-exhaustion paths without spending seconds of wall clock; zero
+	// means "use the constant", which is what production always does.
+	watchedBudget time.Duration
+
 	// windowsMu guards windows, the process-local, admission-controlled
 	// tracker of per-RequestID enrichment/status-error stamps. See
 	// window.go for the full contract.
 	windowsMu sync.Mutex
 	windows   map[string]window
+}
+
+// defaultWatchedCallBudget bounds the AWS calls a plugin RPC makes while the
+// agent's missing-in-action watchdog is observing it. The watchdog gives an
+// operator two status-check intervals (2 x 20s = 40s) to report progress, and
+// an RPC that blocks inside a retry loop reports none — so a healthy operation
+// gets killed for a transient AWS throttle.
+//
+// With this budget the worst-case heartbeat period becomes one status-check
+// interval plus one budget (20s + 5s = 25s) against that 40s window, leaving
+// roughly 15s of slack for operator scheduling, mailbox contention, GC,
+// transport and SDK cancellation lag. Five seconds is still long enough to
+// absorb the common single-blip retry without spending an extra poll round
+// trip on it.
+//
+// Two caveats worth keeping in view: context deadlines are cooperative, so
+// this bounds when the loop stops asking for more work rather than the instant
+// an in-flight call unwinds — it is "~5s", not exactly 5s. And the value is
+// coupled to the agent's status-check interval: if that interval changes, this
+// budget has to be re-derived against it.
+const defaultWatchedCallBudget = 5 * time.Second
+
+// watchedCallBudget returns the wall-clock budget for AWS calls made inside a
+// watchdog-observed RPC, honouring a test override and falling back to the
+// constant when the Client is its zero value — existing unit tests build
+// &Client{api: mockAPI} directly, without going through NewClient.
+func (c *Client) watchedCallBudget() time.Duration {
+	if c.watchedBudget > 0 {
+		return c.watchedBudget
+	}
+	return defaultWatchedCallBudget
 }
 
 var IgnoredFields = map[string][]string{
@@ -182,7 +219,15 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 	}
 
 	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
-		c.populateResourceProperties(ctx, createResult.ProgressResult, identifier, request.ResourceType)
+		if err := c.populateResourceProperties(ctx, createResult.ProgressResult, identifier, request.ResourceType); enrichmentDeferred(err) {
+			// The create itself already succeeded — only the read-back is
+			// outstanding. Reporting InProgress hands it to the operator's
+			// poll loop, where each poll is a heartbeat, instead of blocking
+			// this RPC until the watchdog gives up on the operation. The
+			// request token and native ID are already on the result, so the
+			// poll resumes against the same request.
+			createResult.ProgressResult.OperationStatus = resource.OperationStatusInProgress
+		}
 	}
 
 	return createResult, nil
@@ -265,7 +310,11 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 	}
 
 	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
-		c.populateResourceProperties(ctx, updateResult.ProgressResult, identifier, request.ResourceType)
+		if err := c.populateResourceProperties(ctx, updateResult.ProgressResult, identifier, request.ResourceType); enrichmentDeferred(err) {
+			// As in CreateResource: the update landed, so defer the read-back
+			// to the poll loop rather than blocking the watched RPC on it.
+			updateResult.ProgressResult.OperationStatus = resource.OperationStatusInProgress
+		}
 	}
 
 	return updateResult, nil
@@ -491,9 +540,19 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 // ResourceProperties on a ProgressResult. Used when CloudControl returns
 // synchronous Success (no async polling, so StatusResource's Read loop
 // doesn't run). Wraps the call in retryRead so transient throttling
-// surfaced as ErrorCode doesn't leave the agent with a stale snapshot.
-func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) {
-	readResult, err := retryRead(ctx, retryOpts{}, "populateResourceProperties:"+resourceType,
+// surfaced as ErrorCode doesn't leave the agent with a stale snapshot, under
+// the watched-call budget so the retries can't outlast the RPC's watchdog
+// window.
+//
+// It returns whatever stopped the retry loop, or nil. An error wrapping
+// errRetryBudgetExhausted means the budget — not a terminal outcome — is why
+// enrichment didn't finish, so the caller can hand the remaining work to the
+// operator's poll loop. A nil return does not by itself mean properties were
+// populated: a non-recoverable CloudControl error code is logged and reported
+// as nil, keeping the caller's existing behaviour of returning Success with
+// whatever is available, since polling cannot fix it.
+func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) error {
+	readResult, err := retryRead(ctx, retryOpts{Budget: c.watchedCallBudget()}, "populateResourceProperties:"+resourceType,
 		func(ctx context.Context) (*resource.ReadResult, error) {
 			return c.ReadResource(ctx, &resource.ReadRequest{
 				NativeID:     identifier,
@@ -505,18 +564,32 @@ func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.Pr
 			"error", err,
 			"identifier", identifier,
 			"resourceType", resourceType)
-		return
+		return err
 	}
 	if readResult != nil && readResult.ErrorCode != "" {
 		plugin.LoggerFromContext(ctx).Error("post-success Read returned error after retries",
 			"errorCode", readResult.ErrorCode,
 			"identifier", identifier,
 			"resourceType", resourceType)
-		return
+		return nil
 	}
 	if readResult != nil && readResult.Properties != "" {
 		pr.ResourceProperties = json.RawMessage(readResult.Properties)
 	}
+	return nil
+}
+
+// enrichmentDeferred reports whether a post-success enrichment Read stopped
+// because it ran out of its wall-clock budget, which is the one outcome the
+// mutation paths convert on.
+//
+// The sentinel is authoritative here rather than the returned result: on a
+// budget exit retryRead may have nothing to report. It can also carry a
+// terminal cause, when the attempt that crossed the deadline happened to fail
+// non-recoverably — that resolves itself, because the next poll starts a fresh
+// budget and surfaces the real error immediately.
+func enrichmentDeferred(err error) bool {
+	return errors.Is(err, errRetryBudgetExhausted)
 }
 
 // ListResources lists resources using CloudControl. Wrapped in
