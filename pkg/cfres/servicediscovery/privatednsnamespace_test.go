@@ -120,6 +120,57 @@ func TestCreateSendsDeclaredPropertiesToCloudMap(t *testing.T) {
 	assert.Equal(t, "example", aws.ToString(input.Tags[0].Value))
 }
 
+// A declared property of the wrong type would otherwise be dropped from the
+// create, leaving the namespace on Cloud Map's default and reading back as
+// provider state rather than as the declaration.
+func TestCreateRejectsDeclaredPropertiesOfTheWrongType(t *testing.T) {
+	for name, mutate := range map[string]func(properties map[string]any){
+		"Description": func(properties map[string]any) {
+			properties["Description"] = 42
+		},
+		"SOA.TTL": func(properties map[string]any) {
+			properties["Properties"] = map[string]any{
+				"DnsProperties": map[string]any{"SOA": map[string]any{"TTL": "60"}},
+			}
+		},
+		"DnsProperties": func(properties map[string]any) {
+			properties["Properties"] = map[string]any{"DnsProperties": "60"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &mockServiceDiscoveryClient{}
+			properties := fullProperties()
+			mutate(properties)
+
+			result, err := newTestNamespace(client).Create(context.Background(), createRequest("example", properties))
+			require.Error(t, err)
+			assert.Nil(t, result)
+			client.AssertNotCalled(t, "CreatePrivateDnsNamespace", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// An absent optional property is not an error: the namespace takes Cloud Map's
+// own default for it.
+func TestCreateOmitsAbsentOptionalProperties(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("CreatePrivateDnsNamespace", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.CreatePrivateDnsNamespaceOutput{OperationId: aws.String("op-1")}, nil)
+	client.On("GetOperation", mock.Anything, mock.Anything).
+		Return(operationOutput(servicediscoverytypes.OperationStatusPending, map[string]string{"NAMESPACE": "ns-abc"}), nil)
+
+	_, err := newTestNamespace(client).Create(context.Background(), createRequest("example", map[string]any{
+		"Name": "example.internal",
+		"Vpc":  "vpc-0123456789abcdef0",
+	}))
+	require.NoError(t, err)
+
+	input := capturedCreateInput(t, client)
+	assert.Nil(t, input.Description)
+	assert.Nil(t, input.Properties)
+	assert.Nil(t, input.Tags)
+}
+
 func TestCreateReturnsNamespaceIDFromOperationTarget(t *testing.T) {
 	client := &mockServiceDiscoveryClient{}
 	client.On("CreatePrivateDnsNamespace", mock.Anything, mock.Anything).
@@ -141,20 +192,52 @@ func TestCreateReturnsNamespaceIDFromOperationTarget(t *testing.T) {
 	assert.Equal(t, testNow.Add(namespaceOperationTimeout), state.Deadline)
 }
 
-// The namespace id only shows up on the operation, so a create that reports no
-// NAMESPACE target has no NativeID to return and must fail rather than hand the
-// engine an empty one.
-func TestCreateFailsWhenOperationNeverReportsANamespaceTarget(t *testing.T) {
+// The namespace record exists before the operation reports a NAMESPACE target,
+// so a create whose operation never reports one resolves the namespace by name
+// rather than failing.
+func TestCreateResolvesNamespaceByNameWhenOperationReportsNoNamespaceTarget(t *testing.T) {
 	client := &mockServiceDiscoveryClient{}
 	client.On("CreatePrivateDnsNamespace", mock.Anything, mock.Anything).
 		Return(&servicediscoverysdk.CreatePrivateDnsNamespaceOutput{OperationId: aws.String("op-1")}, nil)
 	client.On("GetOperation", mock.Anything, mock.Anything).
 		Return(operationOutput(servicediscoverytypes.OperationStatusPending, nil), nil)
+	client.On("ListNamespaces", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListNamespacesOutput{
+			Namespaces: []servicediscoverytypes.NamespaceSummary{
+				{Id: aws.String("ns-other"), Name: aws.String("other.internal")},
+				{Id: aws.String("ns-byname"), Name: aws.String("example.internal")},
+			},
+		}, nil)
+
+	result, err := newTestNamespace(client).Create(context.Background(), createRequest("example", fullProperties()))
+	require.NoError(t, err)
+
+	assert.Equal(t, "ns-byname", result.ProgressResult.NativeID)
+	client.AssertNumberOfCalls(t, "GetOperation", 3)
+
+	// The operation is still the one to poll for completion.
+	state, err := decodeRequestID(result.ProgressResult.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, "op-1", state.OperationID)
+}
+
+// With neither an operation target nor a namespace of that name there is no
+// NativeID to return, and the create must fail rather than hand the engine an
+// empty one.
+func TestCreateFailsWhenNeitherTheOperationTargetNorTheNameResolves(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("CreatePrivateDnsNamespace", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.CreatePrivateDnsNamespaceOutput{OperationId: aws.String("op-1")}, nil)
+	client.On("GetOperation", mock.Anything, mock.Anything).
+		Return(operationOutput(servicediscoverytypes.OperationStatusPending, nil), nil)
+	client.On("ListNamespaces", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListNamespacesOutput{}, nil)
 
 	result, err := newTestNamespace(client).Create(context.Background(), createRequest("example", fullProperties()))
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "NAMESPACE")
+	assert.Contains(t, err.Error(), "example.internal")
 	client.AssertNumberOfCalls(t, "GetOperation", 3)
 }
 
@@ -310,49 +393,6 @@ func TestCreateFailsWhenADuplicateRequestCannotBeResolved(t *testing.T) {
 	assert.Contains(t, err.Error(), "example.internal")
 }
 
-// Once the create operation has completed, a replay is rejected with
-// NamespaceAlreadyExists rather than DuplicateRequest. The error names the
-// namespace, and its creator request id identifies the namespace as the one this
-// resource created, so the replay adopts it.
-func TestCreateAdoptsTheExistingNamespaceItCreatedItself(t *testing.T) {
-	ourCreatorRequestID := creatorRequestID(resourceType, "example", "example.internal", "vpc-0123456789abcdef0")
-
-	client := &mockServiceDiscoveryClient{}
-	client.On("CreatePrivateDnsNamespace", mock.Anything, mock.Anything).
-		Return(nil, &servicediscoverytypes.NamespaceAlreadyExists{
-			Message:          aws.String("namespace already exists"),
-			CreatorRequestId: aws.String(ourCreatorRequestID),
-			NamespaceId:      aws.String("ns-existing"),
-		})
-
-	result, err := newTestNamespace(client).Create(context.Background(), createRequest("example", fullProperties()))
-	require.NoError(t, err)
-
-	assert.Equal(t, ourCreatorRequestID, aws.ToString(capturedCreateInput(t, client).CreatorRequestId))
-	assert.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
-	assert.Equal(t, "ns-existing", result.ProgressResult.NativeID)
-	state, err := decodeRequestID(result.ProgressResult.RequestID)
-	require.NoError(t, err)
-	assert.Empty(t, state.OperationID)
-}
-
-// A namespace of the same name that this resource did not create is a genuine
-// collision, not a replay, and must not be adopted.
-func TestCreateFailsWhenTheExistingNamespaceWasCreatedBySomethingElse(t *testing.T) {
-	client := &mockServiceDiscoveryClient{}
-	client.On("CreatePrivateDnsNamespace", mock.Anything, mock.Anything).
-		Return(nil, &servicediscoverytypes.NamespaceAlreadyExists{
-			Message:          aws.String("namespace already exists"),
-			CreatorRequestId: aws.String("created-by-something-else"),
-			NamespaceId:      aws.String("ns-existing"),
-		})
-
-	result, err := newTestNamespace(client).Create(context.Background(), createRequest("example", fullProperties()))
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "NamespaceAlreadyExists")
-}
-
 func TestStatusReportsSuccessWhenTheOperationSucceeded(t *testing.T) {
 	client := &mockServiceDiscoveryClient{}
 	client.On("GetOperation", mock.Anything, &servicediscoverysdk.GetOperationInput{OperationId: aws.String("op-1")}).
@@ -385,6 +425,31 @@ func TestStatusReportsFailureWithTheOperationErrorMessage(t *testing.T) {
 
 	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
 	assert.Contains(t, result.ProgressResult.StatusMessage, "CANNOT_CREATE_HOSTED_ZONE: quota exceeded")
+}
+
+// A namespace name that collides with a hosted zone already associated with the
+// VPC is accepted by Cloud Map and only fails on the operation, so the
+// operation's error code and message are the only account of what went wrong.
+func TestStatusReportsFailureWhenTheHostedZoneCannotBeCreated(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	failed := operationOutput(servicediscoverytypes.OperationStatusFail, map[string]string{"NAMESPACE": "ns-abc"})
+	failed.Operation.ErrorCode = aws.String("CANNOT_CREATE_HOSTED_ZONE")
+	failed.Operation.ErrorMessage = aws.String(
+		"An error occurred while creating the hosted zone: ConflictingDomainExists: " +
+			"The VPC vpc-0123456789abcdef0 has already been associated with the hosted zone " +
+			"Z0123456789ABCDEFGHIJ with the same domain name")
+	client.On("GetOperation", mock.Anything, mock.Anything).Return(failed, nil)
+
+	result, err := newTestNamespace(client).Status(context.Background(), &resource.StatusRequest{
+		RequestID: encodeRequestID(requestState{OperationID: "op-1", Deadline: testNow.Add(time.Minute)}),
+		NativeID:  "ns-abc",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Contains(t, result.ProgressResult.StatusMessage, "CANNOT_CREATE_HOSTED_ZONE")
+	assert.Contains(t, result.ProgressResult.StatusMessage,
+		"has already been associated with the hosted zone Z0123456789ABCDEFGHIJ with the same domain name")
 }
 
 func TestStatusReportsInProgressWhileTheOperationRuns(t *testing.T) {
@@ -484,21 +549,4 @@ func TestStatusRejectsAnUndecodableRequestID(t *testing.T) {
 		NativeID:  "ns-abc",
 	})
 	require.Error(t, err)
-}
-
-func TestRequestIDRoundTrips(t *testing.T) {
-	deadline := testNow.Add(namespaceOperationTimeout)
-	state, err := decodeRequestID(encodeRequestID(requestState{OperationID: "op-1", Deadline: deadline}))
-	require.NoError(t, err)
-	assert.Equal(t, "op-1", state.OperationID)
-	assert.Equal(t, deadline, state.Deadline)
-}
-
-// Later phases add their own keys to the RequestID, so an unknown key must not
-// make an otherwise valid RequestID undecodable.
-func TestDecodeRequestIDIgnoresUnknownKeys(t *testing.T) {
-	state, err := decodeRequestID("op=op-1;phase=delete;deadline=" + testNow.Format(time.RFC3339))
-	require.NoError(t, err)
-	assert.Equal(t, "op-1", state.OperationID)
-	assert.Equal(t, testNow, state.Deadline)
 }

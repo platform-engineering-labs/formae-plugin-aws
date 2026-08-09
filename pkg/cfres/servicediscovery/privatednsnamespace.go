@@ -107,53 +107,6 @@ func defaultServiceDiscoveryClientFactory(cfg *config.Config) (serviceDiscoveryC
 	return servicediscoverysdk.NewFromConfig(awsCfg), nil
 }
 
-// ----- RequestID codec -----
-
-// requestState is what the RequestID carries from an asynchronous operation to
-// the Status polls that follow it. OperationID is empty when a create was
-// adopted from an existing namespace whose operation could not be identified;
-// Status then confirms the namespace itself instead of an operation.
-//
-// The encoding is a `key=value;…` list, and decoding ignores keys it does not
-// know, so keys can be added without invalidating a RequestID already in flight.
-type requestState struct {
-	OperationID string
-	Deadline    time.Time
-}
-
-func encodeRequestID(state requestState) string {
-	return fmt.Sprintf("op=%s;deadline=%s", state.OperationID, state.Deadline.UTC().Format(time.RFC3339))
-}
-
-func decodeRequestID(requestID string) (requestState, error) {
-	var state requestState
-	var haveDeadline bool
-	for _, field := range strings.Split(requestID, ";") {
-		if field == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(field, "=")
-		if !ok {
-			return requestState{}, fmt.Errorf("servicediscovery: invalid RequestID %q", requestID)
-		}
-		switch key {
-		case "op":
-			state.OperationID = value
-		case "deadline":
-			deadline, err := time.Parse(time.RFC3339, value)
-			if err != nil {
-				return requestState{}, fmt.Errorf("servicediscovery: invalid deadline in RequestID %q: %w", requestID, err)
-			}
-			state.Deadline = deadline
-			haveDeadline = true
-		}
-	}
-	if !haveDeadline {
-		return requestState{}, fmt.Errorf("servicediscovery: invalid RequestID %q: no deadline", requestID)
-	}
-	return state, nil
-}
-
 // ----- Create -----
 
 func (n *PrivateDnsNamespace) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
@@ -180,10 +133,20 @@ func (n *PrivateDnsNamespace) Create(ctx context.Context, request *resource.Crea
 		Vpc:              aws.String(vpc),
 		CreatorRequestId: aws.String(creatorRequestID(request.ResourceType, request.Label, name, vpc)),
 	}
-	if description, ok := properties["Description"].(string); ok && description != "" {
-		input.Description = aws.String(description)
+	if _, declared := properties["Description"]; declared {
+		description, err := utils.GetStringProperty(properties, "Description")
+		if err != nil {
+			return nil, fmt.Errorf("servicediscovery: invalid Description: %w", err)
+		}
+		if description != "" {
+			input.Description = aws.String(description)
+		}
 	}
-	if ttl, ok := soaTTL(properties); ok {
+	ttl, declared, err := soaTTL(properties)
+	if err != nil {
+		return nil, err
+	}
+	if declared {
 		input.Properties = &servicediscoverytypes.PrivateDnsNamespaceProperties{
 			DnsProperties: &servicediscoverytypes.PrivateDnsPropertiesMutable{
 				SOA: &servicediscoverytypes.SOA{TTL: aws.Int64(ttl)},
@@ -200,9 +163,6 @@ func (n *PrivateDnsNamespace) Create(ctx context.Context, request *resource.Crea
 		if errors.As(err, &duplicate) {
 			return n.adoptDuplicatedCreate(ctx, client, duplicate, name)
 		}
-		if adopted := n.adoptExistingNamespace(ctx, err, aws.ToString(input.CreatorRequestId), name); adopted != nil {
-			return adopted, nil
-		}
 		return nil, fmt.Errorf("servicediscovery: CreatePrivateDnsNamespace: %w", err)
 	}
 	operationID := ""
@@ -213,7 +173,7 @@ func (n *PrivateDnsNamespace) Create(ctx context.Context, request *resource.Crea
 		return nil, errors.New("servicediscovery: CreatePrivateDnsNamespace returned no operation id")
 	}
 
-	namespaceID, err := n.awaitNamespaceID(ctx, client, operationID)
+	namespaceID, err := n.awaitNamespaceID(ctx, client, operationID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -223,14 +183,10 @@ func (n *PrivateDnsNamespace) Create(ctx context.Context, request *resource.Crea
 	return n.createInProgress(namespaceID, operationID), nil
 }
 
-// adoptDuplicatedCreate recovers the namespace a deduplicated create refers to.
-//
-// A create replayed with the same CreatorRequestId is rejected with
-// DuplicateRequest, and the response that would have carried the operation id is
-// exactly what the replay no longer gets — so failing here would strand a
-// namespace that exists but was never adopted. The id is taken from the
-// operation the error names and, failing that, by resolving the namespace by
-// name.
+// adoptDuplicatedCreate recovers the namespace behind a create rejected with
+// DuplicateRequest, whose response carries no namespace id of its own. The id is
+// taken from the operation the error names and, failing that, by resolving the
+// namespace by name.
 func (n *PrivateDnsNamespace) adoptDuplicatedCreate(
 	ctx context.Context,
 	client serviceDiscoveryClientInterface,
@@ -240,7 +196,7 @@ func (n *PrivateDnsNamespace) adoptDuplicatedCreate(
 	log := plugin.LoggerFromContext(ctx)
 
 	if operationID := aws.ToString(duplicate.DuplicateOperationId); operationID != "" {
-		namespaceID, err := n.awaitNamespaceID(ctx, client, operationID)
+		namespaceID, err := n.awaitNamespaceID(ctx, client, operationID, name)
 		if err == nil {
 			log.Info("servicediscovery: adopted the namespace of a duplicated create request",
 				"name", name, "namespaceId", namespaceID, "operationId", operationID)
@@ -262,30 +218,6 @@ func (n *PrivateDnsNamespace) adoptDuplicatedCreate(
 	return n.createInProgress(namespaceID, ""), nil
 }
 
-// adoptExistingNamespace recovers the namespace behind a NamespaceAlreadyExists
-// rejection, which is how a replayed create is answered once the original create
-// operation has completed. Cloud Map reports the creator request id the existing
-// namespace was created with, so the namespace is adopted only when it is the
-// one this resource created — a namespace of the same name created by anything
-// else is a genuine collision and is left to fail. It returns nil when the
-// rejection is not an adoptable one.
-func (n *PrivateDnsNamespace) adoptExistingNamespace(ctx context.Context, err error, creatorRequestID, name string) *resource.CreateResult {
-	var exists *servicediscoverytypes.NamespaceAlreadyExists
-	if !errors.As(err, &exists) {
-		return nil
-	}
-	namespaceID := aws.ToString(exists.NamespaceId)
-	if namespaceID == "" || aws.ToString(exists.CreatorRequestId) != creatorRequestID {
-		return nil
-	}
-	plugin.LoggerFromContext(ctx).Info("servicediscovery: adopted the existing namespace of a replayed create request",
-		"name", name, "namespaceId", namespaceID)
-
-	// The operation that created this namespace is unknown, so the RequestID
-	// carries no operation id and Status confirms the namespace itself.
-	return n.createInProgress(namespaceID, "")
-}
-
 func (n *PrivateDnsNamespace) createInProgress(namespaceID, operationID string) *resource.CreateResult {
 	return &resource.CreateResult{
 		ProgressResult: &resource.ProgressResult{
@@ -304,10 +236,14 @@ func (n *PrivateDnsNamespace) createInProgress(namespaceID, operationID string) 
 // namespace it acts on. Cloud Map populates the NAMESPACE target while the
 // operation is still running, so this is a short wait rather than a wait for the
 // operation to complete — completion is the engine's Status polls to observe.
+//
+// The namespace record exists before the operation reports it, so an operation
+// that reports no target falls back to resolving the namespace by name.
 func (n *PrivateDnsNamespace) awaitNamespaceID(
 	ctx context.Context,
 	client serviceDiscoveryClientInterface,
 	operationID string,
+	name string,
 ) (string, error) {
 	interval := n.namespaceTargetPollInterval
 	if interval <= 0 {
@@ -343,8 +279,15 @@ func (n *PrivateDnsNamespace) awaitNamespaceID(
 		case <-time.After(interval):
 		}
 	}
-	return "", fmt.Errorf("servicediscovery: namespace operation %s reported no %s target after %d attempts",
-		operationID, namespaceTargetKey, attempts)
+
+	namespaceID, err := findNamespaceIDByName(ctx, client, name)
+	if err != nil {
+		return "", fmt.Errorf("servicediscovery: namespace operation %s reported no %s target after %d attempts and namespace %q could not be resolved by name: %w",
+			operationID, namespaceTargetKey, attempts, name, err)
+	}
+	plugin.LoggerFromContext(ctx).Warn("servicediscovery: namespace operation reported no namespace target; resolved the namespace by name",
+		"name", name, "namespaceId", namespaceID, "operationId", operationID)
+	return namespaceID, nil
 }
 
 // findNamespaceIDByName resolves a private DNS namespace this account owns by
@@ -478,17 +421,6 @@ func (n *PrivateDnsNamespace) statusFromNamespace(
 	return statusResult(request, resource.OperationStatusSuccess, ""), nil
 }
 
-func statusResult(request *resource.StatusRequest, status resource.OperationStatus, message string) *resource.StatusResult {
-	return &resource.StatusResult{
-		ProgressResult: &resource.ProgressResult{
-			OperationStatus: status,
-			NativeID:        request.NativeID,
-			RequestID:       request.RequestID,
-			StatusMessage:   message,
-		},
-	}
-}
-
 // operationFailureMessage renders why an operation failed, pairing Cloud Map's
 // error code with its message when both are present.
 func operationFailureMessage(operation *servicediscoverytypes.Operation) string {
@@ -536,25 +468,42 @@ func creatorRequestID(typeName, label, name, vpc string) string {
 
 // soaTTL reads Properties.DnsProperties.SOA.TTL, which is the only nested
 // property the schema declares. It reports false when any level is absent, so
-// the create leaves the SOA record at Cloud Map's own default.
-func soaTTL(properties map[string]any) (int64, bool) {
-	nested, ok := properties["Properties"].(map[string]any)
-	if !ok {
-		return 0, false
+// the create leaves the SOA record at Cloud Map's own default, and errors when a
+// level is present with a type the schema does not allow rather than dropping
+// the declared value.
+func soaTTL(properties map[string]any) (int64, bool, error) {
+	soa, declared, err := nestedObject(properties, "Properties", "DnsProperties", "SOA")
+	if err != nil || !declared {
+		return 0, false, err
 	}
-	dnsProperties, ok := nested["DnsProperties"].(map[string]any)
-	if !ok {
-		return 0, false
+	value, declared := soa["TTL"]
+	if !declared {
+		return 0, false, nil
 	}
-	soa, ok := dnsProperties["SOA"].(map[string]any)
+	ttl, ok := value.(float64)
 	if !ok {
-		return 0, false
+		return 0, false, errors.New("servicediscovery: invalid Properties.DnsProperties.SOA.TTL: not a number")
 	}
-	ttl, ok := soa["TTL"].(float64)
-	if !ok {
-		return 0, false
+	return int64(ttl), true, nil
+}
+
+// nestedObject walks a path of object-valued keys through a properties map. It
+// reports false as soon as a key along the path is absent, and errors when one
+// holds anything but an object.
+func nestedObject(properties map[string]any, path ...string) (map[string]any, bool, error) {
+	current := properties
+	for depth, key := range path {
+		value, declared := current[key]
+		if !declared {
+			return nil, false, nil
+		}
+		nested, ok := value.(map[string]any)
+		if !ok {
+			return nil, false, fmt.Errorf("servicediscovery: invalid %s: not an object", strings.Join(path[:depth+1], "."))
+		}
+		current = nested
 	}
-	return int64(ttl), true
+	return current, true, nil
 }
 
 // tagsFromProperties parses a "Tags" property of shape
