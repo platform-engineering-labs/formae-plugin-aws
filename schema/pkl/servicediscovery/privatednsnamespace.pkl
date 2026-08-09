@@ -78,7 +78,13 @@ open class PrivateDnsNamespace extends formae.Resource {
     @aws.FieldHint
     description: String?
 
-    @aws.FieldHint
+    // Cloud Map gives every private DNS namespace an SOA record with a TTL of
+    // its own choosing, so a namespace that declares no `properties` still
+    // reads one back. The whole block is marked defaulted rather than the
+    // `sOA.tTL` leaf: a declaration that omits `properties` entirely is
+    // compared at the top-level key, which a hint on a nested path can never
+    // match.
+    @aws.FieldHint{hasProviderDefault = true}
     properties: Properties?
 
     @aws.FieldHint {
