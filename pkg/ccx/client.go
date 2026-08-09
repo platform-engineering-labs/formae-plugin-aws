@@ -451,6 +451,25 @@ const enrichmentWindow = 2 * time.Minute
 // wait.
 const enrichmentClockSkew = 30 * time.Second
 
+// statusOutageWindow bounds how long StatusResource may keep answering "ask me
+// again" to polls that could not observe the request's status at all — the
+// status call failed recoverably, or came back without a progress event. Unlike
+// the enrichment window there is no event to measure against on this path: an
+// unobserved poll carries no timestamp, so the window is measured from the
+// first poll of the outage.
+//
+// It is deliberately the same length as the enrichment window and derived the
+// same way: the operator polls roughly every 20s, so two minutes is about six
+// further attempts — more than AWS typically needs to recover from a throttle,
+// while still guaranteeing the operation ends.
+//
+// What it bounds, precisely: a run of *consecutive* unobserved polls, seen by
+// one plugin process. Any successful status call clears the stamp, so a request
+// that is being observed keeps polling for as long as it needs; and a restarted
+// plugin process starts the window again from its first failed poll. It is not
+// a bound on the operation's total running time.
+const statusOutageWindow = 2 * time.Minute
+
 // StatusResource gets the status of a resource request using CloudControl with full request handling
 func (c *Client) StatusResource(ctx context.Context, request *resource.StatusRequest, readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error)) (*resource.StatusResult, error) {
 	// This is the RPC the agent's missing-in-action watchdog observes most
@@ -467,11 +486,19 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 				RequestToken: &request.RequestID,
 			})
 		})
-	if err != nil {
-		return nil, err
+	if err == nil && (result == nil || result.ProgressEvent == nil) {
+		err = fmt.Errorf("%w for request %s", errNoProgressEvent, request.RequestID)
 	}
-	if result == nil || result.ProgressEvent == nil {
-		return nil, fmt.Errorf("status poll for request %s returned no progress event", request.RequestID)
+	if err != nil {
+		// The poll learned nothing about the request. Reporting that as a bare
+		// Go error ends the operation with no explanation of what went wrong,
+		// so classify what can be classified first.
+		statusResult, classified := c.classifyUnobservedStatus(ctx, request, err)
+		if !classified {
+			return nil, err
+		}
+		c.forgetIfResolved(request.RequestID, statusResult.ProgressResult.OperationStatus)
+		return statusResult, nil
 	}
 
 	// The request was observed, so any run of consecutive status-call failures
@@ -561,15 +588,140 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		c.enrichStatusResult(ctx, statusResult.ProgressResult, request, result.ProgressEvent, identifier, deadline, readFunc)
 	}
 
-	// A resolved request has nothing left for the window tracker to bound. A
-	// poll still waiting for its read-back has not resolved, and keeps its
-	// stamp so the next poll measures against the same window.
-	switch statusResult.ProgressResult.OperationStatus {
-	case resource.OperationStatusSuccess, resource.OperationStatusFailure:
-		c.forgetRequest(request.RequestID)
-	}
+	c.forgetIfResolved(request.RequestID, statusResult.ProgressResult.OperationStatus)
 
 	return statusResult, nil
+}
+
+// forgetIfResolved drops a request's tracker entry once a poll has resolved it.
+// A resolved request has nothing left for either stamp to bound. A poll still
+// waiting — for its read-back, or for a status call that can be observed at all
+// — has not resolved, and keeps its stamps so the next poll measures against
+// the same windows.
+func (c *Client) forgetIfResolved(requestID string, operationStatus resource.OperationStatus) {
+	switch operationStatus {
+	case resource.OperationStatusSuccess, resource.OperationStatusFailure:
+		c.forgetRequest(requestID)
+	}
+}
+
+// errNoProgressEvent marks a status response that came back without a progress
+// event. Like a status call that failed outright it leaves the request's
+// outcome unobserved, so it is classified the same way.
+var errNoProgressEvent = errors.New("status poll returned no progress event")
+
+// classifyUnobservedStatus turns a poll that could not observe its request into
+// a progress result the operator can act on, reporting false when it cannot —
+// in which case the caller keeps today's behaviour and returns the raw error.
+//
+// Nothing here can say whether the mutation applied. The two honest answers are
+// "ask again" and "this ended and nobody knows how", and the whole point of the
+// classification is that the operator answers each of those very differently:
+//
+//   - InProgress reschedules a poll against the same request token, and each
+//     poll is a heartbeat for the agent's missing-in-action watchdog. The
+//     original CRUD is never re-invoked.
+//   - A Failure carrying a recoverable code — the obvious alternative — would
+//     instead make the operator re-invoke the CRUD from the original request,
+//     re-running a create that may already have succeeded.
+//
+// So a status outage that may clear becomes InProgress, and only an outcome
+// that will never be observed becomes a Failure, with a code the operator will
+// not retry.
+func (c *Client) classifyUnobservedStatus(ctx context.Context, request *resource.StatusRequest, cause error) (*resource.StatusResult, bool) {
+	log := plugin.LoggerFromContext(ctx)
+
+	// An unknown request token needs its own answer, because neither default is
+	// right: the shared error helper maps it to NotFound, which the operator
+	// treats as recoverable and would re-invoke the CRUD on, while this layer's
+	// own predicate calls it non-recoverable and would never reach the branch
+	// below. Checked before the budget sentinel because a status call that
+	// crossed its deadline returns this exception wrapped in it, and re-polling
+	// a token CloudControl does not know only defers the same answer.
+	//
+	// A direct Read cannot settle it either: a Read proves the resource exists,
+	// not that this request applied — for an update it says nothing about
+	// whether the patch landed, for a create it cannot rule out a pre-existing
+	// or concurrent resource, and for a delete it inverts the answer. Once the
+	// progress event is gone the plugin cannot even tell which verb it is
+	// observing. Indeterminate is the truthful answer, so it is the one given.
+	var tokenNotFound *cctypes.RequestTokenNotFoundException
+	if errors.As(cause, &tokenNotFound) {
+		log.Error("StatusResource: CloudControl does not recognise the request token; the outcome cannot be determined",
+			"error", cause,
+			"identifier", request.NativeID,
+			"requestID", request.RequestID)
+		return unobservedResult(request, resource.OperationStatusFailure,
+			resource.OperationErrorCodeUnforeseenError,
+			fmt.Sprintf("CloudControl does not recognise the request token for %s, so whether the operation was applied cannot be determined",
+				request.NativeID)), true
+	}
+
+	// Anything else that is not a spent budget is a real answer about the call
+	// itself (bad request, denied, cancelled); polling cannot improve on it.
+	if !errors.Is(cause, errRetryBudgetExhausted) && !errors.Is(cause, errNoProgressEvent) {
+		return nil, false
+	}
+
+	first, ok := c.stampStatusError(ctx, request.RequestID)
+	if !ok {
+		// No request token to key the outage window on, or the tracker is at
+		// its admission cap. Converting without a bound would poll forever, so
+		// this keeps today's behaviour and surfaces the error.
+		return nil, false
+	}
+
+	// The window bounds a run of consecutive unobserved polls for this process:
+	// any successful status call clears the stamp, and a restart starts it
+	// again. Past it the operation ends — unobserved, which is not a safe
+	// outcome, only the honest one: the mutation may or may not have happened,
+	// and no protocol status means "I could not see it".
+	if elapsed := c.clock().Sub(first); elapsed >= statusOutageWindow {
+		log.Error("StatusResource: status could not be observed within the outage window, ending the operation",
+			"error", cause,
+			"identifier", request.NativeID,
+			"requestID", request.RequestID,
+			"elapsed", elapsed)
+		return unobservedResult(request, resource.OperationStatusFailure,
+			resource.OperationErrorCodeUnforeseenError,
+			fmt.Sprintf("the status of %s could not be read for %s, so whether the operation was applied cannot be determined",
+				request.NativeID, elapsed)), true
+	}
+
+	log.Info("StatusResource: status could not be read, deferring to the next poll",
+		"error", cause,
+		"identifier", request.NativeID,
+		"requestID", request.RequestID)
+	return unobservedResult(request, resource.OperationStatusInProgress,
+		resource.OperationErrorCodeNotSet,
+		fmt.Sprintf("the status of %s could not be read; retrying on the next poll", request.NativeID)), true
+}
+
+// unobservedResult builds the progress result for a poll that observed nothing,
+// echoing back the request token so the operator can poll the same request
+// again and the native ID so its diagnostics name a resource.
+//
+// The operation is reported as the status check, not as a CRUD verb: a status
+// call carries no verb of its own, and with no progress event to read one from
+// there is nothing to report but what the plugin was actually doing. The
+// operator branches on the status and the error code, so this field is
+// reporting only.
+func unobservedResult(
+	request *resource.StatusRequest,
+	operationStatus resource.OperationStatus,
+	errorCode resource.OperationErrorCode,
+	statusMessage string,
+) *resource.StatusResult {
+	return &resource.StatusResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCheckStatus,
+			OperationStatus: operationStatus,
+			RequestID:       request.RequestID,
+			NativeID:        request.NativeID,
+			StatusMessage:   statusMessage,
+			ErrorCode:       errorCode,
+		},
+	}
 }
 
 // enrichStatusResult runs the post-success Read that populates the latest

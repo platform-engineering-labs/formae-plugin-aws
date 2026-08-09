@@ -1353,16 +1353,18 @@ func TestStatusResource_StatusCallBlocksPastBudget_ReturnsPromptly(t *testing.T)
 		Return((*cloudcontrol.GetResourceRequestStatusOutput)(nil), context.DeadlineExceeded)
 
 	start := time.Now()
-	_, err := client.StatusResource(context.Background(),
-		&resource.StatusRequest{RequestID: "req-blocked"},
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-blocked", NativeID: "tbl-1"},
 		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
 			t.Fatalf("readFunc must not be called when the status call never returned a progress event")
 			return nil, nil
 		})
 
 	require.Less(t, time.Since(start), time.Second, "the status call must not outlast the watched-call budget")
-	require.Error(t, err)
-	require.ErrorIs(t, err, errRetryBudgetExhausted)
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"a status call that ran out of budget observed nothing; the next poll asks again")
+	require.Equal(t, "req-blocked", result.ProgressResult.RequestID)
 }
 
 // The budget bounds the watched RPC, not each AWS call inside it. If the status
@@ -1409,8 +1411,11 @@ func TestStatusResource_SharedBudget_StatusCallAndReadBackShareOneDeadline(t *te
 		"the read-back ran out of the shared budget, so the poll defers it")
 }
 
-// A malformed response must not take the plugin process down with it.
-func TestStatusResource_NilProgressEvent_ReturnsErrorWithoutPanicking(t *testing.T) {
+// A malformed response must not take the plugin process down with it. A
+// response carrying no progress event leaves the request just as unobserved as
+// a failed status call, so it is classified the same way: ask again, bounded by
+// the same window.
+func TestStatusResource_NilProgressEvent_ConvertsToInProgressWithoutPanicking(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
 	clock, _ := fakeClock(statusEventBase)
 	client := newStatusClient(mockAPI, clock)
@@ -1419,11 +1424,26 @@ func TestStatusResource_NilProgressEvent_ReturnsErrorWithoutPanicking(t *testing
 	)
 
 	result, err := client.StatusResource(context.Background(),
-		&resource.StatusRequest{RequestID: "req-empty"},
-		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
-			t.Fatalf("readFunc must not be called without a progress event")
-			return nil, nil
-		})
+		&resource.StatusRequest{RequestID: "req-empty", NativeID: "tbl-1"}, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationCheckStatus, result.ProgressResult.Operation)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+}
+
+// The same malformed response without a request token has no window to bound a
+// retry against, so it keeps the pre-existing behaviour of surfacing an error.
+func TestStatusResource_NilProgressEvent_EmptyRequestID_ReturnsError(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{}, nil,
+	)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{}, noRead(t))
 
 	require.Error(t, err)
 	require.Nil(t, result)
@@ -1514,4 +1534,238 @@ func TestEnrichmentDecision_SmallNegativeSkewClampsElapsedToZero(t *testing.T) {
 
 	require.Equal(t, enrichmentPendingRetry, verdict)
 	require.Equal(t, time.Duration(0), elapsed, "tolerable skew reads as a just-completed event")
+}
+
+// ---------------------------------------------------------------------------
+// StatusResource: classifying a status poll that observed nothing.
+// ---------------------------------------------------------------------------
+
+// throttlingStatusPoll makes every GetResourceRequestStatus fail with a
+// recoverable AWS error — the condition the status call's retry loop rides
+// until the watched-call budget stops it, leaving the poll with nothing
+// observed about the request.
+func throttlingStatusPoll(mockAPI *mockCloudControlAPI) {
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceRequestStatusOutput)(nil),
+		ccOpError(&cctypes.ThrottlingException{Message: aws.String("Rate exceeded")}),
+	)
+}
+
+// tokenNotFoundStatusPoll makes every GetResourceRequestStatus report that
+// CloudControl no longer knows the request token.
+func tokenNotFoundStatusPoll(mockAPI *mockCloudControlAPI) *mock.Call {
+	return mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceRequestStatusOutput)(nil),
+		ccOpError(&cctypes.RequestTokenNotFoundException{Message: aws.String("Request token not found")}),
+	)
+}
+
+// noRead is a readFunc for polls that must never reach the read-back, because
+// no progress event was observed to enrich.
+func noRead(t *testing.T) func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+	t.Helper()
+	return func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+		t.Fatalf("readFunc must not be called on a poll that observed no progress event")
+		return nil, nil
+	}
+}
+
+// A status call that ran out of budget on a recoverable AWS error says nothing
+// about the request, so the poll asks again against the same token. It must not
+// be a Failure — not even with a recoverable code: the operator answers a
+// recoverable Failure by re-invoking the original CRUD, which would run a
+// second create for an operation that may already have succeeded.
+func TestStatusResource_RecoverableStatusError_ConvertsToInProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	throttlingStatusPoll(mockAPI)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-throttled", NativeID: "tbl-1"}, noRead(t))
+
+	require.NoError(t, err, "a status outage must reach the operator as a progress result, not as a bare error")
+	require.NotEqual(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus,
+		"a Failure — recoverable code or not — makes the operator re-invoke the CRUD it already ran")
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationCheckStatus, result.ProgressResult.Operation,
+		"the status call carries no CRUD verb, so report the operation actually being performed")
+	require.Equal(t, "req-throttled", result.ProgressResult.RequestID,
+		"the next poll must resume against the same token")
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.Empty(t, string(result.ProgressResult.ErrorCode), "an InProgress conversion is not an error condition")
+	require.NotEmpty(t, result.ProgressResult.StatusMessage, "the outage must be visible to the operator")
+
+	w, tracked := trackedWindow(t, client, "req-throttled")
+	require.True(t, tracked, "the outage window must survive a non-terminal poll")
+	require.False(t, w.statusError.IsZero(), "the first poll of an outage starts the window")
+}
+
+// An unknown request token is indeterminate: the mutation may or may not have
+// applied, and nothing the plugin can observe distinguishes the two. It ends
+// the operation with a code the operator will not retry — the shared error
+// helper's NotFound is recoverable, so passing it through would re-invoke the
+// CRUD on an outcome nobody knows.
+func TestStatusResource_RequestTokenNotFound_ReturnsNonRecoverableFailure(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	tokenNotFoundStatusPoll(mockAPI)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-gone", NativeID: "tbl-1"}, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationErrorCodeUnforeseenError, result.ProgressResult.ErrorCode)
+	require.False(t, resource.IsRecoverable(result.ProgressResult.ErrorCode),
+		"a recoverable code would re-invoke a CRUD whose outcome is unknown")
+	require.Equal(t, resource.OperationCheckStatus, result.ProgressResult.Operation)
+	require.Equal(t, "req-gone", result.ProgressResult.RequestID)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.Contains(t, result.ProgressResult.StatusMessage, "tbl-1",
+		"the message must name the resource whose outcome is unknown")
+
+	_, tracked := trackedWindow(t, client, "req-gone")
+	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
+}
+
+// The budget is consulted before the failure is classified, so a status call
+// that crosses the deadline returns the token-not-found exception wrapped in
+// the budget sentinel. An unknown token is terminal however it arrives —
+// re-polling a token CloudControl has never heard of only defers the same
+// answer.
+func TestStatusResource_RequestTokenNotFound_WrappedInBudgetExhaustion_StaysTerminal(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	tokenNotFoundStatusPoll(mockAPI).Run(func(args mock.Arguments) {
+		<-args.Get(0).(context.Context).Done()
+	})
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-gone-slowly", NativeID: "tbl-1"}, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus,
+		"an unknown request token is terminal even when the budget expired first")
+	require.False(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
+	require.Equal(t, resource.OperationErrorCodeUnforeseenError, result.ProgressResult.ErrorCode)
+}
+
+// The InProgress conversion does not consume an operator retry attempt, so the
+// polling needs its own bound: past the window the operation ends rather than
+// polling a resource nobody can observe forever.
+func TestStatusResource_StatusOutageWindowElapsed_ReturnsNonRecoverableFailure(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, advance := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	throttlingStatusPoll(mockAPI)
+	request := &resource.StatusRequest{RequestID: "req-dark", NativeID: "tbl-1"}
+
+	first, err := client.StatusResource(context.Background(), request, noRead(t))
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, first.ProgressResult.OperationStatus)
+
+	advance(statusEventBase.Add(statusOutageWindow))
+	last, err := client.StatusResource(context.Background(), request, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusFailure, last.ProgressResult.OperationStatus,
+		"a consecutive outage past the window must end the operation")
+	require.Equal(t, resource.OperationErrorCodeUnforeseenError, last.ProgressResult.ErrorCode)
+	require.False(t, resource.IsRecoverable(last.ProgressResult.ErrorCode),
+		"a recoverable code would re-invoke the CRUD on an outcome nobody observed")
+	require.Equal(t, resource.OperationCheckStatus, last.ProgressResult.Operation)
+	require.Equal(t, "tbl-1", last.ProgressResult.NativeID)
+	require.Contains(t, last.ProgressResult.StatusMessage, "tbl-1")
+
+	_, tracked := trackedWindow(t, client, "req-dark")
+	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
+}
+
+// The window bounds a *consecutive* outage: a poll that did observe the request
+// proves the plugin can see it again, so the next outage starts a fresh window
+// rather than resuming an unrelated one.
+func TestStatusResource_SuccessfulPollBetweenOutages_RestartsWindow(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, advance := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	throttled := ccOpError(&cctypes.ThrottlingException{Message: aws.String("Rate exceeded")})
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).
+		Return((*cloudcontrol.GetResourceRequestStatusOutput)(nil), throttled).Once()
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).
+		Return(&cloudcontrol.GetResourceRequestStatusOutput{ProgressEvent: &cctypes.ProgressEvent{
+			Operation:       cctypes.OperationCreate,
+			OperationStatus: cctypes.OperationStatusInProgress,
+			TypeName:        ptr.Of("AWS::DynamoDB::Table"),
+		}}, nil).Once()
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).
+		Return((*cloudcontrol.GetResourceRequestStatusOutput)(nil), throttled).Once()
+	request := &resource.StatusRequest{RequestID: "req-flaky", NativeID: "tbl-1"}
+
+	outage, err := client.StatusResource(context.Background(), request, noRead(t))
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, outage.ProgressResult.OperationStatus)
+
+	advance(statusEventBase.Add(time.Minute))
+	observed, err := client.StatusResource(context.Background(), request,
+		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+			t.Fatalf("readFunc must not be called on an InProgress poll")
+			return nil, nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, observed.ProgressResult.OperationStatus)
+
+	resumed := statusEventBase.Add(2*time.Minute + 30*time.Second)
+	advance(resumed)
+	again, err := client.StatusResource(context.Background(), request, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, again.ProgressResult.OperationStatus,
+		"a window that survived the successful poll would have gone terminal here")
+	w, tracked := trackedWindow(t, client, "req-flaky")
+	require.True(t, tracked)
+	require.Equal(t, resumed, w.statusError, "the new outage is measured from its own first poll")
+}
+
+// Without a request token there is no key to bound the outage against, and an
+// unbounded InProgress would poll forever — so this keeps the pre-existing
+// behaviour of surfacing the raw error.
+func TestStatusResource_RecoverableStatusError_EmptyRequestID_ReturnsBareError(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	throttlingStatusPoll(mockAPI)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{NativeID: "tbl-1"}, noRead(t))
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, errRetryBudgetExhausted)
+	_, tracked := trackedWindow(t, client, "")
+	require.False(t, tracked, "an empty request token must never be admitted to the tracker")
+}
+
+// A status error that is not recoverable and not an unknown token is a real
+// error about the call itself; polling cannot improve on it, so it keeps
+// today's behaviour.
+func TestStatusResource_NonRecoverableStatusError_ReturnsBareError(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		(*cloudcontrol.GetResourceRequestStatusOutput)(nil),
+		ccOpError(&cctypes.InvalidRequestException{Message: aws.String("RequestToken is malformed")}),
+	)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-invalid", NativeID: "tbl-1"}, noRead(t))
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.NotErrorIs(t, err, errRetryBudgetExhausted)
+	_, tracked := trackedWindow(t, client, "req-invalid")
+	require.False(t, tracked, "a non-recoverable status error opens no outage window")
 }
