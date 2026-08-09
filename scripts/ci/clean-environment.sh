@@ -276,6 +276,165 @@ aws s3control list-storage-lens-groups --account-id "$(aws sts get-caller-identi
 done
 
 # ============================================================================
+# Cloud Map (ServiceDiscovery) Resources (regional)
+# ============================================================================
+# Swept BEFORE Route53 below: a private DNS namespace owns a Route53 private
+# hosted zone whose name carries the test prefix, and Route53 refuses to delete
+# a hosted zone another service created — the zone only disappears when its
+# namespace does. Sweeping namespaces first therefore also clears the zones the
+# Route53 section would otherwise trip over.
+#
+# AWS enforces the teardown order: DeleteNamespace returns ResourceInUse while
+# the namespace still holds services, and a service with registered instances
+# cannot be deleted. So this sweep deregisters instances, deletes services,
+# deletes namespaces, and then polls the namespace delete operations — a
+# fire-and-forget DeleteNamespace is asynchronous (~40s) and reports nothing
+# about whether the namespace, and with it the hosted zone, actually went away.
+#
+# Unlike most sections, failures are reported rather than swallowed, but never
+# fatal: a wedged namespace (e.g. one whose services a still-draining ECS
+# service keeps re-registering into) is logged and left for the next sweep
+# instead of aborting the cleanup run.
+#
+# Scoping: only namespaces owned by this account (RESOURCE_OWNER=SELF —
+# namespaces shared in from elsewhere cannot be deleted anyway) whose name
+# starts with the fixture prefix. Every service inside such a namespace is
+# test-created, so services are swept per namespace rather than by name.
+# ListNamespaces/ListServices/ListInstances all have CLI paginators, so the
+# list calls below cover every page.
+
+echo "Cleaning Cloud Map test namespaces and services..."
+CLOUDMAP_NS_OPS=()
+
+if ! cloudmap_namespaces=$(aws servicediscovery list-namespaces --region "$REGION" \
+        --filters "Name=RESOURCE_OWNER,Values=SELF,Condition=EQ" --output json 2>&1); then
+    echo "  WARNING: could not list Cloud Map namespaces: $cloudmap_namespaces"
+    cloudmap_namespaces='{}'
+fi
+
+while IFS=$'\t' read -r ns_id ns_name; do
+    [[ -z "$ns_id" || "$ns_name" != "$FORMAE_PREFIX"* ]] && continue
+    echo "  Cleaning Cloud Map namespace: $ns_name ($ns_id)"
+    ns_blocked=0
+
+    if ! ns_services=$(aws servicediscovery list-services --region "$REGION" \
+            --filters "Name=NAMESPACE_ID,Values=$ns_id,Condition=EQ" --output json 2>&1); then
+        echo "  WARNING: could not list services of Cloud Map namespace $ns_name: $ns_services"
+        ns_services='{}'
+    fi
+
+    while IFS=$'\t' read -r svc_id svc_name; do
+        [[ -z "$svc_id" ]] && continue
+
+        # Deregister instances first — a service with instances cannot be
+        # deleted. ECS service discovery registers one instance per task. A
+        # list that fails is reported and treated as empty: the delete below
+        # then fails with ResourceInUse, which is warned about in turn, so the
+        # namespace is left for the next sweep rather than reported as clean.
+        if ! svc_instances=$(aws servicediscovery list-instances --service-id "$svc_id" \
+                --region "$REGION" --query "Instances[].Id" --output text 2>&1); then
+            echo "    WARNING: could not list instances of Cloud Map service $svc_name: $svc_instances"
+            svc_instances=""
+        fi
+
+        while read -r inst_id; do
+            [[ -z "$inst_id" ]] && continue
+            echo "    Deregistering Cloud Map instance: $inst_id (service: $svc_name)"
+            if ! out=$(aws servicediscovery deregister-instance --service-id "$svc_id" \
+                    --instance-id "$inst_id" --region "$REGION" 2>&1); then
+                echo "    WARNING: could not deregister Cloud Map instance $inst_id: $out"
+            fi
+        done < <(echo "$svc_instances" | tr '\t' '\n')
+
+        echo "    Deleting Cloud Map service: $svc_name ($svc_id)"
+        attempt=1
+        while :; do
+            if out=$(aws servicediscovery delete-service --id "$svc_id" --region "$REGION" 2>&1); then
+                break
+            fi
+            # Already gone (a concurrent sweep, or the delete that raced our
+            # read) is success as far as this cleanup is concerned.
+            if [[ "$out" == *ServiceNotFound* ]]; then
+                break
+            fi
+            # Instance deregistration is asynchronous, so the service can stay
+            # in use for a few seconds after the last deregister returns.
+            if [[ "$out" == *ResourceInUse* && $attempt -lt 6 ]]; then
+                sleep 5
+                attempt=$((attempt + 1))
+                continue
+            fi
+            echo "    WARNING: could not delete Cloud Map service $svc_name: $out"
+            ns_blocked=1
+            break
+        done
+    done < <(echo "$ns_services" | jq -r '.Services[]? | "\(.Id)\t\(.Name)"')
+
+    if [ "$ns_blocked" -ne 0 ]; then
+        echo "  WARNING: leaving Cloud Map namespace $ns_name: it still holds services"
+        continue
+    fi
+
+    echo "  Deleting Cloud Map namespace: $ns_name ($ns_id)"
+    # --output json is explicit so the operation id survives a runner that
+    # defaults the CLI to another output format: without an operation id the
+    # namespace would drop out of the poll below and the sweep would report
+    # success while the namespace, and its hosted zone, were still deleting.
+    if out=$(aws servicediscovery delete-namespace --id "$ns_id" --region "$REGION" --output json 2>&1); then
+        if ! op_id=$(echo "$out" | jq -r '.OperationId // empty'); then
+            op_id=""
+        fi
+        if [[ -n "$op_id" ]]; then
+            CLOUDMAP_NS_OPS+=("$op_id|$ns_name")
+        else
+            echo "  WARNING: Cloud Map namespace $ns_name delete reported no operation id; not waiting for it"
+        fi
+    elif [[ "$out" == *NamespaceNotFound* ]]; then
+        : # already gone
+    else
+        echo "  WARNING: could not delete Cloud Map namespace $ns_name: $out"
+    fi
+done < <(echo "$cloudmap_namespaces" | jq -r '.Namespaces[]? | "\(.Id)\t\(.Name)"')
+
+# Poll the namespace delete operations. Budget 180s total — a namespace delete
+# (which tears down its Route53 private hosted zone) took ~40s when measured,
+# and several namespaces delete in parallel.
+if [ ${#CLOUDMAP_NS_OPS[@]} -gt 0 ]; then
+    echo "  Waiting for Cloud Map namespace deletes to complete (max 180s)..."
+    waited=0
+    pending=("${CLOUDMAP_NS_OPS[@]}")
+    while [ ${#pending[@]} -gt 0 ] && [ $waited -lt 180 ]; do
+        still_pending=()
+        for op_entry in "${pending[@]}"; do
+            op_id="${op_entry%%|*}"
+            ns_name="${op_entry#*|}"
+            op_status=$(aws servicediscovery get-operation --operation-id "$op_id" --region "$REGION" \
+                --query "Operation.Status" --output text 2>/dev/null || echo "")
+            case "$op_status" in
+                SUCCESS)
+                    echo "    Deleted Cloud Map namespace: $ns_name"
+                    ;;
+                FAIL)
+                    op_error=$(aws servicediscovery get-operation --operation-id "$op_id" --region "$REGION" \
+                        --query "Operation.ErrorMessage" --output text 2>/dev/null || echo "")
+                    echo "    WARNING: Cloud Map namespace $ns_name failed to delete: ${op_error:-unknown}"
+                    ;;
+                *)
+                    still_pending+=("$op_entry")
+                    ;;
+            esac
+        done
+        pending=("${still_pending[@]}")
+        [ ${#pending[@]} -eq 0 ] && break
+        sleep 10
+        waited=$((waited + 10))
+    done
+    for op_entry in "${pending[@]}"; do
+        echo "  WARNING: Cloud Map namespace ${op_entry#*|} still deleting after ${waited}s; its private hosted zone may linger"
+    done
+fi
+
+# ============================================================================
 # Route53 Resources (global)
 # ============================================================================
 
