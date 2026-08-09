@@ -24,6 +24,7 @@ package servicediscovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -74,18 +75,30 @@ const (
 	elasticNetworkInterfaceAttachment = "ElasticNetworkInterface"
 )
 
-// The ceilings the waits run against. Each is generous against what the
-// operation takes in practice — a namespace settles in well under a minute, a
-// task reaches RUNNING in a couple, and deregistration follows the task
+// itestBudget is the wall clock the whole test runs against — the assertions
+// and the teardown alike, since every wait below derives from a context
+// carrying it. It sits far enough inside the test binary's timeout and the CI
+// job's ceiling that a run which goes wrong fails with a diagnostic of its own
+// and still reaches its cleanups, rather than being killed mid-test with a live
+// Fargate task and a VPC left in the account.
+//
+// The step ceilings below are sized to fit inside it: 2+4+2+2+2 = 12 minutes of
+// assertions, and a teardown of at most the drain ceiling plus seven cleanup
+// ceilings (2m + 7×45s ≈ 7m15s), for a worst case of about 19m15s.
+const itestBudget = 20 * time.Minute
+
+// The ceilings the individual waits run against. Each is generous against what
+// the operation takes in practice — a namespace settles in well under a minute,
+// a task reaches RUNNING in a couple, and deregistration follows the task
 // stopping — and every one of them fails the test when it runs out, so a
 // contract that never holds is a failure rather than a pass that waited.
 const (
-	itestNamespaceTimeout      = 4 * time.Minute
-	itestTaskRunningTimeout    = 6 * time.Minute
-	itestRegistrationTimeout   = 3 * time.Minute
-	itestServiceDrainTimeout   = 5 * time.Minute
-	itestDeregistrationTimeout = 5 * time.Minute
-	itestCleanupTimeout        = 2 * time.Minute
+	itestNamespaceTimeout      = 2 * time.Minute
+	itestTaskRunningTimeout    = 4 * time.Minute
+	itestRegistrationTimeout   = 2 * time.Minute
+	itestServiceDrainTimeout   = 2 * time.Minute
+	itestDeregistrationTimeout = 2 * time.Minute
+	itestCleanupTimeout        = 45 * time.Second
 	itestPollInterval          = 5 * time.Second
 	itestNamespacePollInterval = 3 * time.Second
 )
@@ -100,7 +113,11 @@ func TestPrivateDnsNamespace_Integration_ECSRegistersAndDeregistersTask(t *testi
 		t.Skip("AWS_REGION not set; skipping integration test")
 	}
 
-	ctx := context.Background()
+	// Registered before any other cleanup, so it is released last: the cleanups
+	// run against this same context and need it to still be live.
+	ctx, cancel := context.WithTimeout(context.Background(), itestBudget)
+	t.Cleanup(cancel)
+
 	cfg := &config.Config{Region: region}
 	awsCfg, err := cfg.ToAwsConfig(ctx)
 	require.NoError(t, err, "loading AWS config")
@@ -145,7 +162,7 @@ func TestPrivateDnsNamespace_Integration_ECSRegistersAndDeregistersTask(t *testi
 		if ecsServiceDeleted {
 			return
 		}
-		if err := deleteECSService(context.Background(), ecsClient, clusterARN, names.ecsService); err != nil {
+		if err := deleteECSService(ctx, ecsClient, clusterARN, names.ecsService); err != nil {
 			t.Logf("warning: deleting ECS service %s: %v", names.ecsService, err)
 		}
 	})
@@ -234,7 +251,7 @@ func setupNetwork(t *testing.T, ctx context.Context, client *ec2.Client, names i
 	require.NoError(t, err, "creating VPC")
 	vpcID := aws.ToString(vpcOut.Vpc.VpcId)
 	t.Cleanup(func() {
-		deleteWithRetry(t, "VPC "+vpcID, func(ctx context.Context) error {
+		deleteWithRetry(t, ctx, "VPC "+vpcID, func(ctx context.Context) error {
 			_, err := client.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
 			return err
 		})
@@ -259,7 +276,7 @@ func setupNetwork(t *testing.T, ctx context.Context, client *ec2.Client, names i
 	require.NoError(t, err, "creating internet gateway")
 	igwID := aws.ToString(igwOut.InternetGateway.InternetGatewayId)
 	t.Cleanup(func() {
-		deleteWithRetry(t, "internet gateway "+igwID, func(ctx context.Context) error {
+		deleteWithRetry(t, ctx, "internet gateway "+igwID, func(ctx context.Context) error {
 			if _, err := client.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{
 				InternetGatewayId: aws.String(igwID),
 				VpcId:             aws.String(vpcID),
@@ -300,7 +317,7 @@ func setupNetwork(t *testing.T, ctx context.Context, client *ec2.Client, names i
 	t.Cleanup(func() {
 		// A stopped task's ENI is released after the task itself is gone, so the
 		// subnet delete is retried until the release lands.
-		deleteWithRetry(t, "subnet "+subnetID, func(ctx context.Context) error {
+		deleteWithRetry(t, ctx, "subnet "+subnetID, func(ctx context.Context) error {
 			_, err := client.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subnetID)})
 			return err
 		})
@@ -367,7 +384,7 @@ func setupCluster(t *testing.T, ctx context.Context, client *ecs.Client, names i
 	require.NoError(t, err, "creating ECS cluster %s", names.cluster)
 	clusterARN := aws.ToString(out.Cluster.ClusterArn)
 	t.Cleanup(func() {
-		deleteWithRetry(t, "ECS cluster "+clusterARN, func(ctx context.Context) error {
+		deleteWithRetry(t, ctx, "ECS cluster "+clusterARN, func(ctx context.Context) error {
 			_, err := client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(clusterARN)})
 			return err
 		})
@@ -397,7 +414,7 @@ func setupTaskDefinition(t *testing.T, ctx context.Context, client *ecs.Client, 
 	require.NoError(t, err, "registering task definition %s", names.taskDefinition)
 	taskDefinitionARN := aws.ToString(out.TaskDefinition.TaskDefinitionArn)
 	t.Cleanup(func() {
-		deleteWithRetry(t, "task definition "+taskDefinitionARN, func(ctx context.Context) error {
+		deleteWithRetry(t, ctx, "task definition "+taskDefinitionARN, func(ctx context.Context) error {
 			_, err := client.DeregisterTaskDefinition(ctx, &ecs.DeregisterTaskDefinitionInput{
 				TaskDefinition: aws.String(taskDefinitionARN),
 			})
@@ -446,7 +463,7 @@ func setupNamespace(
 	require.NotEmpty(t, namespaceID, "namespace create returned no native id")
 
 	t.Cleanup(func() {
-		deleteNamespace(t, provisioner, namespaceID)
+		deleteNamespace(t, ctx, provisioner, namespaceID)
 	})
 
 	require.NoError(t,
@@ -459,9 +476,8 @@ func setupNamespace(
 // delete to settle. The provisioner re-issues a delete Cloud Map rejects while
 // the namespace still holds resources, so this tolerates a Cloud Map service
 // whose own delete has not landed yet.
-func deleteNamespace(t *testing.T, provisioner *PrivateDnsNamespace, namespaceID string) {
+func deleteNamespace(t *testing.T, ctx context.Context, provisioner *PrivateDnsNamespace, namespaceID string) {
 	t.Helper()
-	ctx := context.Background()
 	deleteResult, err := provisioner.Delete(ctx, &resource.DeleteRequest{
 		NativeID:     namespaceID,
 		ResourceType: resourceType,
@@ -474,7 +490,7 @@ func deleteNamespace(t *testing.T, provisioner *PrivateDnsNamespace, namespaceID
 		return
 	}
 	if err := awaitProvisionerSuccess(
-		ctx, provisioner, namespaceID, deleteResult.ProgressResult.RequestID, itestNamespaceTimeout,
+		ctx, provisioner, namespaceID, deleteResult.ProgressResult.RequestID, itestCleanupTimeout,
 	); err != nil {
 		t.Logf("warning: waiting for namespace %s to be deleted: %v", namespaceID, err)
 	}
@@ -507,7 +523,9 @@ func awaitProvisionerSuccess(
 		case resource.OperationStatusSuccess:
 			return true, nil
 		case resource.OperationStatusFailure:
-			return false, fmt.Errorf("namespace %s reported failure: %s", namespaceID, progress.StatusMessage)
+			return false, &terminalError{
+				err: fmt.Errorf("namespace %s reported failure: %s", namespaceID, progress.StatusMessage),
+			}
 		default:
 			return false, nil
 		}
@@ -545,7 +563,7 @@ func setupCloudMapService(
 	t.Cleanup(func() {
 		// Cloud Map rejects the delete while instances are still registered, so
 		// this is retried for as long as deregistration may take.
-		deleteWithRetry(t, "Cloud Map service "+serviceID, func(ctx context.Context) error {
+		deleteWithRetry(t, ctx, "Cloud Map service "+serviceID, func(ctx context.Context) error {
 			_, err := client.DeleteService(ctx, &servicediscoverysdk.DeleteServiceInput{
 				Id: aws.String(serviceID),
 			})
@@ -713,9 +731,8 @@ func deleteECSService(ctx context.Context, client *ecs.Client, cluster, service 
 // one that never does is reported rather than failing the test: the assertions
 // have already run by then, and a leftover resource is the account sweep's to
 // reap.
-func deleteWithRetry(t *testing.T, description string, remove func(context.Context) error) {
+func deleteWithRetry(t *testing.T, ctx context.Context, description string, remove func(context.Context) error) {
 	t.Helper()
-	ctx := context.Background()
 	var lastErr error
 	err := waitFor(ctx, itestCleanupTimeout, itestPollInterval, func(ctx context.Context) (bool, error) {
 		lastErr = remove(ctx)
@@ -726,9 +743,24 @@ func deleteWithRetry(t *testing.T, description string, remove func(context.Conte
 	}
 }
 
-// waitFor calls probe every interval until it reports done, reports an error, or
-// the timeout runs out. A probe that reports neither done nor an error is one
-// whose condition has not been reached yet.
+// terminalError marks a probe error retrying cannot resolve — an operation AWS
+// has already reported as failed — so waitFor reports it at once instead of
+// polling out the rest of its ceiling.
+type terminalError struct {
+	err error
+}
+
+func (e *terminalError) Error() string { return e.err.Error() }
+
+func (e *terminalError) Unwrap() error { return e.err }
+
+// waitFor calls probe every interval until it reports done, reports a
+// terminalError, or the timeout runs out. A probe that reports neither done nor
+// an error is one whose condition has not been reached yet.
+//
+// Any other probe error is treated as transient and retried within the ceiling,
+// so a single throttled call does not fail the test; an error that persists is
+// reported alongside the timeout.
 func waitFor(
 	ctx context.Context,
 	timeout time.Duration,
@@ -736,21 +768,34 @@ func waitFor(
 	probe func(context.Context) (bool, error),
 ) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for {
 		done, err := probe(ctx)
-		if err != nil {
+		var terminal *terminalError
+		if errors.As(err, &terminal) {
 			return err
 		}
-		if done {
+		if err == nil && done {
 			return nil
 		}
+		lastErr = err
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out after %s", timeout)
+			return withLastProbeError(fmt.Errorf("timed out after %s", timeout), lastErr)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return withLastProbeError(ctx.Err(), lastErr)
 		case <-time.After(interval):
 		}
 	}
+}
+
+// withLastProbeError appends the error the last probe reported, if any, to the
+// reason the wait gave up, so a wait that ran out against a persistently failing
+// call says what was failing.
+func withLastProbeError(err error, lastErr error) error {
+	if lastErr == nil {
+		return err
+	}
+	return fmt.Errorf("%w (last probe error: %v)", err, lastErr)
 }
