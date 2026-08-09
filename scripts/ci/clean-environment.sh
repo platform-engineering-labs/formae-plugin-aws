@@ -317,11 +317,26 @@ while IFS=$'\t' read -r ns_id ns_name; do
     echo "  Cleaning Cloud Map namespace: $ns_name ($ns_id)"
     ns_blocked=0
 
+    if ! ns_services=$(aws servicediscovery list-services --region "$REGION" \
+            --filters "Name=NAMESPACE_ID,Values=$ns_id,Condition=EQ" --output json 2>&1); then
+        echo "  WARNING: could not list services of Cloud Map namespace $ns_name: $ns_services"
+        ns_services='{}'
+    fi
+
     while IFS=$'\t' read -r svc_id svc_name; do
         [[ -z "$svc_id" ]] && continue
 
         # Deregister instances first — a service with instances cannot be
-        # deleted. ECS service discovery registers one instance per task.
+        # deleted. ECS service discovery registers one instance per task. A
+        # list that fails is reported and treated as empty: the delete below
+        # then fails with ResourceInUse, which is warned about in turn, so the
+        # namespace is left for the next sweep rather than reported as clean.
+        if ! svc_instances=$(aws servicediscovery list-instances --service-id "$svc_id" \
+                --region "$REGION" --query "Instances[].Id" --output text 2>&1); then
+            echo "    WARNING: could not list instances of Cloud Map service $svc_name: $svc_instances"
+            svc_instances=""
+        fi
+
         while read -r inst_id; do
             [[ -z "$inst_id" ]] && continue
             echo "    Deregistering Cloud Map instance: $inst_id (service: $svc_name)"
@@ -329,8 +344,7 @@ while IFS=$'\t' read -r ns_id ns_name; do
                     --instance-id "$inst_id" --region "$REGION" 2>&1); then
                 echo "    WARNING: could not deregister Cloud Map instance $inst_id: $out"
             fi
-        done < <(aws servicediscovery list-instances --service-id "$svc_id" --region "$REGION" \
-            --query "Instances[].Id" --output text 2>/dev/null | tr '\t' '\n')
+        done < <(echo "$svc_instances" | tr '\t' '\n')
 
         echo "    Deleting Cloud Map service: $svc_name ($svc_id)"
         attempt=1
@@ -354,9 +368,7 @@ while IFS=$'\t' read -r ns_id ns_name; do
             ns_blocked=1
             break
         done
-    done < <(aws servicediscovery list-services --region "$REGION" \
-        --filters "Name=NAMESPACE_ID,Values=$ns_id,Condition=EQ" --output json 2>/dev/null | \
-        jq -r '.Services[]? | "\(.Id)\t\(.Name)"' 2>/dev/null)
+    done < <(echo "$ns_services" | jq -r '.Services[]? | "\(.Id)\t\(.Name)"')
 
     if [ "$ns_blocked" -ne 0 ]; then
         echo "  WARNING: leaving Cloud Map namespace $ns_name: it still holds services"
@@ -364,17 +376,25 @@ while IFS=$'\t' read -r ns_id ns_name; do
     fi
 
     echo "  Deleting Cloud Map namespace: $ns_name ($ns_id)"
-    if out=$(aws servicediscovery delete-namespace --id "$ns_id" --region "$REGION" 2>&1); then
-        op_id=$(echo "$out" | jq -r '.OperationId // empty' 2>/dev/null)
+    # --output json is explicit so the operation id survives a runner that
+    # defaults the CLI to another output format: without an operation id the
+    # namespace would drop out of the poll below and the sweep would report
+    # success while the namespace, and its hosted zone, were still deleting.
+    if out=$(aws servicediscovery delete-namespace --id "$ns_id" --region "$REGION" --output json 2>&1); then
+        if ! op_id=$(echo "$out" | jq -r '.OperationId // empty'); then
+            op_id=""
+        fi
         if [[ -n "$op_id" ]]; then
             CLOUDMAP_NS_OPS+=("$op_id|$ns_name")
+        else
+            echo "  WARNING: Cloud Map namespace $ns_name delete reported no operation id; not waiting for it"
         fi
     elif [[ "$out" == *NamespaceNotFound* ]]; then
         : # already gone
     else
         echo "  WARNING: could not delete Cloud Map namespace $ns_name: $out"
     fi
-done < <(echo "$cloudmap_namespaces" | jq -r '.Namespaces[]? | "\(.Id)\t\(.Name)"' 2>/dev/null)
+done < <(echo "$cloudmap_namespaces" | jq -r '.Namespaces[]? | "\(.Id)\t\(.Name)"')
 
 # Poll the namespace delete operations. Budget 180s total — a namespace delete
 # (which tears down its Route53 private hosted zone) took ~40s when measured,
