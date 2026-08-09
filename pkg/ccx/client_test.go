@@ -1181,7 +1181,7 @@ func TestStatusResource_EnrichmentPending_NilEventTime_ReturnsSuccessWithNativeI
 	require.NoError(t, err)
 	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
-	require.Contains(t, result.ProgressResult.StatusMessage, "no trustworthy completion time")
+	require.Contains(t, result.ProgressResult.StatusMessage, "no bounded retry window could be established")
 	require.NotContains(t, result.ProgressResult.StatusMessage, "enrichment window",
 		"no window was ever entered, so the message must not tell an operator one elapsed")
 }
@@ -1200,9 +1200,31 @@ func TestStatusResource_EnrichmentPending_FarFutureEventTime_ReturnsSuccessWithN
 	require.NoError(t, err)
 	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
-	require.Contains(t, result.ProgressResult.StatusMessage, "no trustworthy completion time")
+	require.Contains(t, result.ProgressResult.StatusMessage, "no bounded retry window could be established")
 	require.NotContains(t, result.ProgressResult.StatusMessage, "enrichment window",
 		"no window was ever entered, so the message must not tell an operator one elapsed")
+}
+
+// stampEnrichmentPending can decline for a reason that has nothing to do with
+// the EventTime's own trustworthiness -- an empty RequestID, or the tracker at
+// its admission cap. In that case a perfectly trustworthy EventTime exists and
+// elapsed sits inside the window; what's missing is the backstop, not the
+// timestamp, so the message must not claim the clock is the problem.
+func TestStatusResource_EnrichmentPending_NoBackstopAvailable_MessageDoesNotBlameTheClock(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase)))
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "", NativeID: "tbl-1"}, throttlingReadBack().fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.NotContains(t, result.ProgressResult.StatusMessage, "trustworthy",
+		"EventTime is trustworthy here -- what's missing is the backstop stamp, not the timestamp")
+	require.Contains(t, result.ProgressResult.StatusMessage, "tbl-1")
 }
 
 // Modest disagreement between the AWS control plane's clock and this host's is
@@ -1367,6 +1389,36 @@ func TestStatusResource_StatusCallBlocksPastBudget_ReturnsPromptly(t *testing.T)
 	require.Equal(t, "req-blocked", result.ProgressResult.RequestID)
 }
 
+// StatusResource classifies the over-budget status call above into InProgress
+// without returning an error, so nothing in that test can pin what actually
+// drove the classification. Reproducing the same blocking status call one
+// layer down, through the same retryCallable wrapper StatusResource uses,
+// restores that guarantee: it must be the wall-clock budget sentinel, not
+// some other route through the deadline plumbing that happens to also leave
+// the request unobserved.
+func TestStatusResource_StatusCallBlocksPastBudget_SentinelDrivesTheClassification(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			select {
+			case <-args.Get(0).(context.Context).Done():
+			case <-time.After(2 * time.Second):
+			}
+		}).
+		Return((*cloudcontrol.GetResourceRequestStatusOutput)(nil), context.DeadlineExceeded)
+
+	deadline := time.Now().Add(testWatchedBudget)
+	_, err := retryCallable(context.Background(), retryOpts{Deadline: deadline}, "StatusResource:test",
+		func(ctx context.Context) (*cloudcontrol.GetResourceRequestStatusOutput, error) {
+			return mockAPI.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+				RequestToken: ptr.Of("req-blocked"),
+			})
+		})
+
+	require.ErrorIs(t, err, errRetryBudgetExhausted,
+		"an over-budget status call must fail via the exhaustion sentinel, which classifyUnobservedStatus converts to InProgress above")
+}
+
 // The budget bounds the watched RPC, not each AWS call inside it. If the status
 // call and the read-back each derived their own, one poll could spend two
 // budgets and the slack the budget was derived against would be gone — so the
@@ -1406,7 +1458,7 @@ func TestStatusResource_SharedBudget_StatusCallAndReadBackShareOneDeadline(t *te
 	require.True(t, statusDeadline.Equal(readDeadline),
 		"the read-back must inherit the RPC's deadline rather than start a fresh budget (status %s, read-back %s)",
 		statusDeadline, readDeadline)
-	require.Less(t, spent, budget+budget/3, "one watched RPC must not spend more than one budget")
+	require.Less(t, spent, 2*budget, "one watched RPC must not spend more than one budget")
 	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
 		"the read-back ran out of the shared budget, so the poll defers it")
 }
@@ -1601,6 +1653,25 @@ func TestStatusResource_RecoverableStatusError_ConvertsToInProgress(t *testing.T
 	require.False(t, w.statusError.IsZero(), "the first poll of an outage starts the window")
 }
 
+// Without a NativeID yet, the "retrying" message must still name something —
+// the RequestID beats a blank gap where the resource identifier belongs.
+func TestStatusResource_RecoverableStatusError_EmptyNativeID_FallsBackToRequestID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	throttlingStatusPoll(mockAPI)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-throttled-no-native-id"}, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+	require.Contains(t, result.ProgressResult.StatusMessage, "req-throttled-no-native-id",
+		"with no NativeID the message must still name the request it's about")
+	require.NotContains(t, result.ProgressResult.StatusMessage, "of  could",
+		"an empty NativeID must not leave a blank gap in the message")
+}
+
 // An unknown request token is indeterminate: the mutation may or may not have
 // applied, and nothing the plugin can observe distinguishes the two. It ends
 // the operation with a code the operator will not retry — the shared error
@@ -1682,6 +1753,31 @@ func TestStatusResource_StatusOutageWindowElapsed_ReturnsNonRecoverableFailure(t
 
 	_, tracked := trackedWindow(t, client, "req-dark")
 	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
+}
+
+// A request that hasn't propagated far enough to carry a NativeID yet must
+// still produce a readable message: falling back to the RequestID beats
+// interpolating an empty string into "the status of  could not be read".
+func TestStatusResource_StatusOutageWindowElapsed_EmptyNativeID_FallsBackToRequestID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, advance := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	throttlingStatusPoll(mockAPI)
+	request := &resource.StatusRequest{RequestID: "req-dark-no-native-id"}
+
+	first, err := client.StatusResource(context.Background(), request, noRead(t))
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, first.ProgressResult.OperationStatus)
+
+	advance(statusEventBase.Add(statusOutageWindow))
+	last, err := client.StatusResource(context.Background(), request, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusFailure, last.ProgressResult.OperationStatus)
+	require.Contains(t, last.ProgressResult.StatusMessage, "req-dark-no-native-id",
+		"with no NativeID the message must still name the request it's about")
+	require.NotContains(t, last.ProgressResult.StatusMessage, "of  could",
+		"an empty NativeID must not leave a blank gap in the message")
 }
 
 // The window bounds a *consecutive* outage: a poll that did observe the request

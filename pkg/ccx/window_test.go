@@ -101,39 +101,6 @@ func TestStamps_AreIndependentPerCondition(t *testing.T) {
 	require.Equal(t, statusFirst, statusAgain)
 }
 
-func TestClearEnrichmentPending_LeavesStatusErrorStampIntact(t *testing.T) {
-	clock, advance := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	c := &Client{now: clock}
-	ctx := context.Background()
-
-	_, ok := c.stampEnrichmentPending(ctx, "req-1")
-	require.True(t, ok)
-
-	advance(clock().Add(time.Minute))
-	statusFirst, ok := c.stampStatusError(ctx, "req-1")
-	require.True(t, ok)
-
-	advance(clock().Add(time.Minute))
-	c.clearEnrichmentPending("req-1")
-
-	// The enrichment condition was cleared, so the next occurrence is a
-	// fresh first -- it must read back at the current (later) clock, not
-	// the original stamp.
-	advance(clock().Add(time.Minute))
-	newEnrichment, ok := c.stampEnrichmentPending(ctx, "req-1")
-	require.True(t, ok)
-	require.Equal(t, clock(), newEnrichment)
-	require.NotEqual(t, statusFirst, newEnrichment)
-
-	// The status-error stamp must be untouched by clearing the other
-	// condition -- it must still read back at its own, earlier first-seen
-	// time, not the clock at the moment of this call.
-	statusAgain, ok := c.stampStatusError(ctx, "req-1")
-	require.True(t, ok)
-	require.Equal(t, statusFirst, statusAgain)
-	require.NotEqual(t, clock(), statusAgain)
-}
-
 func TestClearStatusError_LeavesEnrichmentPendingStampIntact(t *testing.T) {
 	clock, advance := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	c := &Client{now: clock}
@@ -264,7 +231,6 @@ func TestConcurrentAccess_IsRaceClean(t *testing.T) {
 				id := fmt.Sprintf("req-%d-%d", g, i%5)
 				c.stampEnrichmentPending(ctx, id)
 				c.stampStatusError(ctx, id)
-				c.clearEnrichmentPending(id)
 				c.clearStatusError(id)
 				c.forgetRequest(id)
 			}

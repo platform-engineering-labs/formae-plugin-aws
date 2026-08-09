@@ -685,7 +685,7 @@ func (c *Client) classifyUnobservedStatus(ctx context.Context, request *resource
 		return unobservedResult(request, resource.OperationStatusFailure,
 			resource.OperationErrorCodeUnforeseenError,
 			fmt.Sprintf("the status of %s could not be read for %s, so whether the operation was applied cannot be determined",
-				request.NativeID, elapsed)), true
+				diagnosticIdentifier(request), elapsed)), true
 	}
 
 	log.Info("StatusResource: status could not be read, deferring to the next poll",
@@ -694,7 +694,18 @@ func (c *Client) classifyUnobservedStatus(ctx context.Context, request *resource
 		"requestID", request.RequestID)
 	return unobservedResult(request, resource.OperationStatusInProgress,
 		resource.OperationErrorCodeNotSet,
-		fmt.Sprintf("the status of %s could not be read; retrying on the next poll", request.NativeID)), true
+		fmt.Sprintf("the status of %s could not be read; retrying on the next poll", diagnosticIdentifier(request))), true
+}
+
+// diagnosticIdentifier names the resource an unobserved-outcome StatusMessage
+// is about. NativeID is what an operator recognises, but CloudControl may not
+// have echoed one back yet; falling back to the RequestID keeps the message
+// naming something rather than interpolating an empty string.
+func diagnosticIdentifier(request *resource.StatusRequest) string {
+	if request.NativeID != "" {
+		return request.NativeID
+	}
+	return request.RequestID
 }
 
 // unobservedResult builds the progress result for a poll that observed nothing,
@@ -810,14 +821,14 @@ func (c *Client) enrichStatusResult(
 				identifier)
 
 		case enrichmentUnbounded:
-			log.Error("StatusResource: no trustworthy clock to bound the read-back, reporting success without properties",
+			log.Error("StatusResource: no bounded retry window could be established for the read-back, reporting success without properties",
 				"identifier", identifier,
 				"resourceType", typeName,
 				"elapsed", elapsed,
 				"eventTime", aws.ToTime(event.EventTime),
 				"requestID", request.RequestID)
 			pr.StatusMessage = fmt.Sprintf(
-				"the mutation succeeded but %s could not be read back, and no trustworthy completion time is available to bound a retry; the recorded properties may be incomplete",
+				"the mutation succeeded but %s could not be read back, and no bounded retry window could be established; the recorded properties may be incomplete",
 				identifier)
 		}
 		return
@@ -841,8 +852,12 @@ const (
 	// enrichmentWindowElapsed: the read-back has had its window and did not
 	// come good; commit what we have.
 	enrichmentWindowElapsed
-	// enrichmentUnbounded: there is no clock we can trust to end a wait, so
-	// don't start one; commit what we have.
+	// enrichmentUnbounded: no bounded retry window could be established for
+	// the read-back -- either EventTime itself can't be trusted (missing or
+	// wildly skewed), or a trustworthy EventTime exists but the backstop
+	// stamp that would guard it against creeping forward isn't available
+	// (empty RequestID, or the tracker at its admission cap). Either way,
+	// don't start a wait that cannot be bounded; commit what we have.
 	enrichmentUnbounded
 )
 

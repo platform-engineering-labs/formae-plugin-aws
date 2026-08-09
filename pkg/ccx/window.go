@@ -77,14 +77,6 @@ func (c *Client) stampStatusError(ctx context.Context, requestID string) (time.T
 	return c.stamp(ctx, requestID, func(w *window) *time.Time { return &w.statusError })
 }
 
-// clearEnrichmentPending clears requestID's enrichment stamp once enrichment
-// is no longer pending -- the post-success Read finally returned properties,
-// or the enrichment window expired and the caller fell back to Success. It
-// leaves any status-error stamp for the same requestID untouched.
-func (c *Client) clearEnrichmentPending(requestID string) {
-	c.clearField(requestID, func(w *window) *time.Time { return &w.enrichmentPending })
-}
-
 // clearStatusError clears requestID's status-error stamp on any successful
 // GetResourceRequestStatus call, so a later failure starts a fresh window
 // rather than resuming one from a prior, unrelated failure streak. It leaves
@@ -96,8 +88,8 @@ func (c *Client) clearStatusError(requestID string) {
 // forgetRequest removes requestID's entire entry -- both stamps -- on the
 // request's terminal return (Success, window-expired Success, or terminal
 // Failure). Once a RequestID resolves there is nothing left for either stamp
-// to bound. This is deliberately named apart from clearEnrichmentPending and
-// clearStatusError: calling this on anything short of a terminal return would
+// to bound. This is deliberately separate from clearStatusError, which clears
+// only one stamp: calling this on anything short of a terminal return would
 // wipe out the other condition's stamp too, silently undoing the guarantee
 // those two exist to keep independent (see the enrichment-pending backstop
 // note on the window type above).
