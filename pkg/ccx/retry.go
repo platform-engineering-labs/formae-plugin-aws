@@ -66,6 +66,19 @@ type retryOpts struct {
 	// it bounds when the loop stops asking for more work, not the instant an
 	// in-flight call unwinds.
 	Budget time.Duration
+
+	// Deadline bounds the loop against an absolute instant rather than a
+	// duration measured from entry, and takes precedence over Budget when set.
+	// It exists so that several AWS calls made inside one watched RPC share a
+	// single budget instead of each starting a fresh one: a status poll that
+	// spends most of the budget must leave the read-back that follows it
+	// correspondingly less, or the RPC as a whole outlasts the window the
+	// budget was derived against. With Deadline set, Budget means nothing more
+	// than "derive a deadline on entry", so callers set one or the other.
+	//
+	// Leaving both zero keeps the attempt-bounded behaviour for unwatched call
+	// sites exactly as it was.
+	Deadline time.Time
 }
 
 // errRetryBudgetExhausted marks a retry loop that stopped because its
@@ -88,13 +101,20 @@ func budgetExhaustedError(lastErr error) error {
 // attempt is an AWS SDK call with its own internal retries and unbounded
 // service latency, so bounding only the sleeps under-counts wall clock.
 //
+// An explicit opts.Deadline is used as given, so callers that make several calls
+// inside one watched RPC can hand every loop the same instant and have them
+// share one budget. Otherwise a deadline is derived from opts.Budget on entry.
+//
 // The returned deadline is zero when unbudgeted, which disables every budget
 // check in the retry loops and leaves their behaviour exactly as it was.
-func withRetryBudget(ctx context.Context, budget time.Duration) (context.Context, time.Time, context.CancelFunc) {
-	if budget <= 0 {
-		return ctx, time.Time{}, func() {}
+func withRetryBudget(ctx context.Context, opts retryOpts) (context.Context, time.Time, context.CancelFunc) {
+	deadline := opts.Deadline
+	if deadline.IsZero() {
+		if opts.Budget <= 0 {
+			return ctx, time.Time{}, func() {}
+		}
+		deadline = time.Now().Add(opts.Budget)
 	}
-	deadline := time.Now().Add(budget)
 	callCtx, cancel := context.WithDeadline(ctx, deadline)
 	return callCtx, deadline, cancel
 }
@@ -138,9 +158,9 @@ func (o retryOpts) withDefaults() retryOpts {
 // returns a transient Go error). It exits on success (Properties
 // populated, ErrorCode empty), on non-recoverable failure, on context
 // cancellation, once the attempt budget is exhausted, or — when
-// opts.Budget is set — once the wall-clock budget is spent, in which case
-// the error wraps errRetryBudgetExhausted. The last observed result is
-// returned in all exit paths so the caller can inspect it.
+// opts.Budget or opts.Deadline is set — once the wall-clock budget is spent,
+// in which case the error wraps errRetryBudgetExhausted. The last observed
+// result is returned in all exit paths so the caller can inspect it.
 func retryRead(
 	ctx context.Context,
 	opts retryOpts,
@@ -149,7 +169,7 @@ func retryRead(
 ) (*resource.ReadResult, error) {
 	opts = opts.withDefaults()
 
-	callCtx, deadline, cancel := withRetryBudget(ctx, opts.Budget)
+	callCtx, deadline, cancel := withRetryBudget(ctx, opts)
 	defer cancel()
 
 	var last *resource.ReadResult
@@ -226,6 +246,7 @@ func retryRead(
 		plugin.LoggerFromContext(ctx).Info("ccx: retry budget exhausted on read",
 			"hint", logHint,
 			"budget", opts.Budget,
+			"deadline", deadline,
 			"err", lastErr)
 		return last, budgetExhaustedError(lastErr)
 	}
@@ -239,9 +260,9 @@ func retryRead(
 // the returned error matches AWS's recoverable surface (Throttling,
 // HandlerFailure, internal service errors). It exits on success, on
 // non-recoverable error, on context cancellation, once the attempt budget
-// is exhausted, or — when opts.Budget is set — once the wall-clock budget
-// is spent, in which case the error wraps errRetryBudgetExhausted. The
-// last observed result is returned.
+// is exhausted, or — when opts.Budget or opts.Deadline is set — once the
+// wall-clock budget is spent, in which case the error wraps
+// errRetryBudgetExhausted. The last observed result is returned.
 func retryCallable[T any](
 	ctx context.Context,
 	opts retryOpts,
@@ -250,7 +271,7 @@ func retryCallable[T any](
 ) (T, error) {
 	opts = opts.withDefaults()
 
-	callCtx, deadline, cancel := withRetryBudget(ctx, opts.Budget)
+	callCtx, deadline, cancel := withRetryBudget(ctx, opts)
 	defer cancel()
 
 	var last T
@@ -302,6 +323,7 @@ func retryCallable[T any](
 		plugin.LoggerFromContext(ctx).Info("ccx: retry budget exhausted on call",
 			"hint", logHint,
 			"budget", opts.Budget,
+			"deadline", deadline,
 			"err", lastErr)
 		return last, budgetExhaustedError(lastErr)
 	}

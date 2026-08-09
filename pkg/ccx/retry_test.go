@@ -619,3 +619,109 @@ func TestBackoffDelay_ExponentialWithJitter(t *testing.T) {
 		last = d
 	}
 }
+
+// deadlineOpts is testOpts bounded by an absolute instant instead of a duration,
+// as callers do when several calls inside one watched RPC share a budget.
+func deadlineOpts(attempts int, deadline time.Time) retryOpts {
+	o := testOpts(attempts)
+	o.Deadline = deadline
+	return o
+}
+
+func TestWithRetryBudget_NeitherBudgetNorDeadlineLeavesContextUntouched(t *testing.T) {
+	ctx := context.Background()
+	callCtx, deadline, cancel := withRetryBudget(ctx, retryOpts{})
+	defer cancel()
+	if callCtx != ctx {
+		t.Error("an unbudgeted loop must run its attempts on the caller's own context")
+	}
+	if !deadline.IsZero() {
+		t.Errorf("expected no deadline, got %v", deadline)
+	}
+}
+
+func TestWithRetryBudget_ExplicitDeadlineWinsOverBudget(t *testing.T) {
+	want := time.Now().Add(30 * time.Millisecond)
+	_, deadline, cancel := withRetryBudget(context.Background(), retryOpts{Budget: time.Hour, Deadline: want})
+	defer cancel()
+	if !deadline.Equal(want) {
+		t.Errorf("expected the explicit deadline %v, got %v", want, deadline)
+	}
+}
+
+func TestRetryRead_ExplicitDeadlineBoundsTheLoop(t *testing.T) {
+	start := time.Now()
+	_, err := retryRead(context.Background(), deadlineOpts(5, start.Add(30*time.Millisecond)), "test", blockingRead)
+	if !errors.Is(err, errRetryBudgetExhausted) {
+		t.Fatalf("expected budget-exhausted sentinel, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("expected the loop to stop at its deadline, took %v", elapsed)
+	}
+}
+
+// A deadline shared with an earlier call in the same RPC can already be spent by
+// the time this loop starts, which must exhaust immediately rather than run a
+// full budget of its own.
+func TestRetryRead_ExplicitDeadlineAlreadyPastReturnsSentinel(t *testing.T) {
+	calls := 0
+	_, err := retryRead(context.Background(), deadlineOpts(5, time.Now().Add(-time.Second)), "test",
+		func(ctx context.Context) (*resource.ReadResult, error) {
+			calls++
+			return throttledRead(ctx)
+		})
+	if !errors.Is(err, errRetryBudgetExhausted) {
+		t.Fatalf("expected budget-exhausted sentinel, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call, got %d", calls)
+	}
+}
+
+func TestRetryRead_ExplicitDeadlineParentCancelIsNotBudgetExhaustion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := retryRead(ctx, deadlineOpts(5, time.Now().Add(time.Minute)), "test",
+		func(ctx context.Context) (*resource.ReadResult, error) {
+			cancel()
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if errors.Is(err, errRetryBudgetExhausted) {
+		t.Error("parent cancellation must not be reported as budget exhaustion")
+	}
+}
+
+func TestRetryCallable_ExplicitDeadlineBoundsTheLoop(t *testing.T) {
+	start := time.Now()
+	_, err := retryCallable(context.Background(), deadlineOpts(5, start.Add(30*time.Millisecond)), "test",
+		func(ctx context.Context) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		})
+	if !errors.Is(err, errRetryBudgetExhausted) {
+		t.Fatalf("expected budget-exhausted sentinel, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("expected the loop to stop at its deadline, took %v", elapsed)
+	}
+}
+
+func TestRetryCallable_ExplicitDeadlineParentDeadlineIsNotBudgetExhaustion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := retryCallable(ctx, deadlineOpts(5, time.Now().Add(time.Minute)), "test",
+		func(ctx context.Context) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if errors.Is(err, errRetryBudgetExhausted) {
+		t.Error("a parent deadline shorter than the shared deadline must not be reported as budget exhaustion")
+	}
+}

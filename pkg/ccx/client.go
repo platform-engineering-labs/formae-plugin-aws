@@ -99,6 +99,19 @@ func (c *Client) watchedCallBudget() time.Duration {
 	return defaultWatchedCallBudget
 }
 
+// watchedRPCDeadline returns the single instant that every AWS call made inside
+// one watchdog-observed RPC shares. The budget bounds the RPC, not each call
+// within it: an RPC that makes two calls and gives each its own budget can spend
+// twice the budget, and the slack the constant is derived against disappears.
+// Callers derive this once on entry and hand it to every retry loop they run.
+//
+// It reads the real clock rather than the injectable one: the retry loops measure
+// against wall clock, while Client.now exists for the request-window tracker's
+// much longer, test-driven windows.
+func (c *Client) watchedRPCDeadline() time.Time {
+	return time.Now().Add(c.watchedCallBudget())
+}
+
 var IgnoredFields = map[string][]string{
 	"AWS::EC2::SecurityGroup":                      {"$.SecurityGroupEgress", "$.SecurityGroupIngress"},
 	"AWS::IAM::Role":                               {"$.Policies"},
@@ -442,9 +455,13 @@ const enrichmentClockSkew = 30 * time.Second
 func (c *Client) StatusResource(ctx context.Context, request *resource.StatusRequest, readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error)) (*resource.StatusResult, error) {
 	// This is the RPC the agent's missing-in-action watchdog observes most
 	// often, and the SDK retryer behind the status call can back off for longer
-	// than the watchdog is willing to wait. Every AWS call made inside a watched
-	// RPC carries the same wall-clock budget, this one included.
-	result, err := retryCallable(ctx, retryOpts{Budget: c.watchedCallBudget()}, "StatusResource:"+request.RequestID,
+	// than the watchdog is willing to wait. One deadline, derived here, bounds
+	// every AWS call this RPC goes on to make — the status call and the
+	// post-success read-back share it, so the RPC as a whole is bounded by one
+	// budget rather than one per call.
+	deadline := c.watchedRPCDeadline()
+
+	result, err := retryCallable(ctx, retryOpts{Deadline: deadline}, "StatusResource:"+request.RequestID,
 		func(ctx context.Context) (*cloudcontrol.GetResourceRequestStatusOutput, error) {
 			return c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
 				RequestToken: &request.RequestID,
@@ -541,7 +558,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 	}
 
 	if operationStatus == resource.OperationStatusSuccess && result.ProgressEvent.Operation != cctypes.OperationDelete {
-		c.enrichStatusResult(ctx, statusResult.ProgressResult, request, result.ProgressEvent, identifier, readFunc)
+		c.enrichStatusResult(ctx, statusResult.ProgressResult, request, result.ProgressEvent, identifier, deadline, readFunc)
 	}
 
 	// A resolved request has nothing left for the window tracker to bound. A
@@ -562,17 +579,19 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 // during high-concurrency periods; retryRead absorbs both with exponential
 // backoff so the agent doesn't persist a stale snapshot.
 //
-// The read carries the watched-call budget, so it can stop before it has
-// anything to report. The mutation itself has already succeeded by then, and the
-// only remaining question is whether to spend another poll on the read-back or
-// to commit the row without it — waitLongerForEnrichment answers that, and
-// bounds how long the answer can stay "wait".
+// The read shares the RPC's deadline with the status call that preceded it, so it
+// can stop before it has anything to report — and stops sooner the more of the
+// budget that status call spent. The mutation itself has already succeeded by
+// then, and the only remaining question is whether to spend another poll on the
+// read-back or to commit the row without it — enrichmentDecision answers that,
+// and bounds how long the answer can stay "wait".
 func (c *Client) enrichStatusResult(
 	ctx context.Context,
 	pr *resource.ProgressResult,
 	request *resource.StatusRequest,
 	event *cctypes.ProgressEvent,
 	identifier string,
+	deadline time.Time,
 	readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error),
 ) {
 	log := plugin.LoggerFromContext(ctx)
@@ -585,7 +604,7 @@ func (c *Client) enrichStatusResult(
 		return
 	}
 
-	readResult, readErr := retryRead(ctx, retryOpts{Budget: c.watchedCallBudget()}, "StatusResource:"+typeName,
+	readResult, readErr := retryRead(ctx, retryOpts{Deadline: deadline}, "StatusResource:"+typeName,
 		func(ctx context.Context) (*resource.ReadResult, error) {
 			return readFunc(ctx, &resource.ReadRequest{
 				NativeID:     identifier,
@@ -614,8 +633,11 @@ func (c *Client) enrichStatusResult(
 	}
 
 	if enrichmentDeferred(readErr) {
-		elapsed, wait := c.waitLongerForEnrichment(ctx, request.RequestID, event.EventTime)
-		if wait {
+		// Whichever branch this takes, no ErrorCode is set: the underlying event
+		// is a Success event and the resource exists. What is lost is the
+		// read-back, so the row is committed with whatever the event carried.
+		switch verdict, elapsed := c.enrichmentDecision(ctx, request.RequestID, event.EventTime); verdict {
+		case enrichmentPendingRetry:
 			log.Info("StatusResource: read-back still pending, deferring to the next poll",
 				"identifier", identifier,
 				"resourceType", typeName,
@@ -623,21 +645,29 @@ func (c *Client) enrichStatusResult(
 			pr.OperationStatus = resource.OperationStatusInProgress
 			pr.StatusMessage = fmt.Sprintf(
 				"the mutation succeeded; enrichment pending, %s is not readable yet", identifier)
-			return
-		}
 
-		// No error code: the underlying event is a Success event, and the
-		// resource exists. What is lost is the read-back, so the row is
-		// committed with whatever the event carried.
-		log.Error("StatusResource: enrichment window elapsed, reporting success without properties",
-			"identifier", identifier,
-			"resourceType", typeName,
-			"elapsed", elapsed,
-			"eventTime", aws.ToTime(event.EventTime),
-			"requestID", request.RequestID)
-		pr.StatusMessage = fmt.Sprintf(
-			"the mutation succeeded but %s could not be read back within the enrichment window; the recorded properties may be incomplete",
-			identifier)
+		case enrichmentWindowElapsed:
+			log.Error("StatusResource: enrichment window elapsed, reporting success without properties",
+				"identifier", identifier,
+				"resourceType", typeName,
+				"elapsed", elapsed,
+				"eventTime", aws.ToTime(event.EventTime),
+				"requestID", request.RequestID)
+			pr.StatusMessage = fmt.Sprintf(
+				"the mutation succeeded but %s could not be read back within the enrichment window; the recorded properties may be incomplete",
+				identifier)
+
+		case enrichmentUnbounded:
+			log.Error("StatusResource: no trustworthy clock to bound the read-back, reporting success without properties",
+				"identifier", identifier,
+				"resourceType", typeName,
+				"elapsed", elapsed,
+				"eventTime", aws.ToTime(event.EventTime),
+				"requestID", request.RequestID)
+			pr.StatusMessage = fmt.Sprintf(
+				"the mutation succeeded but %s could not be read back, and no trustworthy completion time is available to bound a retry; the recorded properties may be incomplete",
+				identifier)
+		}
 		return
 	}
 
@@ -648,9 +678,25 @@ func (c *Client) enrichStatusResult(
 		"resourceType", typeName)
 }
 
-// waitLongerForEnrichment reports whether a poll whose read-back ran out of
-// budget should stay InProgress for another round, along with how long the
-// mutation has been complete (for the caller's diagnostics).
+// enrichmentVerdict says what a poll whose read-back ran out of budget should do
+// about it.
+type enrichmentVerdict int
+
+const (
+	// enrichmentPendingRetry: the mutation completed recently enough that the
+	// read-back is worth another poll.
+	enrichmentPendingRetry enrichmentVerdict = iota
+	// enrichmentWindowElapsed: the read-back has had its window and did not
+	// come good; commit what we have.
+	enrichmentWindowElapsed
+	// enrichmentUnbounded: there is no clock we can trust to end a wait, so
+	// don't start one; commit what we have.
+	enrichmentUnbounded
+)
+
+// enrichmentDecision decides whether to spend another poll on a read-back that
+// ran out of budget, and reports how long the mutation has been complete for the
+// caller's diagnostics.
 //
 // The event's own timestamp is the primary clock because it is stateless: an
 // operator restart, a plugin-process restart, or a poll served by a different
@@ -665,20 +711,28 @@ func (c *Client) enrichStatusResult(
 // now beats polling forever. That trade is only the right way round because the
 // fallback is a Success — the operation's outcome is not in doubt, only its
 // properties are.
-func (c *Client) waitLongerForEnrichment(ctx context.Context, requestID string, eventTime *time.Time) (time.Duration, bool) {
+func (c *Client) enrichmentDecision(ctx context.Context, requestID string, eventTime *time.Time) (enrichmentVerdict, time.Duration) {
 	if eventTime == nil {
-		return 0, false
+		return enrichmentUnbounded, 0
 	}
 
 	now := c.clock()
 	elapsed := now.Sub(*eventTime)
 
-	// Past the window (including an implausibly old event), or far enough into
-	// the future that the timestamp is not measuring anything: stop waiting. A
-	// small negative elapsed is ordinary clock skew and falls through as a
-	// just-completed event.
-	if elapsed >= enrichmentWindow || elapsed < -enrichmentClockSkew {
-		return elapsed, false
+	// Far enough into this host's future that the timestamp is not measuring
+	// anything. Reported unclamped, since how far out it is is the diagnostic.
+	if elapsed < -enrichmentClockSkew {
+		return enrichmentUnbounded, elapsed
+	}
+	// Within the skew allowance: ordinary disagreement between the control
+	// plane's clock and this host's, so read it as a just-completed event.
+	if elapsed < 0 {
+		elapsed = 0
+	}
+
+	// Past the window, including an implausibly old event.
+	if elapsed >= enrichmentWindow {
+		return enrichmentWindowElapsed, elapsed
 	}
 
 	first, ok := c.stampEnrichmentPending(ctx, requestID)
@@ -686,9 +740,12 @@ func (c *Client) waitLongerForEnrichment(ctx context.Context, requestID string, 
 		// No request token to key a stamp on, or the tracker is at its
 		// admission cap: without a backstop there is nothing to shorten a
 		// creeping EventTime with, so don't start a wait at all.
-		return elapsed, false
+		return enrichmentUnbounded, elapsed
 	}
-	return elapsed, now.Sub(first) < enrichmentWindow
+	if now.Sub(first) >= enrichmentWindow {
+		return enrichmentWindowElapsed, elapsed
+	}
+	return enrichmentPendingRetry, elapsed
 }
 
 // populateResourceProperties performs a post-success Read to populate

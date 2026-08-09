@@ -1136,20 +1136,35 @@ func TestStatusResource_EnrichmentWindowExpired_ReturnsSuccessNotFailure(t *test
 
 // EventTime is the primary clock precisely because it is stateless: a plugin
 // process that restarted mid-operation, and so has no backstop stamp at all,
-// must reach the same verdict from the same event.
+// must reach the same verdict from the same event as the process that stamped it.
 func TestStatusResource_EnrichmentWindowExpired_FreshClientReachesSameVerdict(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
-	clock, _ := fakeClock(statusEventBase.Add(3 * time.Minute))
-	client := newStatusClient(mockAPI, clock)
 	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase)))
 
-	result, err := client.StatusResource(context.Background(),
+	// A first process observes the pending read-back and stamps its backstop.
+	firstClock, _ := fakeClock(statusEventBase.Add(30 * time.Second))
+	first := newStatusClient(mockAPI, firstClock)
+	pending, err := first.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, pending.ProgressResult.OperationStatus)
+	_, tracked := trackedWindow(t, first, "req-enrichment")
+	require.True(t, tracked, "the first process must have stamped its backstop")
+
+	// The plugin process restarts: a second client carries none of that state.
+	freshClock, _ := fakeClock(statusEventBase.Add(3 * time.Minute))
+	fresh := newStatusClient(mockAPI, freshClock)
+	_, freshTracked := trackedWindow(t, fresh, "req-enrichment")
+	require.False(t, freshTracked, "a restarted process starts with no stamp of its own")
+
+	result, err := fresh.StatusResource(context.Background(),
 		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
 
 	require.NoError(t, err)
 	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus,
 		"the verdict must come from the event, not from process-local state")
 	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.Contains(t, result.ProgressResult.StatusMessage, "enrichment window")
 }
 
 // With no EventTime there is nothing stateless to bound the wait against, so
@@ -1166,6 +1181,9 @@ func TestStatusResource_EnrichmentPending_NilEventTime_ReturnsSuccessWithNativeI
 	require.NoError(t, err)
 	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.Contains(t, result.ProgressResult.StatusMessage, "no trustworthy completion time")
+	require.NotContains(t, result.ProgressResult.StatusMessage, "enrichment window",
+		"no window was ever entered, so the message must not tell an operator one elapsed")
 }
 
 // An EventTime far enough in the future to be nonsense cannot bound anything
@@ -1182,6 +1200,9 @@ func TestStatusResource_EnrichmentPending_FarFutureEventTime_ReturnsSuccessWithN
 	require.NoError(t, err)
 	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.Contains(t, result.ProgressResult.StatusMessage, "no trustworthy completion time")
+	require.NotContains(t, result.ProgressResult.StatusMessage, "enrichment window",
+		"no window was ever entered, so the message must not tell an operator one elapsed")
 }
 
 // Modest disagreement between the AWS control plane's clock and this host's is
@@ -1344,6 +1365,50 @@ func TestStatusResource_StatusCallBlocksPastBudget_ReturnsPromptly(t *testing.T)
 	require.ErrorIs(t, err, errRetryBudgetExhausted)
 }
 
+// The budget bounds the watched RPC, not each AWS call inside it. If the status
+// call and the read-back each derived their own, one poll could spend two
+// budgets and the slack the budget was derived against would be gone — so the
+// read-back must inherit the deadline the status call already ran under, and a
+// slow status call must leave it correspondingly less time.
+func TestStatusResource_SharedBudget_StatusCallAndReadBackShareOneDeadline(t *testing.T) {
+	const budget = 400 * time.Millisecond
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := &Client{api: mockAPI, watchedBudget: budget, now: clock}
+
+	var statusDeadline, readDeadline time.Time
+	var statusBounded, readBounded bool
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			statusDeadline, statusBounded = args.Get(0).(context.Context).Deadline()
+			// Spend most of the RPC's budget before the read-back begins.
+			time.Sleep(3 * budget / 4)
+		}).
+		Return(&cloudcontrol.GetResourceRequestStatusOutput{
+			ProgressEvent: successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase)),
+		}, nil)
+
+	start := time.Now()
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-shared-budget"},
+		func(ctx context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
+			readDeadline, readBounded = ctx.Deadline()
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	spent := time.Since(start)
+
+	require.NoError(t, err)
+	require.True(t, statusBounded, "the status call must run under the RPC's deadline")
+	require.True(t, readBounded, "the read-back must run under the RPC's deadline")
+	require.True(t, statusDeadline.Equal(readDeadline),
+		"the read-back must inherit the RPC's deadline rather than start a fresh budget (status %s, read-back %s)",
+		statusDeadline, readDeadline)
+	require.Less(t, spent, budget+budget/3, "one watched RPC must not spend more than one budget")
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"the read-back ran out of the shared budget, so the poll defers it")
+}
+
 // A malformed response must not take the plugin process down with it.
 func TestStatusResource_NilProgressEvent_ReturnsErrorWithoutPanicking(t *testing.T) {
 	mockAPI := new(mockCloudControlAPI)
@@ -1435,4 +1500,18 @@ func TestStatusResource_TerminalFailure_ForgetsRequestWindow(t *testing.T) {
 
 	_, tracked := trackedWindow(t, client, "req-doomed")
 	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
+}
+
+// Within the skew allowance an event that appears to be slightly in the future
+// reads as just-completed, so the elapsed time the decision reports stays
+// non-negative.
+func TestEnrichmentDecision_SmallNegativeSkewClampsElapsedToZero(t *testing.T) {
+	clock, _ := fakeClock(statusEventBase)
+	client := &Client{now: clock}
+
+	verdict, elapsed := client.enrichmentDecision(context.Background(), "req-skewed",
+		ptr.Of(statusEventBase.Add(10*time.Second)))
+
+	require.Equal(t, enrichmentPendingRetry, verdict)
+	require.Equal(t, time.Duration(0), elapsed, "tolerable skew reads as a just-completed event")
 }
