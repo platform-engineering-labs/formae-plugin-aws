@@ -53,6 +53,12 @@ func (m *mockServiceDiscoveryClient) GetOperation(ctx context.Context, input *se
 	return out, args.Error(1)
 }
 
+func (m *mockServiceDiscoveryClient) ListOperations(ctx context.Context, input *servicediscoverysdk.ListOperationsInput, _ ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.ListOperationsOutput, error) {
+	args := m.Called(ctx, input)
+	out, _ := args.Get(0).(*servicediscoverysdk.ListOperationsOutput)
+	return out, args.Error(1)
+}
+
 func (m *mockServiceDiscoveryClient) TagResource(ctx context.Context, input *servicediscoverysdk.TagResourceInput, _ ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.TagResourceOutput, error) {
 	args := m.Called(ctx, input)
 	out, _ := args.Get(0).(*servicediscoverysdk.TagResourceOutput)

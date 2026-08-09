@@ -21,6 +21,7 @@ type serviceDiscoveryClientInterface interface {
 	GetNamespace(ctx context.Context, params *servicediscoverysdk.GetNamespaceInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.GetNamespaceOutput, error)
 	ListNamespaces(ctx context.Context, params *servicediscoverysdk.ListNamespacesInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.ListNamespacesOutput, error)
 	GetOperation(ctx context.Context, params *servicediscoverysdk.GetOperationInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.GetOperationOutput, error)
+	ListOperations(ctx context.Context, params *servicediscoverysdk.ListOperationsInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.ListOperationsOutput, error)
 	TagResource(ctx context.Context, params *servicediscoverysdk.TagResourceInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.TagResourceOutput, error)
 	UntagResource(ctx context.Context, params *servicediscoverysdk.UntagResourceInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.UntagResourceOutput, error)
 	ListTagsForResource(ctx context.Context, params *servicediscoverysdk.ListTagsForResourceInput, optFns ...func(*servicediscoverysdk.Options)) (*servicediscoverysdk.ListTagsForResourceOutput, error)

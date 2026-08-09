@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,15 @@ const resourceType = "AWS::ServiceDiscovery::PrivateDnsNamespace"
 // under a minute in practice.
 const namespaceOperationTimeout = 15 * time.Minute
 
+// namespaceDeleteTimeout bounds a namespace delete as a whole — the operation
+// behind it and any re-issues while the namespace still holds resources. It
+// travels in the RequestID from the first attempt onwards and is never renewed,
+// so contention that keeps recurring runs the wait out rather than retrying
+// forever. ECS deregisters a service's instances only once the ECS service
+// itself is gone, so a destroy reaches the namespace while deregistration is
+// still settling.
+const namespaceDeleteTimeout = 15 * time.Minute
+
 // CreatePrivateDnsNamespace returns only an operation id, and the namespace id
 // shows up on that operation's NAMESPACE target shortly afterwards — while the
 // operation is still PENDING. Create polls for it because the SDK requires every
@@ -50,6 +60,10 @@ const namespaceTargetKey = string(servicediscoverytypes.OperationTargetTypeNames
 // resourceOwnerSelf restricts a namespace lookup to namespaces this account
 // created, excluding namespaces other accounts have shared with it.
 const resourceOwnerSelf = "SELF"
+
+// resourceInUseErrorCode is what a namespace operation reports when the delete
+// it carried was blocked by the resources still registered in the namespace.
+const resourceInUseErrorCode = "RESOURCE_IN_USE"
 
 // creatorRequestIDPrefix identifies the CreatorRequestId values this plugin
 // derives. Cloud Map caps CreatorRequestId at 64 characters, which the prefix
@@ -347,10 +361,14 @@ func (n *PrivateDnsNamespace) Status(ctx context.Context, request *resource.Stat
 	if err != nil {
 		return nil, err
 	}
-	if state.OperationID == "" {
+	switch {
+	case state.Phase == phaseRetryDelete:
+		return n.statusFromDeleteRetry(ctx, client, request, state)
+	case state.OperationID == "":
 		return n.statusFromNamespace(ctx, client, request, state)
+	default:
+		return n.statusFromOperation(ctx, client, request, state)
 	}
-	return n.statusFromOperation(ctx, client, request, state)
 }
 
 // statusFromOperation reports the progress of the Cloud Map operation the
@@ -378,12 +396,20 @@ func (n *PrivateDnsNamespace) statusFromOperation(
 
 	switch out.Operation.Status {
 	case servicediscoverytypes.OperationStatusSuccess:
+		// A deleted namespace cannot be read back, and there are no properties
+		// left to carry anywhere.
+		if state.Phase == phaseDelete {
+			return statusResult(request, resource.OperationStatusSuccess, ""), nil
+		}
 		properties, err := readProperties(ctx, client, request.NativeID)
 		if err != nil {
 			return nil, err
 		}
 		return successWithProperties(request, properties)
 	case servicediscoverytypes.OperationStatusFail:
+		if state.Phase == phaseDelete && operationReportsNamespaceInUse(out.Operation) {
+			return enterDeleteRetry(ctx, request, request.NativeID, state.Deadline), nil
+		}
 		return statusResult(request, resource.OperationStatusFailure,
 			fmt.Sprintf("namespace operation %s failed: %s", state.OperationID, operationFailureMessage(out.Operation))), nil
 	default:
@@ -398,14 +424,32 @@ func (n *PrivateDnsNamespace) statusFromOperation(
 }
 
 // statusFromNamespace reports progress for a create that was adopted without an
-// operation to poll: the namespace exists as far as the listing was concerned,
-// so success is it being retrievable in its own right.
+// operation id of its own.
+//
+// The operation is recovered from the namespace's own operation history and
+// reported on like any other. The namespace record exists from the moment Cloud
+// Map accepts a create — including for one that goes on to fail and is rolled
+// back — so the namespace being retrievable says nothing about whether the
+// create succeeded.
+//
+// Cloud Map keeps an operation for a day. A namespace whose create is no longer
+// listed settled long ago, and then the namespace itself is all there is left to
+// confirm.
 func (n *PrivateDnsNamespace) statusFromNamespace(
 	ctx context.Context,
 	client serviceDiscoveryClientInterface,
 	request *resource.StatusRequest,
 	state requestState,
 ) (*resource.StatusResult, error) {
+	operationID, err := findCreateOperationID(ctx, client, request.NativeID)
+	if err != nil {
+		return nil, err
+	}
+	if operationID != "" {
+		state.OperationID = operationID
+		return n.statusFromOperation(ctx, client, request, state)
+	}
+
 	out, err := client.GetNamespace(ctx, &servicediscoverysdk.GetNamespaceInput{
 		Id: aws.String(request.NativeID),
 	})
@@ -430,6 +474,47 @@ func (n *PrivateDnsNamespace) statusFromNamespace(
 		return nil, err
 	}
 	return successWithProperties(request, properties)
+}
+
+// findCreateOperationID recovers the id of the operation that created a
+// namespace, and reports an empty id when Cloud Map no longer lists one.
+//
+// Cloud Map takes a page of operations and only then applies the filters, so a
+// page can come back empty while its token still leads to the operation. Paging
+// therefore continues on an empty page and stops only once the token runs out.
+func findCreateOperationID(ctx context.Context, client serviceDiscoveryClientInterface, namespaceID string) (string, error) {
+	input := &servicediscoverysdk.ListOperationsInput{
+		Filters: []servicediscoverytypes.OperationFilter{
+			{
+				Name:      servicediscoverytypes.OperationFilterNameNamespaceId,
+				Values:    []string{namespaceID},
+				Condition: servicediscoverytypes.FilterConditionEq,
+			},
+			{
+				Name:      servicediscoverytypes.OperationFilterNameType,
+				Values:    []string{string(servicediscoverytypes.OperationTypeCreateNamespace)},
+				Condition: servicediscoverytypes.FilterConditionEq,
+			},
+		},
+	}
+	for {
+		out, err := client.ListOperations(ctx, input)
+		if err != nil {
+			return "", fmt.Errorf("servicediscovery: ListOperations for namespace %s: %w", namespaceID, err)
+		}
+		if out == nil {
+			return "", fmt.Errorf("servicediscovery: ListOperations for namespace %s returned no response", namespaceID)
+		}
+		for _, operation := range out.Operations {
+			if id := aws.ToString(operation.Id); id != "" {
+				return id, nil
+			}
+		}
+		if aws.ToString(out.NextToken) == "" {
+			return "", nil
+		}
+		input.NextToken = out.NextToken
+	}
 }
 
 // successWithProperties reports a settled namespace operation as a success and
@@ -596,14 +681,347 @@ func putString(properties map[string]any, key, value string) {
 	}
 }
 
-// ----- Update / Delete -----
+// ----- Update -----
 
-func (n *PrivateDnsNamespace) Update(_ context.Context, _ *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	return nil, errors.New("servicediscovery: updating a private DNS namespace is not implemented")
+// Update applies the tag changes first and only then dispatches the change to
+// the namespace's own properties.
+//
+// The tag calls are synchronous and idempotent while the property update is an
+// operation that settles later, so an update interrupted between the two
+// re-applies the tags harmlessly on the next attempt and dispatches the property
+// update again. Dispatching first would leave the tags unapplied for good if the
+// tag call is what failed.
+//
+// Name and Vpc are create-only, so a change to either is a replace the engine
+// drives rather than an update to apply here.
+func (n *PrivateDnsNamespace) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	client, err := n.clientFactory(n.cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	var prior, desired map[string]any
+	if err := json.Unmarshal(request.PriorProperties, &prior); err != nil {
+		return nil, fmt.Errorf("servicediscovery: parse prior properties: %w", err)
+	}
+	if err := json.Unmarshal(request.DesiredProperties, &desired); err != nil {
+		return nil, fmt.Errorf("servicediscovery: parse desired properties: %w", err)
+	}
+	priorState, err := mutableNamespaceState(prior)
+	if err != nil {
+		return nil, err
+	}
+	desiredState, err := mutableNamespaceState(desired)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := applyTagChanges(ctx, client, request.NativeID, prior, desired); err != nil {
+		return nil, err
+	}
+
+	if desiredState == priorState {
+		// Nothing about the namespace itself changed, so there is no operation to
+		// wait for and the tags are already applied.
+		properties, err := readProperties(ctx, client, request.NativeID)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(properties)
+		if err != nil {
+			return nil, fmt.Errorf("servicediscovery: marshal properties: %w", err)
+		}
+		return &resource.UpdateResult{
+			ProgressResult: &resource.ProgressResult{
+				Operation:          resource.OperationUpdate,
+				OperationStatus:    resource.OperationStatusSuccess,
+				NativeID:           request.NativeID,
+				ResourceProperties: raw,
+			},
+		}, nil
+	}
+
+	resp, err := client.UpdatePrivateDnsNamespace(ctx, &servicediscoverysdk.UpdatePrivateDnsNamespaceInput{
+		Id:        aws.String(request.NativeID),
+		Namespace: desiredState.change(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("servicediscovery: UpdatePrivateDnsNamespace %s: %w", request.NativeID, err)
+	}
+	operationID := ""
+	if resp != nil {
+		operationID = aws.ToString(resp.OperationId)
+	}
+	if operationID == "" {
+		return nil, errors.New("servicediscovery: UpdatePrivateDnsNamespace returned no operation id")
+	}
+	plugin.LoggerFromContext(ctx).Info("servicediscovery: updating private DNS namespace",
+		"namespaceId", request.NativeID, "operationId", operationID)
+
+	return &resource.UpdateResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationUpdate,
+			OperationStatus: resource.OperationStatusInProgress,
+			NativeID:        request.NativeID,
+			RequestID: encodeRequestID(requestState{
+				OperationID: operationID,
+				Deadline:    n.now().Add(namespaceOperationTimeout),
+			}),
+		},
+	}, nil
 }
 
-func (n *PrivateDnsNamespace) Delete(_ context.Context, _ *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	return nil, errors.New("servicediscovery: deleting a private DNS namespace is not implemented")
+// namespaceState is the part of a namespace's declaration Cloud Map lets an
+// update change. Everything else the schema declares is either create-only or
+// read-only.
+type namespaceState struct {
+	description string
+	ttl         int64
+	ttlDeclared bool
+}
+
+// mutableNamespaceState reads the updatable part of a declaration. An absent
+// description is the empty one, so a description dropped from the declaration
+// compares as a change and is cleared rather than left behind.
+func mutableNamespaceState(properties map[string]any) (namespaceState, error) {
+	var state namespaceState
+	if _, declared := properties["Description"]; declared {
+		description, err := utils.GetStringProperty(properties, "Description")
+		if err != nil {
+			return namespaceState{}, fmt.Errorf("servicediscovery: invalid Description: %w", err)
+		}
+		state.description = description
+	}
+	ttl, declared, err := soaTTL(properties)
+	if err != nil {
+		return namespaceState{}, err
+	}
+	state.ttl, state.ttlDeclared = ttl, declared
+	return state, nil
+}
+
+// change renders the state as the update Cloud Map takes. The whole declared
+// state is sent rather than only the fields that differ, so the namespace ends
+// up matching the declaration either way.
+//
+// An undeclared SOA TTL leaves the SOA record alone: Cloud Map's own default for
+// it is not readable from here, so there is nothing to reset it to.
+func (s namespaceState) change() *servicediscoverytypes.PrivateDnsNamespaceChange {
+	change := &servicediscoverytypes.PrivateDnsNamespaceChange{
+		Description: aws.String(s.description),
+	}
+	if s.ttlDeclared {
+		change.Properties = &servicediscoverytypes.PrivateDnsNamespacePropertiesChange{
+			DnsProperties: &servicediscoverytypes.PrivateDnsPropertiesMutableChange{
+				SOA: &servicediscoverytypes.SOAChange{TTL: aws.Int64(s.ttl)},
+			},
+		}
+	}
+	return change
+}
+
+// applyTagChanges brings a namespace's tags to what the declaration carries.
+// Cloud Map overwrites the value of a key that is tagged again, so only a key
+// the declaration has dropped altogether has to be untagged.
+func applyTagChanges(
+	ctx context.Context,
+	client serviceDiscoveryClientInterface,
+	namespaceID string,
+	prior, desired map[string]any,
+) error {
+	toSet, toRemove := diffTags(tagSetFromProperties(prior), tagSetFromProperties(desired))
+	if len(toSet) == 0 && len(toRemove) == 0 {
+		return nil
+	}
+
+	// The tag APIs address a namespace by ARN rather than by id.
+	arn, err := resolveNamespaceARN(ctx, client, namespaceID, prior)
+	if err != nil {
+		return err
+	}
+	if len(toRemove) > 0 {
+		_, err := client.UntagResource(ctx, &servicediscoverysdk.UntagResourceInput{
+			ResourceARN: aws.String(arn),
+			TagKeys:     toRemove,
+		})
+		if err != nil {
+			return fmt.Errorf("servicediscovery: UntagResource %s: %w", arn, err)
+		}
+	}
+	if len(toSet) > 0 {
+		_, err := client.TagResource(ctx, &servicediscoverysdk.TagResourceInput{
+			ResourceARN: aws.String(arn),
+			Tags:        toSet,
+		})
+		if err != nil {
+			return fmt.Errorf("servicediscovery: TagResource %s: %w", arn, err)
+		}
+	}
+	return nil
+}
+
+// resolveNamespaceARN resolves the ARN the tag APIs address a namespace by, taking it
+// from the state already read where it is recorded and reading the namespace for
+// it where it is not.
+func resolveNamespaceARN(
+	ctx context.Context,
+	client serviceDiscoveryClientInterface,
+	namespaceID string,
+	properties map[string]any,
+) (string, error) {
+	if arn, ok := properties["Arn"].(string); ok && arn != "" {
+		return arn, nil
+	}
+	out, err := client.GetNamespace(ctx, &servicediscoverysdk.GetNamespaceInput{
+		Id: aws.String(namespaceID),
+	})
+	if err != nil {
+		return "", fmt.Errorf("servicediscovery: GetNamespace %s: %w", namespaceID, err)
+	}
+	if out == nil || out.Namespace == nil {
+		return "", fmt.Errorf("servicediscovery: GetNamespace %s returned no namespace", namespaceID)
+	}
+	arn := aws.ToString(out.Namespace.Arn)
+	if arn == "" {
+		return "", fmt.Errorf("servicediscovery: namespace %s reports no ARN to address its tags by", namespaceID)
+	}
+	return arn, nil
+}
+
+// ----- Delete -----
+
+func (n *PrivateDnsNamespace) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
+	client, err := n.clientFactory(n.cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	outcome, err := n.requestDelete(ctx, client, request.NativeID, n.now().Add(namespaceDeleteTimeout))
+	if err != nil {
+		return nil, err
+	}
+	return &resource.DeleteResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationDelete,
+			OperationStatus: outcome.status,
+			NativeID:        request.NativeID,
+			RequestID:       outcome.requestID,
+			StatusMessage:   outcome.message,
+		},
+	}, nil
+}
+
+// statusFromDeleteRetry re-issues a delete Cloud Map rejected because the
+// namespace still held resources. The rejection carries no operation id, so
+// there is nothing to poll and the retry is the poll. The deadline the delete
+// runs against travels in the RequestID, so it outlives a restart.
+func (n *PrivateDnsNamespace) statusFromDeleteRetry(
+	ctx context.Context,
+	client serviceDiscoveryClientInterface,
+	request *resource.StatusRequest,
+	state requestState,
+) (*resource.StatusResult, error) {
+	if n.now().After(state.Deadline) {
+		return statusResult(request, resource.OperationStatusFailure,
+			fmt.Sprintf("timeout waiting for the resources in namespace %s to be released (deadline %s)",
+				request.NativeID, state.Deadline.Format(time.RFC3339))), nil
+	}
+
+	// The retry runs against the deadline the delete started with, so a namespace
+	// that stays occupied runs the wait out rather than extending it.
+	outcome, err := n.requestDelete(ctx, client, request.NativeID, state.Deadline)
+	if err != nil {
+		return nil, err
+	}
+	return statusResultInPhase(request, outcome.status, outcome.requestID, outcome.message), nil
+}
+
+// deleteOutcome is how far a request to delete a namespace got, in the terms the
+// engine's next poll resumes from.
+type deleteOutcome struct {
+	status    resource.OperationStatus
+	requestID string
+	message   string
+}
+
+// requestDelete asks Cloud Map to delete a namespace. A namespace that is
+// already gone is a success; a namespace that still holds resources moves to the
+// retry phase, since the resources are released asynchronously by whatever
+// registered them; anything else is the caller's error to report.
+//
+// The deadline bounds the delete as a whole and is carried into whichever phase
+// the attempt lands in, rather than renewed per attempt.
+func (n *PrivateDnsNamespace) requestDelete(
+	ctx context.Context,
+	client serviceDiscoveryClientInterface,
+	namespaceID string,
+	deadline time.Time,
+) (deleteOutcome, error) {
+	out, err := client.DeleteNamespace(ctx, &servicediscoverysdk.DeleteNamespaceInput{
+		Id: aws.String(namespaceID),
+	})
+	if err != nil {
+		var notFound *servicediscoverytypes.NamespaceNotFound
+		if errors.As(err, &notFound) {
+			return deleteOutcome{status: resource.OperationStatusSuccess}, nil
+		}
+		var inUse *servicediscoverytypes.ResourceInUse
+		if errors.As(err, &inUse) {
+			return deleteRetryOutcome(ctx, namespaceID, deadline), nil
+		}
+		return deleteOutcome{}, fmt.Errorf("servicediscovery: DeleteNamespace %s: %w", namespaceID, err)
+	}
+
+	operationID := ""
+	if out != nil {
+		operationID = aws.ToString(out.OperationId)
+	}
+	if operationID == "" {
+		return deleteOutcome{}, fmt.Errorf("servicediscovery: DeleteNamespace %s returned no operation id", namespaceID)
+	}
+	plugin.LoggerFromContext(ctx).Info("servicediscovery: deleting private DNS namespace",
+		"namespaceId", namespaceID, "operationId", operationID)
+
+	return deleteOutcome{
+		status: resource.OperationStatusInProgress,
+		requestID: encodeRequestID(requestState{
+			Phase:       phaseDelete,
+			OperationID: operationID,
+			Deadline:    deadline,
+		}),
+		message: fmt.Sprintf("namespace operation %s is deleting namespace %s", operationID, namespaceID),
+	}, nil
+}
+
+// enterDeleteRetry reports a delete blocked by the resources still in the
+// namespace as progress towards a retry rather than as a failure, under the
+// deadline the delete already runs against.
+func enterDeleteRetry(
+	ctx context.Context,
+	request *resource.StatusRequest,
+	namespaceID string,
+	deadline time.Time,
+) *resource.StatusResult {
+	outcome := deleteRetryOutcome(ctx, namespaceID, deadline)
+	return statusResultInPhase(request, outcome.status, outcome.requestID, outcome.message)
+}
+
+func deleteRetryOutcome(ctx context.Context, namespaceID string, deadline time.Time) deleteOutcome {
+	plugin.LoggerFromContext(ctx).Info("servicediscovery: namespace still holds resources; retrying its deletion",
+		"namespaceId", namespaceID, "deadline", deadline.Format(time.RFC3339))
+	return deleteOutcome{
+		status:    resource.OperationStatusInProgress,
+		requestID: encodeRequestID(requestState{Phase: phaseRetryDelete, Deadline: deadline}),
+		message: fmt.Sprintf("namespace %s still holds resources; retrying its deletion until %s",
+			namespaceID, deadline.Format(time.RFC3339)),
+	}
+}
+
+// operationReportsNamespaceInUse reports whether a delete operation failed
+// because the namespace still held resources, which Cloud Map reports on the
+// operation when it accepted the delete before finding them.
+func operationReportsNamespaceInUse(operation *servicediscoverytypes.Operation) bool {
+	return strings.EqualFold(aws.ToString(operation.ErrorCode), resourceInUseErrorCode)
 }
 
 // ----- List -----
@@ -731,4 +1149,39 @@ func tagsFromProperties(properties map[string]any) []servicediscoverytypes.Tag {
 		tags = append(tags, tag)
 	}
 	return tags
+}
+
+// tagSetFromProperties reads a "Tags" property as a key/value map for diffing.
+func tagSetFromProperties(properties map[string]any) map[string]string {
+	tags := map[string]string{}
+	for _, tag := range tagsFromProperties(properties) {
+		tags[aws.ToString(tag.Key)] = aws.ToString(tag.Value)
+	}
+	return tags
+}
+
+// diffTags reports the tags to set and the tag keys to remove to bring prior to
+// desired. Both are ordered by key, so the same change makes the same calls.
+func diffTags(prior, desired map[string]string) (toSet []servicediscoverytypes.Tag, toRemove []string) {
+	for _, key := range sortedKeys(desired) {
+		value := desired[key]
+		if priorValue, tagged := prior[key]; !tagged || priorValue != value {
+			toSet = append(toSet, servicediscoverytypes.Tag{Key: aws.String(key), Value: aws.String(value)})
+		}
+	}
+	for _, key := range sortedKeys(prior) {
+		if _, declared := desired[key]; !declared {
+			toRemove = append(toRemove, key)
+		}
+	}
+	return toSet, toRemove
+}
+
+func sortedKeys(tags map[string]string) []string {
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
