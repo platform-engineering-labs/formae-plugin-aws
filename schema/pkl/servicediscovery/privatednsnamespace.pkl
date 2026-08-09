@@ -1,0 +1,96 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Provisioner: Resource type is NON_PROVISIONABLE in the CFN registry
+ * (CloudControl has no handlers at all for it). All operations are
+ * handled by a custom provisioner calling the Cloud Map API directly.
+ *
+ * `vpc` is create-only and write-only: Cloud Map's GetNamespace has no
+ * field for the namespace's VPC, and there is no API to change it after
+ * creation. With no way to read it back, keeping it in drift comparison
+ * would drive a spurious destructive replace of a create-only field
+ * whenever a Read runs. `extractable = false` follows for the same
+ * reason: an extract can never populate `vpc`, so the extracted resource
+ * would be missing a create-only field.
+ */
+
+module aws.servicediscovery.privatednsnamespace
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::ServiceDiscovery::PrivateDnsNamespace"
+
+@aws.SubResourceHint
+open class SOA extends formae.SubResource {
+    ttl: Int
+}
+
+@aws.SubResourceHint
+open class DnsProperties extends formae.SubResource {
+    soa: SOA?
+}
+
+@aws.SubResourceHint
+open class Properties extends formae.SubResource {
+    dnsProperties: DnsProperties?
+}
+
+open class NamespaceResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden id: NamespaceResolvable = (this) {
+        property = "Id"
+    }
+
+    hidden arn: NamespaceResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden name: NamespaceResolvable = (this) {
+        property = "Name"
+    }
+
+    hidden hostedZoneId: NamespaceResolvable = (this) {
+        property = "HostedZoneId"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Id"
+    discoverable = true
+    extractable = false
+}
+open class PrivateDnsNamespace extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    name: String
+
+    @aws.FieldHint{
+        createOnly = true
+        writeOnly = true
+    }
+    vpc: (String|formae.Resolvable)?
+
+    @aws.FieldHint
+    description: String?
+
+    @aws.FieldHint
+    properties: Properties?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: NamespaceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}
