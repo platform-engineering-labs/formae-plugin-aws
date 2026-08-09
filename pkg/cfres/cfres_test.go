@@ -29,3 +29,9 @@ func TestS3ObjectRegistration(t *testing.T) {
 	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationCheckStatus, cfg))
 	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationList, cfg))
 }
+
+func TestKMSAliasRegistration(t *testing.T) {
+	cfg := &config.Config{Region: "us-east-1"}
+	assert.NotNil(t, GetProvisionerForOperation("AWS::KMS::Alias", resource.OperationRead, cfg))
+	assert.Nil(t, GetProvisionerForOperation("AWS::KMS::Alias", resource.OperationCreate, cfg))
+}
