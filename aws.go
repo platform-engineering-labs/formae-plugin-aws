@@ -102,6 +102,10 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 			"AWS::S3::Object": "$.Key",
 			// CloudTrail trails have no Name tag; use the trail name as the label.
 			"AWS::CloudTrail::Trail": "$.TrailName",
+			// Cloud Map namespaces and services are identified by their name;
+			// their tags are not required to carry one.
+			"AWS::ServiceDiscovery::PrivateDnsNamespace": "$.Name",
+			"AWS::ServiceDiscovery::Service":             "$.Name",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",
