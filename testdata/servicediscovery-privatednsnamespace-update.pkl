@@ -1,0 +1,60 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/servicediscovery/privatednsnamespace.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-servicediscovery-pdns-\(testRunID)"
+
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-servicediscovery-pdns"
+  cidrBlock = "10.235.0.0/16"
+  enableDnsSupport = true
+  enableDnsHostnames = true
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ServiceDiscovery PrivateDnsNamespace"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+
+  // Updated: the description and the SOA TTL are the two things Cloud Map lets
+  // an update change on a private DNS namespace, and both are in-place changes
+  // (Name and Vpc are create-only, so neither is touched here).
+  //
+  // The tags are dropped altogether rather than edited. A namespace with no
+  // tags emits no Tags key at all, so removing every tag is the only way the
+  // fixture can tell an untag apart from tags that were never set.
+  new privatednsnamespace.PrivateDnsNamespace {
+    label = "plugin-sdk-test-servicediscovery-pdns"
+    name = "formae-plugin-sdk-test-pdns-\(testRunID).local"
+    vpc = testVpc.res.vpcId
+    description = "Plugin SDK test private DNS namespace - updated"
+    properties = new privatednsnamespace.Properties {
+      dnsProperties = new privatednsnamespace.DnsProperties {
+        sOA = new privatednsnamespace.SOA {
+          tTL = 120
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/servicediscovery/privatednsnamespace.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-servicediscovery-pdns-\(testRunID)"
+
+// A private DNS namespace is backed by a Route53 private hosted zone associated
+// with this VPC, which needs both DNS attributes enabled. The fixture brings its
+// own VPC: a VPC can only be associated once with a hosted zone of a given
+// domain name, so a shared VPC would make two fixtures collide.
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-servicediscovery-pdns"
+  cidrBlock = "10.235.0.0/16"
+  enableDnsSupport = true
+  enableDnsHostnames = true
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ServiceDiscovery PrivateDnsNamespace"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+
+  // Namespace under test: last, the only resource of its type, and a leaf --
+  // it holds no services, so the out-of-band delete step can remove it on its
+  // own. The domain name is unique to this fixture so a run of it never
+  // competes for a hosted zone with another fixture in the same account.
+  new privatednsnamespace.PrivateDnsNamespace {
+    label = "plugin-sdk-test-servicediscovery-pdns"
+    name = "formae-plugin-sdk-test-pdns-\(testRunID).local"
+    vpc = testVpc.res.vpcId
+    description = "Plugin SDK test private DNS namespace"
+    properties = new privatednsnamespace.Properties {
+      dnsProperties = new privatednsnamespace.DnsProperties {
+        sOA = new privatednsnamespace.SOA {
+          tTL = 60
+        }
+      }
+    }
+    tags {
+      new { key = "Environment"; value = "test" }
+      new { key = "Owner"; value = "plugin-sdk" }
+    }
+  }
+}

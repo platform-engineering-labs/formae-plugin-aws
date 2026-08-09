@@ -1,0 +1,75 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/servicediscovery/privatednsnamespace.pkl"
+import "@aws/servicediscovery/servicediscoveryservice.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-servicediscovery-service-\(testRunID)"
+
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-servicediscovery-service"
+  cidrBlock = "10.236.0.0/16"
+  enableDnsSupport = true
+  enableDnsHostnames = true
+}
+
+local testNamespace = new privatednsnamespace.PrivateDnsNamespace {
+  label = "test-namespace-for-servicediscovery-service"
+  name = "formae-plugin-sdk-test-svcns-\(testRunID).local"
+  vpc = testVpc.res.vpcId
+  description = "Plugin SDK test namespace hosting the service under test"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ServiceDiscovery Service"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  testNamespace
+
+  // Updated: the description and the DNS record TTL. Name, namespaceId and the
+  // custom health check config are create-only, so the change stays an in-place
+  // update. The record list is replaced whole rather than patched entry by
+  // entry, which is what the schema's atomic update method on dnsRecords is
+  // there for.
+  new servicediscoveryservice.Service {
+    label = "plugin-sdk-test-servicediscovery-service"
+    name = "formae-plugin-sdk-test-svc-\(testRunID)"
+    namespaceId = testNamespace.res.id
+    description = "Plugin SDK test Cloud Map service - updated"
+    dnsConfig = new servicediscoveryservice.DnsConfig {
+      routingPolicy = "MULTIVALUE"
+      dnsRecords {
+        new servicediscoveryservice.DnsRecord {
+          type = "A"
+          tTL = 120
+        }
+      }
+    }
+    healthCheckCustomConfig = new servicediscoveryservice.HealthCheckCustomConfig {
+      failureThreshold = 1
+    }
+    tags {
+      new { key = "Environment"; value = "updated" }
+    }
+  }
+}
