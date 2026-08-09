@@ -54,7 +54,7 @@ func TestStampStatusError_FirstCallRecordsStamp_StableAcrossRepeats(t *testing.T
 	require.Equal(t, first, second, "stamp must not move on repeated calls")
 }
 
-func TestClearWindow_RemovesBothStamps(t *testing.T) {
+func TestForgetRequest_RemovesBothStamps(t *testing.T) {
 	clock, advance := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	c := &Client{now: clock}
 	ctx := context.Background()
@@ -64,16 +64,16 @@ func TestClearWindow_RemovesBothStamps(t *testing.T) {
 	_, ok = c.stampStatusError(ctx, "req-1")
 	require.True(t, ok)
 
-	c.clearWindow("req-1")
+	c.forgetRequest("req-1")
 
 	advance(clock().Add(time.Hour))
 	firstAfterClear, ok := c.stampEnrichmentPending(ctx, "req-1")
 	require.True(t, ok)
-	require.Equal(t, clock(), firstAfterClear, "clearWindow must remove the enrichment stamp entirely")
+	require.Equal(t, clock(), firstAfterClear, "forgetRequest must remove the enrichment stamp entirely")
 
 	secondAfterClear, ok := c.stampStatusError(ctx, "req-1")
 	require.True(t, ok)
-	require.Equal(t, clock(), secondAfterClear, "clearWindow must remove the status-error stamp entirely")
+	require.Equal(t, clock(), secondAfterClear, "forgetRequest must remove the status-error stamp entirely")
 }
 
 func TestStamps_AreIndependentPerCondition(t *testing.T) {
@@ -102,47 +102,68 @@ func TestStamps_AreIndependentPerCondition(t *testing.T) {
 }
 
 func TestClearEnrichmentPending_LeavesStatusErrorStampIntact(t *testing.T) {
-	clock, _ := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	clock, advance := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	c := &Client{now: clock}
 	ctx := context.Background()
 
 	_, ok := c.stampEnrichmentPending(ctx, "req-1")
 	require.True(t, ok)
+
+	advance(clock().Add(time.Minute))
 	statusFirst, ok := c.stampStatusError(ctx, "req-1")
 	require.True(t, ok)
 
+	advance(clock().Add(time.Minute))
 	c.clearEnrichmentPending("req-1")
 
-	// enrichment condition was cleared, so the next occurrence is a fresh first.
+	// The enrichment condition was cleared, so the next occurrence is a
+	// fresh first -- it must read back at the current (later) clock, not
+	// the original stamp.
+	advance(clock().Add(time.Minute))
 	newEnrichment, ok := c.stampEnrichmentPending(ctx, "req-1")
 	require.True(t, ok)
 	require.Equal(t, clock(), newEnrichment)
+	require.NotEqual(t, statusFirst, newEnrichment)
 
-	// status-error stamp must be untouched by clearing the other condition.
+	// The status-error stamp must be untouched by clearing the other
+	// condition -- it must still read back at its own, earlier first-seen
+	// time, not the clock at the moment of this call.
 	statusAgain, ok := c.stampStatusError(ctx, "req-1")
 	require.True(t, ok)
 	require.Equal(t, statusFirst, statusAgain)
+	require.NotEqual(t, clock(), statusAgain)
 }
 
 func TestClearStatusError_LeavesEnrichmentPendingStampIntact(t *testing.T) {
-	clock, _ := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	clock, advance := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	c := &Client{now: clock}
 	ctx := context.Background()
 
 	enrichmentFirst, ok := c.stampEnrichmentPending(ctx, "req-1")
 	require.True(t, ok)
+
+	advance(clock().Add(time.Minute))
 	_, ok = c.stampStatusError(ctx, "req-1")
 	require.True(t, ok)
 
+	advance(clock().Add(time.Minute))
 	c.clearStatusError("req-1")
 
+	// The status-error condition was cleared, so the next occurrence is a
+	// fresh first -- it must read back at the current (later) clock.
+	advance(clock().Add(time.Minute))
 	newStatus, ok := c.stampStatusError(ctx, "req-1")
 	require.True(t, ok)
 	require.Equal(t, clock(), newStatus)
+	require.NotEqual(t, enrichmentFirst, newStatus)
 
+	// The enrichment-pending stamp must be untouched by clearing the other
+	// condition -- it must still read back at its own, earlier first-seen
+	// time, not the clock at the moment of this call.
 	enrichmentAgain, ok := c.stampEnrichmentPending(ctx, "req-1")
 	require.True(t, ok)
 	require.Equal(t, enrichmentFirst, enrichmentAgain)
+	require.NotEqual(t, clock(), enrichmentAgain)
 }
 
 func TestStamp_EmptyRequestID_NeverAdmitted(t *testing.T) {
@@ -159,26 +180,35 @@ func TestStamp_EmptyRequestID_NeverAdmitted(t *testing.T) {
 }
 
 func TestStamp_AtCap_RefusesNewAdmission_ExistingWindowsKeepDeadlines(t *testing.T) {
-	clock, _ := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	clock, advance := fakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	c := &Client{now: clock}
 	ctx := context.Background()
 
-	for i := 0; i < maxTrackedWindows; i++ {
+	originalStamp, ok := c.stampEnrichmentPending(ctx, "req-0")
+	require.True(t, ok)
+	for i := 1; i < maxTrackedWindows; i++ {
 		_, ok := c.stampEnrichmentPending(ctx, fmt.Sprintf("req-%d", i))
 		require.True(t, ok, "admission must succeed under the cap")
 	}
 	require.Len(t, c.windows, maxTrackedWindows)
 
+	// Move the clock forward before touching req-0 again, so a stamp that
+	// got reset to "now" is distinguishable from one that kept its original
+	// deadline.
+	advance(clock().Add(time.Minute))
+
 	existing, ok := c.stampEnrichmentPending(ctx, "req-0")
 	require.True(t, ok, "an existing entry must keep being served even while the map is at capacity")
-	require.Equal(t, clock(), existing)
+	require.Equal(t, originalStamp, existing, "an existing entry's deadline must not be reset by touching it while the map is at capacity")
+	require.NotEqual(t, clock(), existing, "the deadline must still be the original stamp, not the current clock")
 
 	_, ok = c.stampEnrichmentPending(ctx, "brand-new-request")
 	require.False(t, ok, "a new RequestID must be refused once the tracker is at its admission cap")
 	require.Len(t, c.windows, maxTrackedWindows, "a refused admission must not grow the map")
 
-	_, stillThere := c.windows["req-0"]
+	retained, stillThere := c.windows["req-0"]
 	require.True(t, stillThere, "existing windows must not be disturbed by a refused admission")
+	require.Equal(t, originalStamp, retained.enrichmentPending, "the retained entry's deadline must survive a refused admission unchanged")
 }
 
 func TestActiveEntry_SurvivesSweep_DeadlineIntact(t *testing.T) {
@@ -236,7 +266,7 @@ func TestConcurrentAccess_IsRaceClean(t *testing.T) {
 				c.stampStatusError(ctx, id)
 				c.clearEnrichmentPending(id)
 				c.clearStatusError(id)
-				c.clearWindow(id)
+				c.forgetRequest(id)
 			}
 		}(g)
 	}

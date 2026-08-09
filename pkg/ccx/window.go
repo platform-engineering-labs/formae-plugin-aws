@@ -15,7 +15,7 @@ import (
 // the tracker before the sweep reclaims it. It exists only to bound entries
 // that were genuinely abandoned -- an operator process that stopped polling
 // an operation entirely (crashed, or moved on) without ever reaching a
-// terminal state that would have called clearWindow. It is an order of
+// terminal state that would have called forgetRequest. It is an order of
 // magnitude above the ~2m window later stages bound their own conditions by,
 // specifically so it never fires while an operation is still being actively
 // polled: every stamp/clear call on an entry refreshes its lastSeen.
@@ -93,11 +93,15 @@ func (c *Client) clearStatusError(requestID string) {
 	c.clearField(requestID, func(w *window) *time.Time { return &w.statusError })
 }
 
-// clearWindow removes requestID's entire entry -- both stamps -- on the
+// forgetRequest removes requestID's entire entry -- both stamps -- on the
 // request's terminal return (Success, window-expired Success, or terminal
 // Failure). Once a RequestID resolves there is nothing left for either stamp
-// to bound.
-func (c *Client) clearWindow(requestID string) {
+// to bound. This is deliberately named apart from clearEnrichmentPending and
+// clearStatusError: calling this on anything short of a terminal return would
+// wipe out the other condition's stamp too, silently undoing the guarantee
+// those two exist to keep independent (see the enrichment-pending backstop
+// note on the window type above).
+func (c *Client) forgetRequest(requestID string) {
 	if requestID == "" {
 		return
 	}
@@ -120,18 +124,18 @@ func (c *Client) stamp(ctx context.Context, requestID string, field func(*window
 	now := c.clock()
 
 	c.windowsMu.Lock()
-	defer c.windowsMu.Unlock()
-
 	c.sweepLocked(now)
 
 	w, exists := c.windows[requestID]
-	if !exists {
-		if len(c.windows) >= maxTrackedWindows {
-			plugin.LoggerFromContext(ctx).Error("ccx: request-window tracker at admission cap, refusing new window",
-				"requestID", requestID,
-				"cap", maxTrackedWindows)
-			return time.Time{}, false
-		}
+	if !exists && len(c.windows) >= maxTrackedWindows {
+		c.windowsMu.Unlock()
+		// Logged outside the lock: the context logger writes to stdout,
+		// which can block on a full pipe, and every other in-flight tracker
+		// call would stall behind windowsMu while it did.
+		plugin.LoggerFromContext(ctx).Error("ccx: request-window tracker at admission cap, refusing new window",
+			"requestID", requestID,
+			"cap", maxTrackedWindows)
+		return time.Time{}, false
 	}
 
 	stamp := field(&w)
@@ -144,6 +148,7 @@ func (c *Client) stamp(ctx context.Context, requestID string, field func(*window
 		c.windows = make(map[string]window)
 	}
 	c.windows[requestID] = w
+	c.windowsMu.Unlock()
 
 	return *stamp, true
 }
@@ -179,7 +184,7 @@ func (c *Client) clearField(requestID string, field func(*window) *time.Time) {
 // being actively polled has its lastSeen refreshed on every stamp or clear
 // call and so never becomes eligible, regardless of how far past its own
 // (much shorter) 2m window it is. Reaching that shorter window is the later
-// tasks' job to detect and act on by calling clearWindow -- this sweep is
+// tasks' job to detect and act on by calling forgetRequest -- this sweep is
 // strictly a backstop for a RequestID whose operator disappeared before
 // doing so.
 func (c *Client) sweepLocked(now time.Time) {
