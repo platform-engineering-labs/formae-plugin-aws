@@ -61,6 +61,50 @@ formae agent.
   the resource family still typed as a plain string, which forced the image to
   be pinned by hand and re-pinned on every rebuild.
 
+- `AWS::ServiceDiscovery::PrivateDnsNamespace` and `AWS::ServiceDiscovery::Service`
+  support (AWS Cloud Map). A workload can now be registered for service discovery
+  from a forma: declare a private DNS namespace, declare a service in it, and
+  reference that service's `res.arn` from an ECS service's
+  `serviceRegistries[].registryArn`. ECS then registers each task's address as
+  the task starts and deregisters it as the task stops, so
+  `<service name>.<namespace name>` resolves to the live task addresses inside
+  the VPC. The ECS field already accepted a reference; until now there was no
+  resource to point it at.
+
+  The namespace exposes `res.id`, `res.arn`, `res.name` and `res.hostedZoneId`
+  resolvables. The hosted zone id matters because Cloud Map creates and owns a
+  Route53 private hosted zone for the namespace, and nothing else gives you a
+  handle on it.
+
+  CloudControl reports the namespace type as non-provisionable, so the plugin
+  drives it directly through the Cloud Map API. Its create, update and delete are
+  asynchronous operations that the plugin polls to completion. A delete that AWS
+  rejects because the namespace still holds services is retried under a single
+  timeout rather than failed outright, since ECS deregisters task instances
+  asynchronously after an ECS service is deleted and a stack destroy can
+  legitimately reach the namespace while that is still settling.
+
+  Two limitations to know about before adopting this. The namespace's `vpc` is
+  create-only and write-only, and the namespace is **not extractable**: Cloud Map
+  returns a namespace's VPC from no API and offers no way to change it, so an
+  extract could never populate the field and a namespace created outside formae
+  cannot be brought under management by extracting it. Discovery still lists
+  namespaces; only extraction is unavailable. Second, a namespace name must be
+  unique within a VPC, and a colliding create is accepted and then fails
+  asynchronously with a hosted-zone conflict rather than being rejected up front.
+
+  On the service, `dnsConfig.dnsRecords` is replaced as a whole on update, which
+  is what the AWS API itself does with that list. Health checking is Cloud Map's
+  own `healthCheckCustomConfig` for services in a private namespace;
+  `healthCheckConfig` is only valid in a public namespace and AWS rejects it
+  otherwise.
+
+  Deliberately not modelled in this version: `HttpNamespace`,
+  `PublicDnsNamespace`, and `Instance`. Instances are registered and deregistered
+  by ECS itself, and the other two namespace types are non-provisionable in the
+  same way as the private one, so each would need its own provisioner rather than
+  coming for free with a schema.
+
 ### Changed
 
 - **Breaking.** `AWS::CodeBuild::ImageBuild` is now a pure build-and-push
