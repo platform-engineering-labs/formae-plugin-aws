@@ -432,9 +432,10 @@ func (n *PrivateDnsNamespace) statusFromOperation(
 // back — so the namespace being retrievable says nothing about whether the
 // create succeeded.
 //
-// Cloud Map keeps an operation for a day. A namespace whose create is no longer
-// listed settled long ago, and then the namespace itself is all there is left to
-// confirm.
+// Cloud Map keeps an operation for a day, and lists it only once it has taken
+// it on. A namespace with no create operation listed has either settled long ago
+// or been accepted moments ago, and the namespace's own hosted zone is what
+// tells the two apart.
 func (n *PrivateDnsNamespace) statusFromNamespace(
 	ctx context.Context,
 	client serviceDiscoveryClientInterface,
@@ -469,11 +470,35 @@ func (n *PrivateDnsNamespace) statusFromNamespace(
 	if out == nil || out.Namespace == nil {
 		return nil, fmt.Errorf("servicediscovery: GetNamespace %s returned no namespace", request.NativeID)
 	}
+	if !namespaceCarriesItsHostedZone(out.Namespace) {
+		if n.now().After(state.Deadline) {
+			return statusResult(request, resource.OperationStatusFailure,
+				fmt.Sprintf("timeout waiting for the hosted zone of namespace %s (deadline %s)",
+					request.NativeID, state.Deadline.Format(time.RFC3339))), nil
+		}
+		return statusResult(request, resource.OperationStatusInProgress,
+			fmt.Sprintf("namespace %s does not carry its hosted zone yet", request.NativeID)), nil
+	}
 	properties, err := namespaceProperties(ctx, client, out.Namespace)
 	if err != nil {
 		return nil, err
 	}
 	return successWithProperties(request, properties)
+}
+
+// namespaceCarriesItsHostedZone reports whether a namespace record is one whose
+// create has run. Cloud Map records the namespace as soon as it accepts the
+// create and fills in the hosted zone the create provisions only once that has
+// happened, so the hosted zone is what tells a settled namespace apart from one
+// whose create is still running.
+//
+// The distinction matters because the hosted zone id is also what the
+// resolvables of dependent resources resolve against: a namespace reported as
+// created before it carries one is stored without it.
+func namespaceCarriesItsHostedZone(namespace *servicediscoverytypes.Namespace) bool {
+	return namespace.Properties != nil &&
+		namespace.Properties.DnsProperties != nil &&
+		aws.ToString(namespace.Properties.DnsProperties.HostedZoneId) != ""
 }
 
 // findCreateOperationID recovers the id of the operation that created a
@@ -720,7 +745,7 @@ func (n *PrivateDnsNamespace) Update(ctx context.Context, request *resource.Upda
 		return nil, err
 	}
 
-	if desiredState == priorState {
+	if desiredState.matches(priorState) {
 		// Nothing about the namespace itself changed, so there is no operation to
 		// wait for and the tags are already applied.
 		properties, err := readProperties(ctx, client, request.NativeID)
@@ -798,6 +823,25 @@ func mutableNamespaceState(properties map[string]any) (namespaceState, error) {
 	}
 	state.ttl, state.ttlDeclared = ttl, declared
 	return state, nil
+}
+
+// matches reports whether the namespace the recorded state describes already is
+// what this declaration asks for, so that an update has nothing left to change.
+//
+// Only what the declaration carries is compared. The two states are of different
+// kinds — the recorded one comes from a namespace as Cloud Map reports it, the
+// declared one from a forma — and Cloud Map reports an SOA TTL for every
+// namespace, including one whose declaration never asked for a particular TTL.
+// An undeclared TTL therefore matches whatever the namespace carries, the same
+// way the update leaves it alone.
+func (s namespaceState) matches(recorded namespaceState) bool {
+	if s.description != recorded.description {
+		return false
+	}
+	if !s.ttlDeclared {
+		return true
+	}
+	return recorded.ttlDeclared && s.ttl == recorded.ttl
 }
 
 // change renders the state as the update Cloud Map takes. The whole declared
@@ -931,9 +975,23 @@ func (n *PrivateDnsNamespace) statusFromDeleteRetry(
 	// that stays occupied runs the wait out rather than extending it.
 	outcome, err := n.requestDelete(ctx, client, request.NativeID, state.Deadline)
 	if err != nil {
-		return nil, err
+		// Re-issuing the delete is what this phase's poll does, and a call that is
+		// throttled or fails transiently is one the next poll makes again. That is
+		// not the same as the namespace still holding resources, and it is not a
+		// reason to fail a destroy that is otherwise progressing: the phase holds
+		// and the deadline still bounds it.
+		plugin.LoggerFromContext(ctx).Warn("servicediscovery: re-issuing the deletion of a namespace failed; retrying",
+			"namespaceId", request.NativeID, "deadline", state.Deadline.Format(time.RFC3339), "error", err.Error())
+		return statusResult(request, resource.OperationStatusInProgress,
+			fmt.Sprintf("retrying the deletion of namespace %s after a failed attempt: %v", request.NativeID, err)), nil
 	}
-	return statusResultInPhase(request, outcome.status, outcome.requestID, outcome.message), nil
+	requestID := outcome.requestID
+	if requestID == "" {
+		// A settled delete moves to no further phase, and echoing the RequestID the
+		// poll arrived with keeps the result one a repeated poll can still decode.
+		requestID = request.RequestID
+	}
+	return statusResultInPhase(request, outcome.status, requestID, outcome.message), nil
 }
 
 // deleteOutcome is how far a request to delete a namespace got, in the terms the

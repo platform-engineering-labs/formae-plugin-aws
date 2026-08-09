@@ -595,13 +595,9 @@ func TestStatusReportsFailureWhenTheOperationIsNotFound(t *testing.T) {
 // longer listed settled long ago and the namespace itself is all there is left
 // to confirm.
 func TestStatusFallsBackToTheNamespaceWhenItsCreateOperationIsNoLongerListed(t *testing.T) {
-	client := &mockServiceDiscoveryClient{}
+	client := namespaceReader()
 	client.On("ListOperations", mock.Anything, mock.Anything).
 		Return(&servicediscoverysdk.ListOperationsOutput{}, nil)
-	client.On("GetNamespace", mock.Anything, &servicediscoverysdk.GetNamespaceInput{Id: aws.String("ns-abc")}).
-		Return(&servicediscoverysdk.GetNamespaceOutput{
-			Namespace: &servicediscoverytypes.Namespace{Id: aws.String("ns-abc")},
-		}, nil)
 
 	result, err := newTestNamespace(client).Status(context.Background(), &resource.StatusRequest{
 		RequestID: encodeRequestID(requestState{Deadline: testNow.Add(time.Minute)}),
@@ -612,6 +608,44 @@ func TestStatusFallsBackToTheNamespaceWhenItsCreateOperationIsNoLongerListed(t *
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, "ns-abc", result.ProgressResult.NativeID)
 	client.AssertNotCalled(t, "GetOperation", mock.Anything, mock.Anything)
+}
+
+// Cloud Map creates the namespace record as soon as it accepts a create and
+// fills in the hosted zone the create provisions only once the create has run,
+// while the operation itself can take half a minute to be listed at all. A
+// create still running is therefore indistinguishable from one that settled long
+// ago on the strength of the record alone — and reporting it done would store a
+// row without the hosted zone id that dependent resources resolve against.
+func TestStatusWaitsForAnAdoptedNamespaceThatCarriesNoHostedZoneYet(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("ListOperations", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListOperationsOutput{}, nil)
+	client.On("GetNamespace", mock.Anything, &servicediscoverysdk.GetNamespaceInput{Id: aws.String("ns-abc")}).
+		Return(&servicediscoverysdk.GetNamespaceOutput{
+			Namespace: &servicediscoverytypes.Namespace{
+				Id:   aws.String("ns-abc"),
+				Arn:  aws.String(namespaceARN),
+				Name: aws.String("example.internal"),
+			},
+		}, nil)
+
+	provisioner := newTestNamespace(client)
+
+	inProgress, err := provisioner.Status(context.Background(), &resource.StatusRequest{
+		RequestID: encodeRequestID(requestState{Deadline: testNow.Add(time.Minute)}),
+		NativeID:  "ns-abc",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, inProgress.ProgressResult.OperationStatus)
+	assert.Empty(t, inProgress.ProgressResult.ResourceProperties)
+
+	failed, err := provisioner.Status(context.Background(), &resource.StatusRequest{
+		RequestID: encodeRequestID(requestState{Deadline: testNow.Add(-time.Minute)}),
+		NativeID:  "ns-abc",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, failed.ProgressResult.OperationStatus)
+	assert.Contains(t, failed.ProgressResult.StatusMessage, "timeout")
 }
 
 func TestStatusWaitsForAnAdoptedNamespaceToBecomeVisible(t *testing.T) {
@@ -1079,14 +1113,38 @@ func TestStatusReportsSuccessWhenTheRetriedDeleteFindsTheNamespaceGone(t *testin
 	client.On("DeleteNamespace", mock.Anything, mock.Anything).
 		Return(nil, &servicediscoverytypes.NamespaceNotFound{Message: aws.String("ns-abc not found")})
 
+	requestID := encodeRequestID(requestState{Phase: phaseRetryDelete, Deadline: testNow.Add(time.Minute)})
 	result, err := newTestNamespace(client).Status(context.Background(), &resource.StatusRequest{
-		RequestID: encodeRequestID(requestState{Phase: phaseRetryDelete, Deadline: testNow.Add(time.Minute)}),
+		RequestID: requestID,
 		NativeID:  "ns-abc",
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, "ns-abc", result.ProgressResult.NativeID)
+
+	// A result that carries no RequestID at all is one a re-poll cannot decode.
+	assert.Equal(t, requestID, result.ProgressResult.RequestID)
+}
+
+// A delete re-issued while the namespace is being released can be throttled like
+// any other call. The destroy is still progressing, so the retry phase holds and
+// the next poll re-issues the delete, rather than the throttle tearing the
+// destroy down.
+func TestStatusKeepsRetryingWhenAReissuedDeleteIsRejectedTransiently(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("DeleteNamespace", mock.Anything, mock.Anything).Return(nil, errors.New("throttled"))
+
+	requestID := encodeRequestID(requestState{Phase: phaseRetryDelete, Deadline: testNow.Add(time.Minute)})
+	result, err := newTestNamespace(client).Status(context.Background(), &resource.StatusRequest{
+		RequestID: requestID,
+		NativeID:  "ns-abc",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+	assert.Equal(t, requestID, result.ProgressResult.RequestID)
+	assert.Contains(t, result.ProgressResult.StatusMessage, "throttled")
 }
 
 func TestStatusFailsTheDeleteOncePastTheRetryDeadline(t *testing.T) {
@@ -1180,6 +1238,43 @@ func TestUpdateAppliesTagsWithoutAnOperationWhenOnlyTagsChanged(t *testing.T) {
 	properties := decodedProperties(t, string(result.ProgressResult.ResourceProperties))
 	assert.Equal(t, namespaceARN, properties["Arn"])
 	assert.Equal(t, "Z0123456789ABCDEFGHIJ", properties["HostedZoneId"])
+}
+
+// A declaration that leaves the SOA TTL to Cloud Map is not asking for the TTL
+// the namespace reports back to change, so a tag change on such a declaration is
+// a tag change and nothing more. Treating the TTL the row records as a
+// difference would put every namespace declared without one through a namespace
+// operation to change nothing.
+func TestUpdateAppliesTagsWithoutAnOperationWhenTheDeclarationOmitsTheSOATTL(t *testing.T) {
+	client := namespaceReader()
+	client.On("TagResource", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.TagResourceOutput{}, nil)
+	client.On("UntagResource", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.UntagResourceOutput{}, nil)
+	client.On("UpdatePrivateDnsNamespace", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.UpdatePrivateDnsNamespaceOutput{OperationId: aws.String("op-upd")}, nil)
+
+	// The namespace as it is declared: no SOA TTL, so the row's TTL is Cloud Map's.
+	desired := map[string]any{
+		"Name":        "example.internal",
+		"Vpc":         "vpc-0123456789abcdef0",
+		"Description": "namespace for the example service",
+		"Tags": []any{
+			map[string]any{"Key": "Name", "Value": "renamed"},
+			map[string]any{"Key": "Team", "Value": "platform"},
+		},
+	}
+
+	result, err := newTestNamespace(client).Update(context.Background(), updateRequest(storedProperties(), desired))
+	require.NoError(t, err)
+
+	assert.Equal(t, []servicediscoverytypes.Tag{
+		{Key: aws.String("Name"), Value: aws.String("renamed")},
+	}, capturedTagInput(t, client).Tags)
+
+	client.AssertNotCalled(t, "UpdatePrivateDnsNamespace", mock.Anything, mock.Anything)
+	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	assert.Empty(t, result.ProgressResult.RequestID)
 }
 
 // The tag calls are synchronous and idempotent while the property update is not,
