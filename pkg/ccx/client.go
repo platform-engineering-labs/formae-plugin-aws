@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -46,6 +47,19 @@ type cloudControlAPI interface {
 
 type Client struct {
 	api cloudControlAPI
+
+	// now supplies the current time to the request-window tracker in
+	// window.go. NewClient sets it to time.Now; the clock accessor falls
+	// back to time.Now itself when it's nil, so a zero-value Client (as
+	// existing unit tests construct directly, e.g. &Client{api: mockAPI})
+	// keeps working without going through NewClient.
+	now func() time.Time
+
+	// windowsMu guards windows, the process-local, admission-controlled
+	// tracker of per-RequestID enrichment/status-error stamps. See
+	// window.go for the full contract.
+	windowsMu sync.Mutex
+	windows   map[string]window
 }
 
 var IgnoredFields = map[string][]string{
@@ -103,6 +117,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 		api: cloudcontrol.NewFromConfig(awsCfg, func(o *cloudcontrol.Options) {
 			o.Retryer = retryer
 		}),
+		now: time.Now,
 	}, nil
 }
 
