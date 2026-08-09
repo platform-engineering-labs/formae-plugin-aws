@@ -1,0 +1,122 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ecr/repository.pkl"
+import "@aws/iam/role.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-ecs-taskdefinition-image-ref-\(testRunID)"
+
+// From-scratch ECR repository whose URI the task definition references via
+// `testRepo.res.repositoryUri`. The URI is unknown until the repository is
+// created, so it resolves at apply time. ECS validates the image reference's
+// syntax (not its existence) at RegisterTaskDefinition, so the repository can
+// stay empty.
+local testRepo = new repository.Repository {
+  label = "test-repo-for-ecs-taskdef-image"
+  repositoryName = "formae-plugin-sdk-test-ecs-td-image-\(testRunID)"
+}
+
+// Fargate rejects a task definition whose image is an ECR reference unless an
+// execution role is set, since the agent needs one to pull the image. The role
+// must trust `ecs-tasks.amazonaws.com`; its ARN is referenced via
+// `executionRole.res.arn`.
+local executionRole = new role.Role {
+  label = "test-execution-role-for-ecs-taskdef-image"
+  roleName = "formae-plugin-sdk-test-ecs-td-img-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "ecs-tasks.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+}
+
+local testTaskDef = new taskdefinition.TaskDefinition {
+  label = "plugin-sdk-test-ecs-taskdefinition-image-ref"
+  family = "formae-sdk-test-td-image-ref-\(testRunID)"
+  requiresCompatibilities {
+    "FARGATE"
+  }
+  networkMode = "awsvpc"
+  cpu = "256"
+  memory = "512"
+  executionRoleArn = executionRole.res.arn
+  // AWS returns Tags as [] when unset. The conformance harness's reverse loop
+  // flags "extra" actual fields not in expected and not marked as
+  // hasProviderDefault. Set explicitly so the harness sees Tags as "in
+  // expected" and skips the check. Tags is user-canonical so we don't want
+  // hasProviderDefault on the schema (would silently drop user changes).
+  tags = new Listing<aws.Tag> {}
+  containerDefinitions {
+    new {
+      name = "test-container"
+      // The container image is the resolved repository URI; the apply only
+      // succeeds if `image` accepts a Resolvable and substitutes it before
+      // the RegisterTaskDefinition call.
+      image = testRepo.res.repositoryUri
+      essential = true
+      // AWS returns these container fields as [] / {} when unset. Same harness
+      // reason as Tags above. Schema deliberately omits hasProviderDefault on
+      // them because they are user-canonical and the strip would silently drop
+      // user changes.
+      command = new Listing<String> {}
+      credentialSpecs = new Listing<String> {}
+      dependsOn = new Listing<taskdefinition.ContainerDependency> {}
+      dnsSearchDomains = new Listing<String> {}
+      dnsServers = new Listing<String> {}
+      dockerLabels = new Mapping<String, Any> {}
+      dockerSecurityOptions = new Listing<String> {}
+      entryPoint = new Listing<String> {}
+      environment = new Listing<taskdefinition.KeyValuePair> {}
+      environmentFiles = new Listing<taskdefinition.EnvironmentFile> {}
+      extraHosts = new Listing<taskdefinition.HostEntry> {}
+      links = new Listing<String> {}
+      mountPoints = new Listing<taskdefinition.MountPoint> {}
+      portMappings = new Listing<taskdefinition.PortMapping> {}
+      resourceRequirements = new Listing<taskdefinition.ResourceRequirement> {}
+      secrets = new Listing<taskdefinition.Secret> {}
+      systemControls = new Listing<taskdefinition.SystemControl> {}
+      ulimits = new Listing<taskdefinition.Ulimit> {}
+      volumesFrom = new Listing<taskdefinition.VolumeFrom> {}
+    }
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for resolving an ECR repository URI (testRepo.res.repositoryUri) in an ECS TaskDefinition container's image"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testRepo
+
+  executionRole
+
+  // TaskDefinition under test, declared last: the conformance harness's
+  // findTargetResource falls back to the last resource. It is a singleton of
+  // its type and a deletable leaf (nothing references it).
+  testTaskDef
+}
