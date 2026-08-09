@@ -378,7 +378,11 @@ func (n *PrivateDnsNamespace) statusFromOperation(
 
 	switch out.Operation.Status {
 	case servicediscoverytypes.OperationStatusSuccess:
-		return statusResult(request, resource.OperationStatusSuccess, ""), nil
+		properties, err := readProperties(ctx, client, request.NativeID)
+		if err != nil {
+			return nil, err
+		}
+		return successWithProperties(request, properties)
 	case servicediscoverytypes.OperationStatusFail:
 		return statusResult(request, resource.OperationStatusFailure,
 			fmt.Sprintf("namespace operation %s failed: %s", state.OperationID, operationFailureMessage(out.Operation))), nil
@@ -402,7 +406,7 @@ func (n *PrivateDnsNamespace) statusFromNamespace(
 	request *resource.StatusRequest,
 	state requestState,
 ) (*resource.StatusResult, error) {
-	_, err := client.GetNamespace(ctx, &servicediscoverysdk.GetNamespaceInput{
+	out, err := client.GetNamespace(ctx, &servicediscoverysdk.GetNamespaceInput{
 		Id: aws.String(request.NativeID),
 	})
 	if err != nil {
@@ -418,7 +422,28 @@ func (n *PrivateDnsNamespace) statusFromNamespace(
 		return statusResult(request, resource.OperationStatusInProgress,
 			fmt.Sprintf("namespace %s is not available yet", request.NativeID)), nil
 	}
-	return statusResult(request, resource.OperationStatusSuccess, ""), nil
+	if out == nil || out.Namespace == nil {
+		return nil, fmt.Errorf("servicediscovery: GetNamespace %s returned no namespace", request.NativeID)
+	}
+	properties, err := namespaceProperties(ctx, client, out.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	return successWithProperties(request, properties)
+}
+
+// successWithProperties reports a settled namespace operation as a success and
+// carries the namespace's current properties with it, so its read-only fields —
+// Id, Arn and HostedZoneId — reach the stored row that the resolvables of
+// dependent resources resolve against.
+func successWithProperties(request *resource.StatusRequest, properties map[string]any) (*resource.StatusResult, error) {
+	raw, err := json.Marshal(properties)
+	if err != nil {
+		return nil, fmt.Errorf("servicediscovery: marshal properties: %w", err)
+	}
+	result := statusResult(request, resource.OperationStatusSuccess, "")
+	result.ProgressResult.ResourceProperties = raw
+	return result, nil
 }
 
 // operationFailureMessage renders why an operation failed, pairing Cloud Map's
@@ -438,11 +463,140 @@ func operationFailureMessage(operation *servicediscoverytypes.Operation) string 
 	}
 }
 
-// ----- Read / Update / Delete / List -----
+// ----- Read -----
 
-func (n *PrivateDnsNamespace) Read(_ context.Context, _ *resource.ReadRequest) (*resource.ReadResult, error) {
-	return nil, errors.New("servicediscovery: reading a private DNS namespace is not implemented")
+func (n *PrivateDnsNamespace) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	client, err := n.clientFactory(n.cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	properties, err := readProperties(ctx, client, request.NativeID)
+	if err != nil {
+		var notFound *servicediscoverytypes.NamespaceNotFound
+		if errors.As(err, &notFound) {
+			return &resource.ReadResult{
+				ResourceType: resourceType,
+				ErrorCode:    resource.OperationErrorCodeNotFound,
+			}, nil
+		}
+		return nil, err
+	}
+
+	raw, err := json.Marshal(properties)
+	if err != nil {
+		return nil, fmt.Errorf("servicediscovery: marshal properties: %w", err)
+	}
+	return &resource.ReadResult{
+		ResourceType: resourceType,
+		Properties:   string(raw),
+	}, nil
 }
+
+// readProperties retrieves a namespace and renders it in the shape the schema
+// declares.
+func readProperties(ctx context.Context, client serviceDiscoveryClientInterface, namespaceID string) (map[string]any, error) {
+	out, err := client.GetNamespace(ctx, &servicediscoverysdk.GetNamespaceInput{
+		Id: aws.String(namespaceID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("servicediscovery: GetNamespace %s: %w", namespaceID, err)
+	}
+	if out == nil || out.Namespace == nil {
+		return nil, fmt.Errorf("servicediscovery: GetNamespace %s returned no namespace", namespaceID)
+	}
+	return namespaceProperties(ctx, client, out.Namespace)
+}
+
+// namespaceProperties renders a namespace in the shape the schema declares.
+//
+// The hosted zone id is emitted twice over: Cloud Map nests it under the
+// namespace's DNS properties, and the schema declares it as a top-level
+// read-only field. The nested copy is what the declared properties field
+// compares against; the top-level one is what the hostedZoneId resolvable
+// reads.
+//
+// Vpc is not emitted. Cloud Map exposes a namespace's VPC through no API at
+// all, so any value here would be fabricated — and a fabricated value for a
+// create-only field reads as drift and drives a destructive replace.
+//
+// A property the namespace does not carry is left out rather than emitted
+// empty, so it does not compare as drift against a declaration that never set
+// it.
+func namespaceProperties(
+	ctx context.Context,
+	client serviceDiscoveryClientInterface,
+	namespace *servicediscoverytypes.Namespace,
+) (map[string]any, error) {
+	properties := map[string]any{}
+	putString(properties, "Id", aws.ToString(namespace.Id))
+	putString(properties, "Name", aws.ToString(namespace.Name))
+	putString(properties, "Description", aws.ToString(namespace.Description))
+
+	arn := aws.ToString(namespace.Arn)
+	putString(properties, "Arn", arn)
+
+	if namespace.Properties != nil && namespace.Properties.DnsProperties != nil {
+		dnsProperties := namespace.Properties.DnsProperties
+		putString(properties, "HostedZoneId", aws.ToString(dnsProperties.HostedZoneId))
+		if dnsProperties.SOA != nil && dnsProperties.SOA.TTL != nil {
+			properties["Properties"] = map[string]any{
+				"DnsProperties": map[string]any{
+					"SOA": map[string]any{"TTL": *dnsProperties.SOA.TTL},
+				},
+			}
+		}
+	}
+
+	// The tag APIs address a namespace by ARN, so the ARN the namespace itself
+	// reports is what the tags are read with.
+	if arn == "" {
+		plugin.LoggerFromContext(ctx).Warn("servicediscovery: namespace reported no ARN; reading it without its tags",
+			"namespaceId", aws.ToString(namespace.Id))
+		return properties, nil
+	}
+	tags, err := namespaceTags(ctx, client, arn)
+	if err != nil {
+		return nil, err
+	}
+	if len(tags) > 0 {
+		properties["Tags"] = tags
+	}
+	return properties, nil
+}
+
+// namespaceTags reads the tags of the namespace with the given ARN. Cloud Map
+// reports them only through this call: they are absent from the namespace
+// itself.
+func namespaceTags(ctx context.Context, client serviceDiscoveryClientInterface, arn string) ([]map[string]any, error) {
+	out, err := client.ListTagsForResource(ctx, &servicediscoverysdk.ListTagsForResourceInput{
+		ResourceARN: aws.String(arn),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("servicediscovery: ListTagsForResource %s: %w", arn, err)
+	}
+	if out == nil {
+		return nil, nil
+	}
+	var tags []map[string]any
+	for _, tag := range out.Tags {
+		key := aws.ToString(tag.Key)
+		if key == "" {
+			continue
+		}
+		tags = append(tags, map[string]any{"Key": key, "Value": aws.ToString(tag.Value)})
+	}
+	return tags, nil
+}
+
+// putString records a property, leaving it out when it has no value.
+func putString(properties map[string]any, key, value string) {
+	if value != "" {
+		properties[key] = value
+	}
+}
+
+// ----- Update / Delete -----
 
 func (n *PrivateDnsNamespace) Update(_ context.Context, _ *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	return nil, errors.New("servicediscovery: updating a private DNS namespace is not implemented")
@@ -452,8 +606,52 @@ func (n *PrivateDnsNamespace) Delete(_ context.Context, _ *resource.DeleteReques
 	return nil, errors.New("servicediscovery: deleting a private DNS namespace is not implemented")
 }
 
-func (n *PrivateDnsNamespace) List(_ context.Context, _ *resource.ListRequest) (*resource.ListResult, error) {
-	return nil, errors.New("servicediscovery: listing private DNS namespaces is not implemented")
+// ----- List -----
+
+// List reports the private DNS namespaces this account owns. Namespaces other
+// accounts have shared with it are excluded: they cannot be tagged or deleted
+// from here, and their hosted zone may not be readable either.
+//
+// Cloud Map takes a page of namespaces and only then applies the filters, so a
+// page can come back empty while its token still leads to matching namespaces.
+// Paging therefore continues on an empty page and stops only once the token
+// runs out.
+func (n *PrivateDnsNamespace) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
+	client, err := n.clientFactory(n.cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	input := &servicediscoverysdk.ListNamespacesInput{Filters: privateDnsNamespaceFilters()}
+	if request.PageSize > 0 {
+		input.MaxResults = aws.Int32(request.PageSize)
+	}
+	if request.PageToken != nil && *request.PageToken != "" {
+		input.NextToken = request.PageToken
+	}
+
+	var nativeIDs []string
+	for {
+		out, err := client.ListNamespaces(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("servicediscovery: ListNamespaces: %w", err)
+		}
+		if out == nil {
+			return nil, errors.New("servicediscovery: ListNamespaces returned no response")
+		}
+		for _, summary := range out.Namespaces {
+			if id := aws.ToString(summary.Id); id != "" {
+				nativeIDs = append(nativeIDs, id)
+			}
+		}
+		if aws.ToString(out.NextToken) == "" {
+			return &resource.ListResult{NativeIDs: nativeIDs}, nil
+		}
+		if len(nativeIDs) > 0 {
+			return &resource.ListResult{NativeIDs: nativeIDs, NextPageToken: out.NextToken}, nil
+		}
+		input.NextToken = out.NextToken
+	}
 }
 
 // ----- helpers -----

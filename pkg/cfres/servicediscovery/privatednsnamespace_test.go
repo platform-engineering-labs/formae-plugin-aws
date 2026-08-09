@@ -9,6 +9,7 @@ package servicediscovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -95,6 +96,65 @@ func capturedListInput(t *testing.T, client *mockServiceDiscoveryClient) *servic
 	}
 	t.Fatal("ListNamespaces was never called")
 	return nil
+}
+
+func capturedListTagsInput(t *testing.T, client *mockServiceDiscoveryClient) *servicediscoverysdk.ListTagsForResourceInput {
+	t.Helper()
+	for _, call := range client.Calls {
+		if call.Method == "ListTagsForResource" {
+			return call.Arguments.Get(1).(*servicediscoverysdk.ListTagsForResourceInput)
+		}
+	}
+	t.Fatal("ListTagsForResource was never called")
+	return nil
+}
+
+const namespaceARN = "arn:aws:servicediscovery:us-east-1:123456789012:namespace/ns-abc"
+
+func fullNamespace() *servicediscoverytypes.Namespace {
+	return &servicediscoverytypes.Namespace{
+		Id:          aws.String("ns-abc"),
+		Arn:         aws.String(namespaceARN),
+		Name:        aws.String("example.internal"),
+		Description: aws.String("namespace for the example service"),
+		Type:        servicediscoverytypes.NamespaceTypeDnsPrivate,
+		Properties: &servicediscoverytypes.NamespaceProperties{
+			DnsProperties: &servicediscoverytypes.DnsProperties{
+				HostedZoneId: aws.String("Z0123456789ABCDEFGHIJ"),
+				SOA:          &servicediscoverytypes.SOA{TTL: aws.Int64(60)},
+			},
+		},
+	}
+}
+
+// namespaceReader answers a read of the full namespace, tagged with a single tag.
+func namespaceReader() *mockServiceDiscoveryClient {
+	client := &mockServiceDiscoveryClient{}
+	client.On("GetNamespace", mock.Anything, &servicediscoverysdk.GetNamespaceInput{Id: aws.String("ns-abc")}).
+		Return(&servicediscoverysdk.GetNamespaceOutput{Namespace: fullNamespace()}, nil)
+	client.On("ListTagsForResource", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListTagsForResourceOutput{
+			Tags: []servicediscoverytypes.Tag{{Key: aws.String("Name"), Value: aws.String("example")}},
+		}, nil)
+	return client
+}
+
+func decodedProperties(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var properties map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &properties))
+	return properties
+}
+
+func readNamespace(t *testing.T, client serviceDiscoveryClientInterface) map[string]any {
+	t.Helper()
+	result, err := newTestNamespace(client).Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "ns-abc",
+		ResourceType: resourceType,
+	})
+	require.NoError(t, err)
+	require.Empty(t, result.ErrorCode)
+	return decodedProperties(t, result.Properties)
 }
 
 func TestCreateSendsDeclaredPropertiesToCloudMap(t *testing.T) {
@@ -394,7 +454,7 @@ func TestCreateFailsWhenADuplicateRequestCannotBeResolved(t *testing.T) {
 }
 
 func TestStatusReportsSuccessWhenTheOperationSucceeded(t *testing.T) {
-	client := &mockServiceDiscoveryClient{}
+	client := namespaceReader()
 	client.On("GetOperation", mock.Anything, &servicediscoverysdk.GetOperationInput{OperationId: aws.String("op-1")}).
 		Return(operationOutput(servicediscoverytypes.OperationStatusSuccess, map[string]string{"NAMESPACE": "ns-abc"}), nil)
 
@@ -549,4 +609,224 @@ func TestStatusRejectsAnUndecodableRequestID(t *testing.T) {
 		NativeID:  "ns-abc",
 	})
 	require.Error(t, err)
+}
+
+// The schema declares the hosted zone id as a top-level read-only field and the
+// SOA TTL as a nested one, while Cloud Map nests both under the namespace's
+// DnsProperties. Both shapes have to be emitted: the top-level one backs the
+// hostedZoneId resolvable, the nested one is what the declared field compares
+// against.
+func TestReadFlattensTheNamespaceToTheDeclaredShape(t *testing.T) {
+	properties := readNamespace(t, namespaceReader())
+
+	assert.Equal(t, map[string]any{
+		"Id":           "ns-abc",
+		"Arn":          namespaceARN,
+		"Name":         "example.internal",
+		"Description":  "namespace for the example service",
+		"HostedZoneId": "Z0123456789ABCDEFGHIJ",
+		"Properties": map[string]any{
+			"DnsProperties": map[string]any{
+				"SOA": map[string]any{"TTL": float64(60)},
+			},
+		},
+		"Tags": []any{map[string]any{"Key": "Name", "Value": "example"}},
+	}, properties)
+}
+
+// Cloud Map exposes a namespace's VPC through no API at all, so a read can only
+// ever fabricate one — and a fabricated value for a create-only field reads as
+// drift and drives a destructive replace.
+func TestReadOmitsTheUnreadableVpc(t *testing.T) {
+	assert.NotContains(t, readNamespace(t, namespaceReader()), "Vpc")
+}
+
+// The tag APIs address a namespace by ARN, which the read response carries.
+func TestReadTakesTagsFromTheNamespaceARN(t *testing.T) {
+	client := namespaceReader()
+	readNamespace(t, client)
+
+	assert.Equal(t, namespaceARN, aws.ToString(capturedListTagsInput(t, client).ResourceARN))
+}
+
+// A property the namespace does not carry is absent rather than empty: an empty
+// value would compare as drift against a declaration that never set it.
+func TestReadOmitsPropertiesTheNamespaceDoesNotCarry(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("GetNamespace", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.GetNamespaceOutput{
+			Namespace: &servicediscoverytypes.Namespace{
+				Id:   aws.String("ns-abc"),
+				Arn:  aws.String(namespaceARN),
+				Name: aws.String("example.internal"),
+			},
+		}, nil)
+	client.On("ListTagsForResource", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListTagsForResourceOutput{}, nil)
+
+	assert.Equal(t, map[string]any{
+		"Id":   "ns-abc",
+		"Arn":  namespaceARN,
+		"Name": "example.internal",
+	}, readNamespace(t, client))
+}
+
+func TestReadReportsNotFoundWhenTheNamespaceIsGone(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("GetNamespace", mock.Anything, mock.Anything).
+		Return(nil, &servicediscoverytypes.NamespaceNotFound{Message: aws.String("ns-abc not found")})
+
+	result, err := newTestNamespace(client).Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "ns-abc",
+		ResourceType: resourceType,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
+	assert.Empty(t, result.Properties)
+	client.AssertNotCalled(t, "ListTagsForResource", mock.Anything, mock.Anything)
+}
+
+func TestReadFailsWhenTheNamespaceCannotBeRetrieved(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("GetNamespace", mock.Anything, mock.Anything).
+		Return(nil, errors.New("throttled"))
+
+	_, err := newTestNamespace(client).Read(context.Background(), &resource.ReadRequest{
+		NativeID:     "ns-abc",
+		ResourceType: resourceType,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "throttled")
+}
+
+// Namespaces shared into this account are listed too, and this account can
+// neither tag nor delete them, so the listing is narrowed to the private DNS
+// namespaces it owns itself.
+func TestListReturnsThePrivateDnsNamespacesThisAccountOwns(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("ListNamespaces", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListNamespacesOutput{
+			Namespaces: []servicediscoverytypes.NamespaceSummary{
+				{Id: aws.String("ns-1"), Name: aws.String("one.internal")},
+				{Id: aws.String("ns-2"), Name: aws.String("two.internal")},
+			},
+		}, nil)
+
+	result, err := newTestNamespace(client).List(context.Background(), &resource.ListRequest{
+		ResourceType: resourceType,
+		PageSize:     25,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"ns-1", "ns-2"}, result.NativeIDs)
+	assert.Nil(t, result.NextPageToken)
+
+	input := capturedListInput(t, client)
+	assert.ElementsMatch(t, []servicediscoverytypes.NamespaceFilter{
+		{
+			Name:      servicediscoverytypes.NamespaceFilterNameType,
+			Values:    []string{string(servicediscoverytypes.NamespaceTypeDnsPrivate)},
+			Condition: servicediscoverytypes.FilterConditionEq,
+		},
+		{
+			Name:      servicediscoverytypes.NamespaceFilterNameResourceOwner,
+			Values:    []string{resourceOwnerSelf},
+			Condition: servicediscoverytypes.FilterConditionEq,
+		},
+	}, input.Filters)
+	assert.Equal(t, int32(25), aws.ToInt32(input.MaxResults))
+	assert.Nil(t, input.NextToken)
+}
+
+func TestListResumesFromThePageTokenAndReportsTheNextOne(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("ListNamespaces", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListNamespacesOutput{
+			Namespaces: []servicediscoverytypes.NamespaceSummary{{Id: aws.String("ns-2")}},
+			NextToken:  aws.String("page-3"),
+		}, nil)
+
+	result, err := newTestNamespace(client).List(context.Background(), &resource.ListRequest{
+		ResourceType: resourceType,
+		PageToken:    aws.String("page-2"),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"ns-2"}, result.NativeIDs)
+	assert.Equal(t, "page-3", aws.ToString(result.NextPageToken))
+	assert.Equal(t, "page-2", aws.ToString(capturedListInput(t, client).NextToken))
+}
+
+// Cloud Map applies the filters after it has taken a page, so a page can come
+// back empty with a token that still leads to matching namespaces. Stopping on
+// the empty page would truncate the listing.
+func TestListContinuesPastAnEmptyPageThatStillCarriesAToken(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("ListNamespaces", mock.Anything, mock.MatchedBy(func(in *servicediscoverysdk.ListNamespacesInput) bool {
+		return in.NextToken == nil
+	})).Return(&servicediscoverysdk.ListNamespacesOutput{NextToken: aws.String("page-2")}, nil)
+	client.On("ListNamespaces", mock.Anything, mock.MatchedBy(func(in *servicediscoverysdk.ListNamespacesInput) bool {
+		return aws.ToString(in.NextToken) == "page-2"
+	})).Return(&servicediscoverysdk.ListNamespacesOutput{
+		Namespaces: []servicediscoverytypes.NamespaceSummary{{Id: aws.String("ns-late")}},
+	}, nil)
+
+	result, err := newTestNamespace(client).List(context.Background(), &resource.ListRequest{ResourceType: resourceType})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"ns-late"}, result.NativeIDs)
+	assert.Nil(t, result.NextPageToken)
+	client.AssertNumberOfCalls(t, "ListNamespaces", 2)
+}
+
+func TestListStopsWhenTheLastPageIsEmptyAndCarriesNoToken(t *testing.T) {
+	client := &mockServiceDiscoveryClient{}
+	client.On("ListNamespaces", mock.Anything, mock.Anything).
+		Return(&servicediscoverysdk.ListNamespacesOutput{}, nil)
+
+	result, err := newTestNamespace(client).List(context.Background(), &resource.ListRequest{ResourceType: resourceType})
+	require.NoError(t, err)
+
+	assert.Empty(t, result.NativeIDs)
+	assert.Nil(t, result.NextPageToken)
+	client.AssertNumberOfCalls(t, "ListNamespaces", 1)
+}
+
+// The namespace's read-only fields are only knowable once it exists, so the
+// poll that observes it settle is what carries them into the stored row the
+// resolvables of dependent resources resolve against.
+func TestStatusCarriesTheNamespacePropertiesWhenTheOperationSucceeds(t *testing.T) {
+	client := namespaceReader()
+	client.On("GetOperation", mock.Anything, mock.Anything).
+		Return(operationOutput(servicediscoverytypes.OperationStatusSuccess, map[string]string{"NAMESPACE": "ns-abc"}), nil)
+
+	result, err := newTestNamespace(client).Status(context.Background(), &resource.StatusRequest{
+		RequestID:    encodeRequestID(requestState{OperationID: "op-1", Deadline: testNow.Add(time.Minute)}),
+		NativeID:     "ns-abc",
+		ResourceType: resourceType,
+	})
+	require.NoError(t, err)
+
+	properties := decodedProperties(t, string(result.ProgressResult.ResourceProperties))
+	assert.Equal(t, "ns-abc", properties["Id"])
+	assert.Equal(t, namespaceARN, properties["Arn"])
+	assert.Equal(t, "Z0123456789ABCDEFGHIJ", properties["HostedZoneId"])
+}
+
+func TestStatusCarriesTheNamespacePropertiesWhenNoOperationIsKnown(t *testing.T) {
+	client := namespaceReader()
+
+	result, err := newTestNamespace(client).Status(context.Background(), &resource.StatusRequest{
+		RequestID:    encodeRequestID(requestState{Deadline: testNow.Add(time.Minute)}),
+		NativeID:     "ns-abc",
+		ResourceType: resourceType,
+	})
+	require.NoError(t, err)
+
+	properties := decodedProperties(t, string(result.ProgressResult.ResourceProperties))
+	assert.Equal(t, "ns-abc", properties["Id"])
+	assert.Equal(t, namespaceARN, properties["Arn"])
+	assert.Equal(t, "Z0123456789ABCDEFGHIJ", properties["HostedZoneId"])
+	client.AssertNumberOfCalls(t, "GetNamespace", 1)
 }
