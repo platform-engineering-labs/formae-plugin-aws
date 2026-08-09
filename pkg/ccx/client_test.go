@@ -1014,3 +1014,425 @@ func TestStatusResource_NotStabilizedRemap_DoesNotLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, buf.String(), "NotStabilized remaps to InProgress and must not warn-log")
 }
+
+// ---------------------------------------------------------------------------
+// StatusResource: budgeted status call, NativeID fallback, and the bounded
+// enrichment-pending window.
+// ---------------------------------------------------------------------------
+
+// statusEventBase is the reference completion time the enrichment-window tests
+// measure their injected clock against.
+var statusEventBase = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+// newStatusClient builds a Client whose clock the test drives and whose
+// watched-call budget is short enough that a throttled read-back exhausts it
+// without the suite spending real seconds on it.
+func newStatusClient(mockAPI *mockCloudControlAPI, now func() time.Time) *Client {
+	return &Client{api: mockAPI, watchedBudget: testWatchedBudget, now: now}
+}
+
+// stubStatusPoll makes every GetResourceRequestStatus return the same progress
+// event. The event is returned by pointer, so a test can mutate it between
+// polls to model a timestamp that moves.
+func stubStatusPoll(mockAPI *mockCloudControlAPI, event *cctypes.ProgressEvent) {
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{ProgressEvent: event}, nil,
+	)
+}
+
+// successEvent is a terminal CloudControl Success progress event for a create.
+func successEvent(identifier *string, eventTime *time.Time) *cctypes.ProgressEvent {
+	return &cctypes.ProgressEvent{
+		Operation:       cctypes.OperationCreate,
+		OperationStatus: cctypes.OperationStatusSuccess,
+		TypeName:        ptr.Of("AWS::DynamoDB::Table"),
+		RequestToken:    ptr.Of("req-enrichment"),
+		Identifier:      identifier,
+		EventTime:       eventTime,
+	}
+}
+
+// recordingRead is a StatusResource readFunc that records the read requests it
+// received and replays a fixed outcome, so a test can assert both what the
+// read-back targeted and how StatusResource folded its result in.
+type recordingRead struct {
+	requests []*resource.ReadRequest
+	result   *resource.ReadResult
+	err      error
+}
+
+func (r *recordingRead) fn(_ context.Context, req *resource.ReadRequest) (*resource.ReadResult, error) {
+	r.requests = append(r.requests, req)
+	return r.result, r.err
+}
+
+// throttlingReadBack is a read-back that never stops throttling — the recoverable
+// condition the enrichment retry loop rides until the watched-call budget stops
+// it.
+func throttlingReadBack() *recordingRead {
+	return &recordingRead{err: ccOpError(&cctypes.ThrottlingException{Message: aws.String("Rate exceeded")})}
+}
+
+func trackedWindow(t *testing.T, c *Client, requestID string) (window, bool) {
+	t.Helper()
+	c.windowsMu.Lock()
+	defer c.windowsMu.Unlock()
+	w, ok := c.windows[requestID]
+	return w, ok
+}
+
+// Inside the enrichment window the operation is still healthy: the mutation
+// succeeded and only the read-back is outstanding, so the poll reports
+// InProgress and the operator polls again — each poll a heartbeat.
+func TestStatusResource_EnrichmentPending_WithinWindow_ReturnsInProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase.Add(30 * time.Second))
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase)))
+	read := throttlingReadBack()
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, read.fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"a read-back that outran its budget 30s after completion is still worth another poll")
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+	require.Equal(t, "req-enrichment", result.ProgressResult.RequestID)
+	require.Nil(t, result.ProgressResult.ResourceProperties, "no properties were read, so none may be fabricated")
+	require.Empty(t, string(result.ProgressResult.ErrorCode), "an InProgress conversion is not an error condition")
+	require.NotEmpty(t, result.ProgressResult.StatusMessage, "the pending read-back must be visible to the operator")
+
+	_, tracked := trackedWindow(t, client, "req-enrichment")
+	require.True(t, tracked, "the backstop stamp must survive a non-terminal poll")
+}
+
+// The single most important property of this path: once the window elapses the
+// poll returns SUCCESS, never a Failure. Only the success branch writes the
+// inventory row, so a Failure here would leave AWS holding a resource formae has
+// no record of — and the next apply would create a second one.
+func TestStatusResource_EnrichmentWindowExpired_ReturnsSuccessNotFailure(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase.Add(3 * time.Minute))
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase)))
+	read := throttlingReadBack()
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, read.fn)
+
+	require.NoError(t, err)
+	require.NotEqual(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus,
+		"a Failure would drop the inventory row for a resource that actually exists")
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID, "the inventory row is unusable without the native ID")
+	require.Empty(t, string(result.ProgressResult.ErrorCode), "the underlying event is a Success event")
+	require.Contains(t, result.ProgressResult.StatusMessage, "tbl-1")
+	require.Contains(t, result.ProgressResult.StatusMessage, "enrichment window")
+
+	_, tracked := trackedWindow(t, client, "req-enrichment")
+	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
+}
+
+// EventTime is the primary clock precisely because it is stateless: a plugin
+// process that restarted mid-operation, and so has no backstop stamp at all,
+// must reach the same verdict from the same event.
+func TestStatusResource_EnrichmentWindowExpired_FreshClientReachesSameVerdict(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase.Add(3 * time.Minute))
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase)))
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus,
+		"the verdict must come from the event, not from process-local state")
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+}
+
+// With no EventTime there is nothing stateless to bound the wait against, so
+// the poll commits what it has rather than converting to a wait it cannot end.
+func TestStatusResource_EnrichmentPending_NilEventTime_ReturnsSuccessWithNativeID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), nil))
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+}
+
+// An EventTime far enough in the future to be nonsense cannot bound anything
+// either — converting on it would keep the operation InProgress indefinitely.
+func TestStatusResource_EnrichmentPending_FarFutureEventTime_ReturnsSuccessWithNativeID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase.Add(10*time.Minute))))
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+}
+
+// Modest disagreement between the AWS control plane's clock and this host's is
+// ordinary; it must not cost the operation its enrichment window.
+func TestStatusResource_EnrichmentPending_SmallNegativeSkew_ConvertsToInProgress(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase.Add(10*time.Second))))
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus,
+		"10s of clock skew is tolerable and must clamp to a just-completed event")
+}
+
+// A timestamp that stays ahead of this host's clock across polls must still end
+// the wait: the operator cannot poll forever.
+func TestStatusResource_EnrichmentPending_PersistentlyFutureEventTime_Terminates(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	now := statusEventBase
+	clock, advance := fakeClock(now)
+	client := newStatusClient(mockAPI, clock)
+	event := successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase.Add(20*time.Second)))
+	stubStatusPoll(mockAPI, event)
+
+	var last *resource.StatusResult
+	polls := 0
+	for ; polls < 30; polls++ {
+		result, err := client.StatusResource(context.Background(),
+			&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+		require.NoError(t, err)
+		last = result
+		if result.ProgressResult.OperationStatus != resource.OperationStatusInProgress {
+			break
+		}
+		advance(clock().Add(20 * time.Second))
+	}
+
+	require.Less(t, polls, 30, "an event stuck in the future must not produce an endless InProgress loop")
+	require.Equal(t, resource.OperationStatusSuccess, last.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", last.ProgressResult.NativeID)
+}
+
+// A provider timestamp that creeps forward on every poll would keep the
+// EventTime clock perpetually young; the process-local backstop is what ends
+// the wait in that case.
+func TestStatusResource_EnrichmentPending_AdvancingEventTime_TerminatesViaBackstop(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, advance := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	eventTime := statusEventBase
+	event := successEvent(ptr.Of("tbl-1"), &eventTime)
+	stubStatusPoll(mockAPI, event)
+
+	var last *resource.StatusResult
+	polls := 0
+	for ; polls < 30; polls++ {
+		result, err := client.StatusResource(context.Background(),
+			&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+		require.NoError(t, err)
+		last = result
+		if result.ProgressResult.OperationStatus != resource.OperationStatusInProgress {
+			break
+		}
+		advance(clock().Add(20 * time.Second))
+		eventTime = clock() // the provider's timestamp creeps forward with us
+	}
+
+	require.Greater(t, polls, 0, "the first pending poll must still convert to InProgress")
+	require.Less(t, polls, 30, "the backstop must end a wait the EventTime clock can no longer bound")
+	require.Equal(t, resource.OperationStatusSuccess, last.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", last.ProgressResult.NativeID)
+}
+
+// An implausibly old event is past the window like any other, and takes the
+// same Success branch rather than becoming a failure.
+func TestStatusResource_ImplausiblyOldEventTime_ReturnsSuccess(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(ptr.Of("tbl-1"), ptr.Of(statusEventBase.Add(-30*24*time.Hour))))
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment"}, throttlingReadBack().fn)
+
+	require.NoError(t, err)
+	require.NotEqual(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-1", result.ProgressResult.NativeID)
+}
+
+// CloudControl may omit the identifier from a terminal event. Success is the
+// path that writes the inventory row, so the native ID the request already
+// carries has to stand in — for the row and for the read-back it targets.
+func TestStatusResource_NilIdentifier_EnrichedRead_FallsBackToRequestNativeID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(nil, ptr.Of(statusEventBase)))
+	read := &recordingRead{result: &resource.ReadResult{Properties: `{"TableName":"t"}`}}
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment", NativeID: "tbl-from-request"}, read.fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-from-request", result.ProgressResult.NativeID)
+	require.Len(t, read.requests, 1)
+	require.Equal(t, "tbl-from-request", read.requests[0].NativeID,
+		"a read-back against an empty identifier could never succeed")
+	require.JSONEq(t, `{"TableName":"t"}`, string(result.ProgressResult.ResourceProperties))
+}
+
+func TestStatusResource_NilIdentifier_WindowExpired_FallsBackToRequestNativeID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase.Add(3 * time.Minute))
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, successEvent(nil, ptr.Of(statusEventBase)))
+	read := throttlingReadBack()
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-enrichment", NativeID: "tbl-from-request"}, read.fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Equal(t, "tbl-from-request", result.ProgressResult.NativeID)
+	require.Contains(t, result.ProgressResult.StatusMessage, "tbl-from-request")
+	require.NotEmpty(t, read.requests)
+	require.Equal(t, "tbl-from-request", read.requests[0].NativeID)
+}
+
+// The status call is the one the watchdog observes most often; it must obey the
+// same wall-clock budget as everything else inside a watched RPC.
+func TestStatusResource_StatusCallBlocksPastBudget_ReturnsPromptly(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			select {
+			case <-args.Get(0).(context.Context).Done():
+			case <-time.After(2 * time.Second):
+			}
+		}).
+		Return((*cloudcontrol.GetResourceRequestStatusOutput)(nil), context.DeadlineExceeded)
+
+	start := time.Now()
+	_, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-blocked"},
+		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+			t.Fatalf("readFunc must not be called when the status call never returned a progress event")
+			return nil, nil
+		})
+
+	require.Less(t, time.Since(start), time.Second, "the status call must not outlast the watched-call budget")
+	require.Error(t, err)
+	require.ErrorIs(t, err, errRetryBudgetExhausted)
+}
+
+// A malformed response must not take the plugin process down with it.
+func TestStatusResource_NilProgressEvent_ReturnsErrorWithoutPanicking(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	mockAPI.On("GetResourceRequestStatus", mock.Anything, mock.Anything).Return(
+		&cloudcontrol.GetResourceRequestStatusOutput{}, nil,
+	)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-empty"},
+		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+			t.Fatalf("readFunc must not be called without a progress event")
+			return nil, nil
+		})
+
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
+// A terminal event with none of its optional fields populated must still
+// return a well-formed result rather than dereferencing a nil.
+func TestStatusResource_NilEventFields_ReturnsSuccessWithoutPanicking(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, &cctypes.ProgressEvent{
+		Operation:       cctypes.OperationCreate,
+		OperationStatus: cctypes.OperationStatusSuccess,
+	})
+	read := &recordingRead{result: &resource.ReadResult{Properties: `{}`}}
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-bare"}, read.fn)
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+	require.Empty(t, result.ProgressResult.NativeID)
+	require.Empty(t, read.requests, "there is no resource type to read back against")
+}
+
+// Any successful status observation clears the consecutive-outage stamp, so a
+// later failure starts a fresh window instead of resuming an unrelated one.
+func TestStatusResource_SuccessfulStatusCall_ClearsStatusErrorStamp(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, &cctypes.ProgressEvent{
+		Operation:       cctypes.OperationCreate,
+		OperationStatus: cctypes.OperationStatusInProgress,
+		TypeName:        ptr.Of("AWS::DynamoDB::Table"),
+	})
+	_, ok := client.stampStatusError(context.Background(), "req-flapping")
+	require.True(t, ok)
+
+	_, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-flapping"},
+		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+			t.Fatalf("readFunc must not be called on an InProgress poll")
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	w, tracked := trackedWindow(t, client, "req-flapping")
+	require.True(t, tracked, "an in-flight request keeps its entry")
+	require.True(t, w.statusError.IsZero(), "a successful status call clears the outage stamp")
+}
+
+// A resolved request has nothing left for either stamp to bound.
+func TestStatusResource_TerminalFailure_ForgetsRequestWindow(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	stubStatusPoll(mockAPI, &cctypes.ProgressEvent{
+		Operation:       cctypes.OperationCreate,
+		OperationStatus: cctypes.OperationStatusFailed,
+		ErrorCode:       cctypes.HandlerErrorCodeInvalidRequest,
+		TypeName:        ptr.Of("AWS::DynamoDB::Table"),
+	})
+	_, ok := client.stampStatusError(context.Background(), "req-doomed")
+	require.True(t, ok)
+
+	_, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-doomed"},
+		func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error) {
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	_, tracked := trackedWindow(t, client, "req-doomed")
+	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
+}

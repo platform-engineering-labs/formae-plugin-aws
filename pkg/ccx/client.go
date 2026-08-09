@@ -414,17 +414,61 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 	}, nil
 }
 
+// enrichmentWindow bounds how long StatusResource may keep reporting a finished
+// mutation as InProgress purely because the post-success read-back hasn't
+// returned properties yet. The operator polls roughly every 20s, so two minutes
+// is about six further attempts — comfortably more than the eventual-consistency
+// and throttle-recovery delays that make a just-mutated resource briefly
+// unreadable (AWS typically recovers from a throttle in tens of seconds), while
+// still guaranteeing the operation ends.
+//
+// When the window elapses the poll commits a Success carrying the native ID.
+// The inventory row is written only on the success path, so ending the wait as a
+// failure would throw away formae's only record of a resource that really
+// exists, and the next apply would create a second one.
+const enrichmentWindow = 2 * time.Minute
+
+// enrichmentClockSkew is how far a progress event's EventTime may sit in this
+// host's future before it stops being believable. EventTime is stamped by the
+// AWS control plane and compared against the plugin host's clock, so a little
+// disagreement is ordinary and must not cost an operation its window; a lot of
+// it means the timestamp cannot bound anything and the poll commits immediately
+// instead. Thirty seconds is a quarter of the window: wide enough for ordinary
+// clock drift, narrow enough that a skewed clock cannot materially extend the
+// wait.
+const enrichmentClockSkew = 30 * time.Second
+
 // StatusResource gets the status of a resource request using CloudControl with full request handling
 func (c *Client) StatusResource(ctx context.Context, request *resource.StatusRequest, readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error)) (*resource.StatusResult, error) {
-	result, err := c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
-		RequestToken: &request.RequestID,
-	})
+	// This is the RPC the agent's missing-in-action watchdog observes most
+	// often, and the SDK retryer behind the status call can back off for longer
+	// than the watchdog is willing to wait. Every AWS call made inside a watched
+	// RPC carries the same wall-clock budget, this one included.
+	result, err := retryCallable(ctx, retryOpts{Budget: c.watchedCallBudget()}, "StatusResource:"+request.RequestID,
+		func(ctx context.Context) (*cloudcontrol.GetResourceRequestStatusOutput, error) {
+			return c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+				RequestToken: &request.RequestID,
+			})
+		})
 	if err != nil {
 		return nil, err
 	}
+	if result == nil || result.ProgressEvent == nil {
+		return nil, fmt.Errorf("status poll for request %s returned no progress event", request.RequestID)
+	}
+
+	// The request was observed, so any run of consecutive status-call failures
+	// for it has ended.
+	c.clearStatusError(request.RequestID)
 
 	operation, operationStatus := status.FromProgress(result.ProgressEvent)
-	identifier := ""
+
+	// CloudControl may omit the identifier from a progress event; the native ID
+	// the caller polled with names the same resource. Success is the path that
+	// writes the inventory row, so an empty identifier would persist a row
+	// nothing can be read back against — and would aim the read-back below at
+	// an identifier no read could satisfy.
+	identifier := request.NativeID
 	if result.ProgressEvent.Identifier != nil {
 		identifier = normalizeCompositeIdentifier(*result.ProgressEvent.Identifier)
 	}
@@ -458,6 +502,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 
 	// If the resource is not found, we return a success status when it is a delete operation
 	if result.ProgressEvent.Operation == cctypes.OperationDelete && result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotFound {
+		c.forgetRequest(request.RequestID)
 		return &resource.StatusResult{
 			ProgressResult: &resource.ProgressResult{
 				Operation:       operation,
@@ -495,45 +540,155 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		},
 	}
 
-	// If operation status is success, run a Read to get the latest properties.
-	// Some resources (like DynamoDB tables) may not be immediately readable after
-	// CloudControl reports the operation as successful, and AWS throttling can
-	// flap during high-concurrency periods. retryRead absorbs both with
-	// exponential backoff so the agent doesn't persist a stale snapshot.
 	if operationStatus == resource.OperationStatusSuccess && result.ProgressEvent.Operation != cctypes.OperationDelete {
-		typeName := *result.ProgressEvent.TypeName
-		readResult, readErr := retryRead(ctx, retryOpts{}, "StatusResource:"+typeName,
-			func(ctx context.Context) (*resource.ReadResult, error) {
-				return readFunc(ctx, &resource.ReadRequest{
-					NativeID:     identifier,
-					ResourceType: typeName,
-					TargetConfig: request.TargetConfig,
-				})
-			})
+		c.enrichStatusResult(ctx, statusResult.ProgressResult, request, result.ProgressEvent, identifier, readFunc)
+	}
 
-		switch {
-		case readErr != nil:
-			plugin.LoggerFromContext(ctx).Error("StatusResource: Read failed after retry budget exhausted",
-				"error", readErr,
-				"identifier", identifier,
-				"resourceType", typeName)
-		case readResult != nil && readResult.ErrorCode != "":
-			plugin.LoggerFromContext(ctx).Error("StatusResource: Read returned CloudControl error after retry budget",
-				"errorCode", readResult.ErrorCode,
-				"identifier", identifier,
-				"resourceType", typeName)
-		case readResult != nil && readResult.Properties != "":
-			statusResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
-		}
-
-		if statusResult.ProgressResult.ResourceProperties == nil {
-			plugin.LoggerFromContext(ctx).Error("StatusResource: Failed to read properties after retries",
-				"identifier", identifier,
-				"resourceType", typeName)
-		}
+	// A resolved request has nothing left for the window tracker to bound. A
+	// poll still waiting for its read-back has not resolved, and keeps its
+	// stamp so the next poll measures against the same window.
+	switch statusResult.ProgressResult.OperationStatus {
+	case resource.OperationStatusSuccess, resource.OperationStatusFailure:
+		c.forgetRequest(request.RequestID)
 	}
 
 	return statusResult, nil
+}
+
+// enrichStatusResult runs the post-success Read that populates the latest
+// properties on a finished mutation and folds the outcome into pr. Some
+// resources (like DynamoDB tables) are not immediately readable after
+// CloudControl reports the operation as successful, and AWS throttling can flap
+// during high-concurrency periods; retryRead absorbs both with exponential
+// backoff so the agent doesn't persist a stale snapshot.
+//
+// The read carries the watched-call budget, so it can stop before it has
+// anything to report. The mutation itself has already succeeded by then, and the
+// only remaining question is whether to spend another poll on the read-back or
+// to commit the row without it — waitLongerForEnrichment answers that, and
+// bounds how long the answer can stay "wait".
+func (c *Client) enrichStatusResult(
+	ctx context.Context,
+	pr *resource.ProgressResult,
+	request *resource.StatusRequest,
+	event *cctypes.ProgressEvent,
+	identifier string,
+	readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error),
+) {
+	log := plugin.LoggerFromContext(ctx)
+
+	typeName := aws.ToString(event.TypeName)
+	if typeName == "" {
+		// Nothing to read back against; commit what the event already carries.
+		log.Error("StatusResource: progress event carries no resource type, skipping read",
+			"identifier", identifier)
+		return
+	}
+
+	readResult, readErr := retryRead(ctx, retryOpts{Budget: c.watchedCallBudget()}, "StatusResource:"+typeName,
+		func(ctx context.Context) (*resource.ReadResult, error) {
+			return readFunc(ctx, &resource.ReadRequest{
+				NativeID:     identifier,
+				ResourceType: typeName,
+				TargetConfig: request.TargetConfig,
+			})
+		})
+
+	switch {
+	case readErr != nil:
+		log.Error("StatusResource: Read failed after retry budget exhausted",
+			"error", readErr,
+			"identifier", identifier,
+			"resourceType", typeName)
+	case readResult != nil && readResult.ErrorCode != "":
+		log.Error("StatusResource: Read returned CloudControl error after retry budget",
+			"errorCode", readResult.ErrorCode,
+			"identifier", identifier,
+			"resourceType", typeName)
+	case readResult != nil && readResult.Properties != "":
+		pr.ResourceProperties = json.RawMessage(readResult.Properties)
+	}
+
+	if pr.ResourceProperties != nil {
+		return
+	}
+
+	if enrichmentDeferred(readErr) {
+		elapsed, wait := c.waitLongerForEnrichment(ctx, request.RequestID, event.EventTime)
+		if wait {
+			log.Info("StatusResource: read-back still pending, deferring to the next poll",
+				"identifier", identifier,
+				"resourceType", typeName,
+				"elapsed", elapsed)
+			pr.OperationStatus = resource.OperationStatusInProgress
+			pr.StatusMessage = fmt.Sprintf(
+				"the mutation succeeded; enrichment pending, %s is not readable yet", identifier)
+			return
+		}
+
+		// No error code: the underlying event is a Success event, and the
+		// resource exists. What is lost is the read-back, so the row is
+		// committed with whatever the event carried.
+		log.Error("StatusResource: enrichment window elapsed, reporting success without properties",
+			"identifier", identifier,
+			"resourceType", typeName,
+			"elapsed", elapsed,
+			"eventTime", aws.ToTime(event.EventTime),
+			"requestID", request.RequestID)
+		pr.StatusMessage = fmt.Sprintf(
+			"the mutation succeeded but %s could not be read back within the enrichment window; the recorded properties may be incomplete",
+			identifier)
+		return
+	}
+
+	// Polling cannot fix whatever else stopped the read, so there is nothing to
+	// wait for: report the mutation's own outcome with what is available.
+	log.Error("StatusResource: Failed to read properties after retries",
+		"identifier", identifier,
+		"resourceType", typeName)
+}
+
+// waitLongerForEnrichment reports whether a poll whose read-back ran out of
+// budget should stay InProgress for another round, along with how long the
+// mutation has been complete (for the caller's diagnostics).
+//
+// The event's own timestamp is the primary clock because it is stateless: an
+// operator restart, a plugin-process restart, or a poll served by a different
+// process all reach the same verdict from the same event. The process-local
+// stamp only backs it up, for a provider timestamp that creeps forward on every
+// poll and would otherwise keep the window perpetually young. Whichever fires
+// first ends the wait, so the backstop can only shorten the window, never
+// extend it.
+//
+// Every branch that cannot be bounded ends the wait rather than starting one:
+// with no usable timestamp, or no stamp to fall back on, committing a sparse row
+// now beats polling forever. That trade is only the right way round because the
+// fallback is a Success — the operation's outcome is not in doubt, only its
+// properties are.
+func (c *Client) waitLongerForEnrichment(ctx context.Context, requestID string, eventTime *time.Time) (time.Duration, bool) {
+	if eventTime == nil {
+		return 0, false
+	}
+
+	now := c.clock()
+	elapsed := now.Sub(*eventTime)
+
+	// Past the window (including an implausibly old event), or far enough into
+	// the future that the timestamp is not measuring anything: stop waiting. A
+	// small negative elapsed is ordinary clock skew and falls through as a
+	// just-completed event.
+	if elapsed >= enrichmentWindow || elapsed < -enrichmentClockSkew {
+		return elapsed, false
+	}
+
+	first, ok := c.stampEnrichmentPending(ctx, requestID)
+	if !ok {
+		// No request token to key a stamp on, or the tracker is at its
+		// admission cap: without a backstop there is nothing to shorten a
+		// creeping EventTime with, so don't start a wait at all.
+		return elapsed, false
+	}
+	return elapsed, now.Sub(first) < enrichmentWindow
 }
 
 // populateResourceProperties performs a post-success Read to populate
