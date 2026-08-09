@@ -654,7 +654,7 @@ func (c *Client) classifyUnobservedStatus(ctx context.Context, request *resource
 		return unobservedResult(request, resource.OperationStatusFailure,
 			resource.OperationErrorCodeUnforeseenError,
 			fmt.Sprintf("CloudControl does not recognise the request token for %s, so whether the operation was applied cannot be determined",
-				request.NativeID)), true
+				diagnosticIdentifier(request))), true
 	}
 
 	// Anything else that is not a spent budget is a real answer about the call

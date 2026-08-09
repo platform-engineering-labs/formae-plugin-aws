@@ -1701,6 +1701,23 @@ func TestStatusResource_RequestTokenNotFound_ReturnsNonRecoverableFailure(t *tes
 	require.False(t, tracked, "a terminal return must leave no tracker entry behind")
 }
 
+func TestStatusResource_RequestTokenNotFound_EmptyNativeID_FallsBackToRequestID(t *testing.T) {
+	mockAPI := new(mockCloudControlAPI)
+	clock, _ := fakeClock(statusEventBase)
+	client := newStatusClient(mockAPI, clock)
+	tokenNotFoundStatusPoll(mockAPI)
+
+	result, err := client.StatusResource(context.Background(),
+		&resource.StatusRequest{RequestID: "req-gone-no-native-id"}, noRead(t))
+
+	require.NoError(t, err)
+	require.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	require.Contains(t, result.ProgressResult.StatusMessage, "req-gone-no-native-id",
+		"with no NativeID the message must still name the request it's about")
+	require.NotContains(t, result.ProgressResult.StatusMessage, "for , so",
+		"an empty NativeID must not leave a blank gap in the message")
+}
+
 // The budget is consulted before the failure is classified, so a status call
 // that crosses the deadline returns the token-not-found exception wrapped in
 // the budget sentinel. An unknown token is terminal however it arrives —
