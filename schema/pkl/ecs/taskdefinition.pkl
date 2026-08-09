@@ -45,7 +45,7 @@ open class ContainerDefinition extends formae.SubResource {
     firelensConfiguration: FirelensConfiguration?
     healthCheck: HealthCheck?
     hostname: String?
-    image: String
+    image: String|formae.Resolvable
     @aws.FieldHint{hasProviderDefault = true}
     interactive: Boolean?
     links: Listing<String>?

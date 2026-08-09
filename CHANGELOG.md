@@ -53,6 +53,14 @@ formae agent.
   the association is removed. Exposing the resolvable removes the hand-edit;
   it does not change that ordering.
 
+- `AWS::ECS::TaskDefinition`: `ContainerDefinition.image` now accepts a
+  resolvable (`String|formae.Resolvable`) instead of a bare `String`, so a
+  container image can be wired through the resource graph: an
+  `AWS::CodeBuild::ImageBuild` digest, an `AWS::ECR::Repository` URI, or any
+  other resolvable image reference. It was the only reference-shaped field on
+  the resource family still typed as a plain string, which forced the image to
+  be pinned by hand and re-pinned on every rebuild.
+
 ### Changed
 
 - **Breaking.** `AWS::CodeBuild::ImageBuild` is now a pure build-and-push
