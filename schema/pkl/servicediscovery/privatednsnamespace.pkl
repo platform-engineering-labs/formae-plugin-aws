@@ -25,12 +25,12 @@ const type = "AWS::ServiceDiscovery::PrivateDnsNamespace"
 
 @aws.SubResourceHint
 open class SOA extends formae.SubResource {
-    ttl: Int
+    tTL: Int
 }
 
 @aws.SubResourceHint
 open class DnsProperties extends formae.SubResource {
-    soa: SOA?
+    sOA: SOA?
 }
 
 @aws.SubResourceHint

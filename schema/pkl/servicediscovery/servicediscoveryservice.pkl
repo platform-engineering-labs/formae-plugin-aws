@@ -26,7 +26,7 @@ typealias DnsRecordType = "A"|"AAAA"|"CNAME"|"SRV"
 @aws.SubResourceHint
 open class DnsRecord extends formae.SubResource {
     type: DnsRecordType
-    ttl: Int
+    tTL: Int
 }
 
 @aws.SubResourceHint
