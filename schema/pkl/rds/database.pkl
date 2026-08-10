@@ -95,4 +95,9 @@ open class Database extends formae.Resource {
         required = true
     }
     owner: String|formae.Resolvable
+
+    hidden res: DatabaseResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

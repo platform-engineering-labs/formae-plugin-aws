@@ -95,4 +95,9 @@ open class DatabaseRole extends formae.Resource {
     /// drift instead of silently breaking the consumer.
     @aws.FieldHint
     canLogin: Boolean = true
+
+    hidden res: DatabaseRoleResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

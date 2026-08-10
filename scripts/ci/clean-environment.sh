@@ -738,6 +738,29 @@ aws rds describe-db-snapshots --snapshot-type manual --region "$REGION" \
     fi
 done
 
+# --- RDS DB clusters (after DB instances, before DB subnet groups and VPCs)
+# An Aurora cluster outlives a cancelled run and then blocks its subnet group and
+# VPC from being torn down by every later run. Members are deleted first: a
+# cluster with instances still attached cannot be deleted. The identifier filter
+# is the same prefix set the DB instance sweep uses — the account is shared with
+# live CI runs, so anything unmatched is left alone.
+echo "Cleaning RDS test DB clusters..."
+aws rds describe-db-clusters --region "$REGION" \
+    --query "DBClusters[?contains(DBClusterIdentifier, '$SDK_PREFIX') || contains(DBClusterIdentifier, '$FORMAE_PREFIX') || contains(DBClusterIdentifier, '$TEST_PREFIX')].DBClusterIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster; do
+    if [[ -n "$cluster" ]]; then
+        echo "  Deleting RDS DB cluster: $cluster"
+        aws rds describe-db-clusters --db-cluster-identifier "$cluster" --region "$REGION" \
+            --query "DBClusters[0].DBClusterMembers[].DBInstanceIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r member; do
+            if [[ -n "$member" ]]; then
+                echo "    Deleting cluster member instance: $member"
+                aws rds delete-db-instance --db-instance-identifier "$member" --skip-final-snapshot --region "$REGION" 2>/dev/null || true
+            fi
+        done
+        aws rds modify-db-cluster --db-cluster-identifier "$cluster" --no-deletion-protection --apply-immediately --region "$REGION" 2>/dev/null || true
+        aws rds delete-db-cluster --db-cluster-identifier "$cluster" --skip-final-snapshot --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # --- RDS DB subnet groups (after DB instances, before VPCs)
 echo "Cleaning RDS test DB subnet groups..."
 aws rds describe-db-subnet-groups --region "$REGION" \
