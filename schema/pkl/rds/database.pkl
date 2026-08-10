@@ -1,0 +1,98 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.rds.database
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+
+const type = "AWS::RDS::Database"
+
+open class DatabaseResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden clusterArn: DatabaseResolvable = (this) {
+        property = "ClusterArn"
+    }
+
+    hidden databaseName: DatabaseResolvable = (this) {
+        property = "DatabaseName"
+    }
+
+    hidden owner: DatabaseResolvable = (this) {
+        property = "Owner"
+    }
+}
+
+/// A PostgreSQL database inside an Aurora cluster.
+///
+/// CloudControl models the cluster and its instances but nothing inside the
+/// engine, so this resource is provisioned directly over the RDS Data API: the
+/// plugin needs no network path to the database, only IAM-authenticated HTTPS.
+/// Aurora PostgreSQL only — a cluster running another engine, or one without the
+/// Data API enabled, is rejected with an explicit error.
+///
+/// DESTRUCTIVE DELETE: destroying this resource runs `DROP DATABASE`, which
+/// permanently deletes the database and everything in it. If the database has
+/// open connections the drop is retried with FORCE, terminating those sessions.
+/// There are no snapshot or retain semantics.
+///
+/// OWNERSHIP GRANTS: PostgreSQL requires the executing role to be a member of the
+/// owning role before it can create or reassign a database owned by it, and the
+/// Aurora master user is not a superuser. Where that membership is missing the
+/// plugin grants it and NEVER revokes it. The grant confers nothing new — it only
+/// succeeds if the admin already holds ADMIN OPTION on the role — and a revoke
+/// could not be made atomic, since CREATE DATABASE cannot run in a transaction.
+///
+/// The principal running the plugin needs `rds-data:ExecuteStatement` on the
+/// cluster, `secretsmanager:GetSecretValue` on the admin secret (plus
+/// `kms:Decrypt` on its key when the secret uses a customer-managed key), and
+/// `rds:DescribeDBClusters` for the create-time preflight.
+@aws.ResourceHint {
+    type = module.type
+    identifier = "$.DatabaseName"
+    discoverable = false
+    parent = "AWS::RDS::DBCluster"
+    parentRefs = new formae.ParentRef {
+        parentProperty = "DBClusterArn"
+        childProperty = "ClusterArn"
+    }
+}
+open class Database extends formae.Resource {
+    hidden parent = this
+
+    /// ARN of the Aurora PostgreSQL cluster the database lives in.
+    @aws.FieldHint {
+        createOnly = true
+        required = true
+    }
+    clusterArn: String|formae.Resolvable
+
+    /// ARN of a Secrets Manager secret holding admin credentials for the cluster,
+    /// in the standard RDS JSON format. Deliberately NOT createOnly: repointing a
+    /// credential must not destroy the database. An update proves the replacement
+    /// secret can reach the cluster before anything starts depending on it.
+    @aws.FieldHint {
+        required = true
+    }
+    adminSecretArn: String|formae.Resolvable
+
+    /// Name of the database. Renaming replaces the resource, which drops the
+    /// original.
+    @aws.FieldHint {
+        createOnly = true
+        required = true
+    }
+    databaseName: String
+
+    /// Role that owns the database. Required rather than optional: clearing an
+    /// owner has no defensible meaning, and an omitted owner would drift on every
+    /// sync against a read that always reports one.
+    @aws.FieldHint {
+        required = true
+    }
+    owner: String|formae.Resolvable
+}
