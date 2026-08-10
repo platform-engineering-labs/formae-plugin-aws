@@ -12,6 +12,52 @@ formae agent.
 
 ### Added
 
+- `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` support. A PostgreSQL
+  database inside an Aurora cluster, and its owning login role, are now
+  first-class declared resources. CloudControl models a cluster and its
+  instances but nothing inside the engine, so both are driven directly over the
+  **RDS Data API** — the plugin needs no network path to the database, only
+  IAM-authenticated HTTPS against the cluster ARN and a Secrets Manager secret
+  in the standard RDS JSON format. Aurora PostgreSQL only; a cluster running
+  another engine, or one without the Data API enabled, is rejected with an
+  explicit error rather than a failed statement.
+
+  Modelled on the database: `clusterArn`, `adminSecretArn`, `databaseName` and
+  `owner`. On the role: `clusterArn`, `adminSecretArn`, `roleName`, `password`
+  and `canLogin`. Both expose resolvables so a database, its owning role and the
+  secret holding its credentials are wired through the resource graph rather
+  than by naming convention. The admin secret is deliberately mutable — an
+  update proves the replacement credential can reach the cluster before anything
+  starts depending on it — while the cluster and the object's name are
+  create-only.
+
+  **The password never reaches the SQL text.** A `PASSWORD` clause cannot take a
+  bind parameter, so the plugin composes the PostgreSQL SCRAM-SHA-256 verifier
+  itself and sends that; the plaintext appears in neither CloudTrail's
+  `rds-data` events nor any statement logging. The password field is write-only
+  and opaque, so it is hashed at rest and never compared against the salted
+  verifier the engine stores. Passwords must be printable ASCII (U+0020 to
+  U+007E), the range PostgreSQL's SASLprep normalization passes through
+  unchanged; Secrets Manager's generated passwords already satisfy this.
+
+  **Destroying either resource is destructive and has no snapshot or retain
+  semantics.** Destroying a database runs `DROP DATABASE`, escalating to
+  `WITH (FORCE)` — which terminates open sessions — only when the engine reports
+  the database in use. Destroying a role runs `DROP ROLE`, which PostgreSQL
+  refuses while the role owns any object, including objects in databases formae
+  does not manage; that refusal is surfaced as an actionable error naming the
+  role. Creating a database also grants the admin membership of the owning role
+  where PostgreSQL requires it, and that grant is never revoked: it confers
+  nothing the admin could not re-grant itself, and a revoke could not be made
+  atomic.
+
+  Neither type is discoverable — enumerating objects inside a cluster needs
+  admin credentials discovery cannot supply — so listing fails with an explicit
+  unsupported error rather than an empty page. The principal running the plugin
+  needs `rds-data:ExecuteStatement` on the cluster,
+  `secretsmanager:GetSecretValue` on the admin secret (plus `kms:Decrypt` on its
+  key for a customer-managed key), and `rds:DescribeDBClusters` for the
+  create-time preflight.
 - S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
   `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
   buckets that block SSE-C round-trip through extract and reconcile instead of
