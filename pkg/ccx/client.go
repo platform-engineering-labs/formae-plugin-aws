@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -46,6 +47,69 @@ type cloudControlAPI interface {
 
 type Client struct {
 	api cloudControlAPI
+
+	// now supplies the current time to the request-window tracker in
+	// window.go. NewClient sets it to time.Now; the clock accessor falls
+	// back to time.Now itself when it's nil, so a zero-value Client (as
+	// existing unit tests construct directly, e.g. &Client{api: mockAPI})
+	// keeps working without going through NewClient.
+	now func() time.Time
+
+	// watchedBudget overrides defaultWatchedCallBudget for the AWS calls made
+	// inside a watchdog-observed RPC. It exists so tests can drive the
+	// budget-exhaustion paths without spending seconds of wall clock; zero
+	// means "use the constant", which is what production always does.
+	watchedBudget time.Duration
+
+	// windowsMu guards windows, the process-local, admission-controlled
+	// tracker of per-RequestID enrichment/status-error stamps. See
+	// window.go for the full contract.
+	windowsMu sync.Mutex
+	windows   map[string]window
+}
+
+// defaultWatchedCallBudget bounds the AWS calls a plugin RPC makes while the
+// agent's missing-in-action watchdog is observing it. The watchdog gives an
+// operator two status-check intervals (2 x 20s = 40s) to report progress, and
+// an RPC that blocks inside a retry loop reports none — so a healthy operation
+// gets killed for a transient AWS throttle.
+//
+// With this budget the worst-case heartbeat period becomes one status-check
+// interval plus one budget (20s + 5s = 25s) against that 40s window, leaving
+// roughly 15s of slack for operator scheduling, mailbox contention, GC,
+// transport and SDK cancellation lag. Five seconds is still long enough to
+// absorb the common single-blip retry without spending an extra poll round
+// trip on it.
+//
+// Two caveats worth keeping in view: context deadlines are cooperative, so
+// this bounds when the loop stops asking for more work rather than the instant
+// an in-flight call unwinds — it is "~5s", not exactly 5s. And the value is
+// coupled to the agent's status-check interval: if that interval changes, this
+// budget has to be re-derived against it.
+const defaultWatchedCallBudget = 5 * time.Second
+
+// watchedCallBudget returns the wall-clock budget for AWS calls made inside a
+// watchdog-observed RPC, honouring a test override and falling back to the
+// constant when the Client is its zero value — existing unit tests build
+// &Client{api: mockAPI} directly, without going through NewClient.
+func (c *Client) watchedCallBudget() time.Duration {
+	if c.watchedBudget > 0 {
+		return c.watchedBudget
+	}
+	return defaultWatchedCallBudget
+}
+
+// watchedRPCDeadline returns the single instant that every AWS call made inside
+// one watchdog-observed RPC shares. The budget bounds the RPC, not each call
+// within it: an RPC that makes two calls and gives each its own budget can spend
+// twice the budget, and the slack the constant is derived against disappears.
+// Callers derive this once on entry and hand it to every retry loop they run.
+//
+// It reads the real clock rather than the injectable one: the retry loops measure
+// against wall clock, while Client.now exists for the request-window tracker's
+// much longer, test-driven windows.
+func (c *Client) watchedRPCDeadline() time.Time {
+	return time.Now().Add(c.watchedCallBudget())
 }
 
 var IgnoredFields = map[string][]string{
@@ -103,6 +167,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 		api: cloudcontrol.NewFromConfig(awsCfg, func(o *cloudcontrol.Options) {
 			o.Retryer = retryer
 		}),
+		now: time.Now,
 	}, nil
 }
 
@@ -167,7 +232,15 @@ func (c *Client) CreateResource(ctx context.Context, request *resource.CreateReq
 	}
 
 	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
-		c.populateResourceProperties(ctx, createResult.ProgressResult, identifier, request.ResourceType)
+		if err := c.populateResourceProperties(ctx, createResult.ProgressResult, identifier, request.ResourceType); enrichmentDeferred(err) {
+			// The create itself already succeeded — only the read-back is
+			// outstanding. Reporting InProgress hands it to the operator's
+			// poll loop, where each poll is a heartbeat, instead of blocking
+			// this RPC until the watchdog gives up on the operation. The
+			// request token and native ID are already on the result, so the
+			// poll resumes against the same request.
+			createResult.ProgressResult.OperationStatus = resource.OperationStatusInProgress
+		}
 	}
 
 	return createResult, nil
@@ -250,7 +323,11 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 	}
 
 	if result.ProgressEvent.OperationStatus == cctypes.OperationStatusSuccess {
-		c.populateResourceProperties(ctx, updateResult.ProgressResult, identifier, request.ResourceType)
+		if err := c.populateResourceProperties(ctx, updateResult.ProgressResult, identifier, request.ResourceType); enrichmentDeferred(err) {
+			// As in CreateResource: the update landed, so defer the read-back
+			// to the poll loop rather than blocking the watched RPC on it.
+			updateResult.ProgressResult.OperationStatus = resource.OperationStatusInProgress
+		}
 	}
 
 	return updateResult, nil
@@ -350,17 +427,92 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 	}, nil
 }
 
+// enrichmentWindow bounds how long StatusResource may keep reporting a finished
+// mutation as InProgress purely because the post-success read-back hasn't
+// returned properties yet. The operator polls roughly every 20s, so two minutes
+// is about six further attempts — comfortably more than the eventual-consistency
+// and throttle-recovery delays that make a just-mutated resource briefly
+// unreadable (AWS typically recovers from a throttle in tens of seconds), while
+// still guaranteeing the operation ends.
+//
+// When the window elapses the poll commits a Success carrying the native ID.
+// The inventory row is written only on the success path, so ending the wait as a
+// failure would throw away formae's only record of a resource that really
+// exists, and the next apply would create a second one.
+const enrichmentWindow = 2 * time.Minute
+
+// enrichmentClockSkew is how far a progress event's EventTime may sit in this
+// host's future before it stops being believable. EventTime is stamped by the
+// AWS control plane and compared against the plugin host's clock, so a little
+// disagreement is ordinary and must not cost an operation its window; a lot of
+// it means the timestamp cannot bound anything and the poll commits immediately
+// instead. Thirty seconds is a quarter of the window: wide enough for ordinary
+// clock drift, narrow enough that a skewed clock cannot materially extend the
+// wait.
+const enrichmentClockSkew = 30 * time.Second
+
+// statusOutageWindow bounds how long StatusResource may keep answering "ask me
+// again" to polls that could not observe the request's status at all — the
+// status call failed recoverably, or came back without a progress event. Unlike
+// the enrichment window there is no event to measure against on this path: an
+// unobserved poll carries no timestamp, so the window is measured from the
+// first poll of the outage.
+//
+// It is deliberately the same length as the enrichment window and derived the
+// same way: the operator polls roughly every 20s, so two minutes is about six
+// further attempts — more than AWS typically needs to recover from a throttle,
+// while still guaranteeing the operation ends.
+//
+// What it bounds, precisely: a run of *consecutive* unobserved polls, seen by
+// one plugin process. Any successful status call clears the stamp, so a request
+// that is being observed keeps polling for as long as it needs; and a restarted
+// plugin process starts the window again from its first failed poll. It is not
+// a bound on the operation's total running time.
+const statusOutageWindow = 2 * time.Minute
+
 // StatusResource gets the status of a resource request using CloudControl with full request handling
 func (c *Client) StatusResource(ctx context.Context, request *resource.StatusRequest, readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error)) (*resource.StatusResult, error) {
-	result, err := c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
-		RequestToken: &request.RequestID,
-	})
+	// This is the RPC the agent's missing-in-action watchdog observes most
+	// often, and the SDK retryer behind the status call can back off for longer
+	// than the watchdog is willing to wait. One deadline, derived here, bounds
+	// every AWS call this RPC goes on to make — the status call and the
+	// post-success read-back share it, so the RPC as a whole is bounded by one
+	// budget rather than one per call.
+	deadline := c.watchedRPCDeadline()
+
+	result, err := retryCallable(ctx, retryOpts{Deadline: deadline}, "StatusResource:"+request.RequestID,
+		func(ctx context.Context) (*cloudcontrol.GetResourceRequestStatusOutput, error) {
+			return c.api.GetResourceRequestStatus(ctx, &cloudcontrol.GetResourceRequestStatusInput{
+				RequestToken: &request.RequestID,
+			})
+		})
+	if err == nil && (result == nil || result.ProgressEvent == nil) {
+		err = fmt.Errorf("%w for request %s", errNoProgressEvent, request.RequestID)
+	}
 	if err != nil {
-		return nil, err
+		// The poll learned nothing about the request. Reporting that as a bare
+		// Go error ends the operation with no explanation of what went wrong,
+		// so classify what can be classified first.
+		statusResult, classified := c.classifyUnobservedStatus(ctx, request, err)
+		if !classified {
+			return nil, err
+		}
+		c.forgetIfResolved(request.RequestID, statusResult.ProgressResult.OperationStatus)
+		return statusResult, nil
 	}
 
+	// The request was observed, so any run of consecutive status-call failures
+	// for it has ended.
+	c.clearStatusError(request.RequestID)
+
 	operation, operationStatus := status.FromProgress(result.ProgressEvent)
-	identifier := ""
+
+	// CloudControl may omit the identifier from a progress event; the native ID
+	// the caller polled with names the same resource. Success is the path that
+	// writes the inventory row, so an empty identifier would persist a row
+	// nothing can be read back against — and would aim the read-back below at
+	// an identifier no read could satisfy.
+	identifier := request.NativeID
 	if result.ProgressEvent.Identifier != nil {
 		identifier = normalizeCompositeIdentifier(*result.ProgressEvent.Identifier)
 	}
@@ -394,6 +546,7 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 
 	// If the resource is not found, we return a success status when it is a delete operation
 	if result.ProgressEvent.Operation == cctypes.OperationDelete && result.ProgressEvent.ErrorCode == cctypes.HandlerErrorCodeNotFound {
+		c.forgetRequest(request.RequestID)
 		return &resource.StatusResult{
 			ProgressResult: &resource.ProgressResult{
 				Operation:       operation,
@@ -431,54 +584,354 @@ func (c *Client) StatusResource(ctx context.Context, request *resource.StatusReq
 		},
 	}
 
-	// If operation status is success, run a Read to get the latest properties.
-	// Some resources (like DynamoDB tables) may not be immediately readable after
-	// CloudControl reports the operation as successful, and AWS throttling can
-	// flap during high-concurrency periods. retryRead absorbs both with
-	// exponential backoff so the agent doesn't persist a stale snapshot.
 	if operationStatus == resource.OperationStatusSuccess && result.ProgressEvent.Operation != cctypes.OperationDelete {
-		typeName := *result.ProgressEvent.TypeName
-		readResult, readErr := retryRead(ctx, retryOpts{}, "StatusResource:"+typeName,
-			func(ctx context.Context) (*resource.ReadResult, error) {
-				return readFunc(ctx, &resource.ReadRequest{
-					NativeID:     identifier,
-					ResourceType: typeName,
-					TargetConfig: request.TargetConfig,
-				})
-			})
-
-		switch {
-		case readErr != nil:
-			plugin.LoggerFromContext(ctx).Error("StatusResource: Read failed after retry budget exhausted",
-				"error", readErr,
-				"identifier", identifier,
-				"resourceType", typeName)
-		case readResult != nil && readResult.ErrorCode != "":
-			plugin.LoggerFromContext(ctx).Error("StatusResource: Read returned CloudControl error after retry budget",
-				"errorCode", readResult.ErrorCode,
-				"identifier", identifier,
-				"resourceType", typeName)
-		case readResult != nil && readResult.Properties != "":
-			statusResult.ProgressResult.ResourceProperties = json.RawMessage(readResult.Properties)
-		}
-
-		if statusResult.ProgressResult.ResourceProperties == nil {
-			plugin.LoggerFromContext(ctx).Error("StatusResource: Failed to read properties after retries",
-				"identifier", identifier,
-				"resourceType", typeName)
-		}
+		c.enrichStatusResult(ctx, statusResult.ProgressResult, request, result.ProgressEvent, identifier, deadline, readFunc)
 	}
 
+	c.forgetIfResolved(request.RequestID, statusResult.ProgressResult.OperationStatus)
+
 	return statusResult, nil
+}
+
+// forgetIfResolved drops a request's tracker entry once a poll has resolved it.
+// A resolved request has nothing left for either stamp to bound. A poll still
+// waiting — for its read-back, or for a status call that can be observed at all
+// — has not resolved, and keeps its stamps so the next poll measures against
+// the same windows.
+func (c *Client) forgetIfResolved(requestID string, operationStatus resource.OperationStatus) {
+	switch operationStatus {
+	case resource.OperationStatusSuccess, resource.OperationStatusFailure:
+		c.forgetRequest(requestID)
+	}
+}
+
+// errNoProgressEvent marks a status response that came back without a progress
+// event. Like a status call that failed outright it leaves the request's
+// outcome unobserved, so it is classified the same way.
+var errNoProgressEvent = errors.New("status poll returned no progress event")
+
+// classifyUnobservedStatus turns a poll that could not observe its request into
+// a progress result the operator can act on, reporting false when it cannot —
+// in which case the caller keeps today's behaviour and returns the raw error.
+//
+// Nothing here can say whether the mutation applied. The two honest answers are
+// "ask again" and "this ended and nobody knows how", and the whole point of the
+// classification is that the operator answers each of those very differently:
+//
+//   - InProgress reschedules a poll against the same request token, and each
+//     poll is a heartbeat for the agent's missing-in-action watchdog. The
+//     original CRUD is never re-invoked.
+//   - A Failure carrying a recoverable code — the obvious alternative — would
+//     instead make the operator re-invoke the CRUD from the original request,
+//     re-running a create that may already have succeeded.
+//
+// So a status outage that may clear becomes InProgress, and only an outcome
+// that will never be observed becomes a Failure, with a code the operator will
+// not retry.
+func (c *Client) classifyUnobservedStatus(ctx context.Context, request *resource.StatusRequest, cause error) (*resource.StatusResult, bool) {
+	log := plugin.LoggerFromContext(ctx)
+
+	// An unknown request token needs its own answer, because neither default is
+	// right: the shared error helper maps it to NotFound, which the operator
+	// treats as recoverable and would re-invoke the CRUD on, while this layer's
+	// own predicate calls it non-recoverable and would never reach the branch
+	// below. Checked before the budget sentinel because a status call that
+	// crossed its deadline returns this exception wrapped in it, and re-polling
+	// a token CloudControl does not know only defers the same answer.
+	//
+	// A direct Read cannot settle it either: a Read proves the resource exists,
+	// not that this request applied — for an update it says nothing about
+	// whether the patch landed, for a create it cannot rule out a pre-existing
+	// or concurrent resource, and for a delete it inverts the answer. Once the
+	// progress event is gone the plugin cannot even tell which verb it is
+	// observing. Indeterminate is the truthful answer, so it is the one given.
+	var tokenNotFound *cctypes.RequestTokenNotFoundException
+	if errors.As(cause, &tokenNotFound) {
+		log.Error("StatusResource: CloudControl does not recognise the request token; the outcome cannot be determined",
+			"error", cause,
+			"identifier", request.NativeID,
+			"requestID", request.RequestID)
+		return unobservedResult(request, resource.OperationStatusFailure,
+			resource.OperationErrorCodeUnforeseenError,
+			fmt.Sprintf("CloudControl does not recognise the request token for %s, so whether the operation was applied cannot be determined",
+				diagnosticIdentifier(request))), true
+	}
+
+	// Anything else that is not a spent budget is a real answer about the call
+	// itself (bad request, denied, cancelled); polling cannot improve on it.
+	if !errors.Is(cause, errRetryBudgetExhausted) && !errors.Is(cause, errNoProgressEvent) {
+		return nil, false
+	}
+
+	first, ok := c.stampStatusError(ctx, request.RequestID)
+	if !ok {
+		// No request token to key the outage window on, or the tracker is at
+		// its admission cap. Converting without a bound would poll forever, so
+		// this keeps today's behaviour and surfaces the error.
+		return nil, false
+	}
+
+	// The window bounds a run of consecutive unobserved polls for this process:
+	// any successful status call clears the stamp, and a restart starts it
+	// again. Past it the operation ends — unobserved, which is not a safe
+	// outcome, only the honest one: the mutation may or may not have happened,
+	// and no protocol status means "I could not see it".
+	if elapsed := c.clock().Sub(first); elapsed >= statusOutageWindow {
+		log.Error("StatusResource: status could not be observed within the outage window, ending the operation",
+			"error", cause,
+			"identifier", request.NativeID,
+			"requestID", request.RequestID,
+			"elapsed", elapsed)
+		return unobservedResult(request, resource.OperationStatusFailure,
+			resource.OperationErrorCodeUnforeseenError,
+			fmt.Sprintf("the status of %s could not be read for %s, so whether the operation was applied cannot be determined",
+				diagnosticIdentifier(request), elapsed)), true
+	}
+
+	log.Info("StatusResource: status could not be read, deferring to the next poll",
+		"error", cause,
+		"identifier", request.NativeID,
+		"requestID", request.RequestID)
+	return unobservedResult(request, resource.OperationStatusInProgress,
+		resource.OperationErrorCodeNotSet,
+		fmt.Sprintf("the status of %s could not be read; retrying on the next poll", diagnosticIdentifier(request))), true
+}
+
+// diagnosticIdentifier names the resource an unobserved-outcome StatusMessage
+// is about. NativeID is what an operator recognises, but CloudControl may not
+// have echoed one back yet; falling back to the RequestID keeps the message
+// naming something rather than interpolating an empty string.
+func diagnosticIdentifier(request *resource.StatusRequest) string {
+	if request.NativeID != "" {
+		return request.NativeID
+	}
+	return request.RequestID
+}
+
+// unobservedResult builds the progress result for a poll that observed nothing,
+// echoing back the request token so the operator can poll the same request
+// again and the native ID so its diagnostics name a resource.
+//
+// The operation is reported as the status check, not as a CRUD verb: a status
+// call carries no verb of its own, and with no progress event to read one from
+// there is nothing to report but what the plugin was actually doing. The
+// operator branches on the status and the error code, so this field is
+// reporting only.
+func unobservedResult(
+	request *resource.StatusRequest,
+	operationStatus resource.OperationStatus,
+	errorCode resource.OperationErrorCode,
+	statusMessage string,
+) *resource.StatusResult {
+	return &resource.StatusResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCheckStatus,
+			OperationStatus: operationStatus,
+			RequestID:       request.RequestID,
+			NativeID:        request.NativeID,
+			StatusMessage:   statusMessage,
+			ErrorCode:       errorCode,
+		},
+	}
+}
+
+// enrichStatusResult runs the post-success Read that populates the latest
+// properties on a finished mutation and folds the outcome into pr. Some
+// resources (like DynamoDB tables) are not immediately readable after
+// CloudControl reports the operation as successful, and AWS throttling can flap
+// during high-concurrency periods; retryRead absorbs both with exponential
+// backoff so the agent doesn't persist a stale snapshot.
+//
+// The read shares the RPC's deadline with the status call that preceded it, so it
+// can stop before it has anything to report — and stops sooner the more of the
+// budget that status call spent. The mutation itself has already succeeded by
+// then, and the only remaining question is whether to spend another poll on the
+// read-back or to commit the row without it — enrichmentDecision answers that,
+// and bounds how long the answer can stay "wait".
+func (c *Client) enrichStatusResult(
+	ctx context.Context,
+	pr *resource.ProgressResult,
+	request *resource.StatusRequest,
+	event *cctypes.ProgressEvent,
+	identifier string,
+	deadline time.Time,
+	readFunc func(context.Context, *resource.ReadRequest) (*resource.ReadResult, error),
+) {
+	log := plugin.LoggerFromContext(ctx)
+
+	typeName := aws.ToString(event.TypeName)
+	if typeName == "" {
+		// Nothing to read back against; commit what the event already carries.
+		log.Error("StatusResource: progress event carries no resource type, skipping read",
+			"identifier", identifier)
+		return
+	}
+
+	readResult, readErr := retryRead(ctx, retryOpts{Deadline: deadline}, "StatusResource:"+typeName,
+		func(ctx context.Context) (*resource.ReadResult, error) {
+			return readFunc(ctx, &resource.ReadRequest{
+				NativeID:     identifier,
+				ResourceType: typeName,
+				TargetConfig: request.TargetConfig,
+			})
+		})
+
+	switch {
+	case readErr != nil:
+		log.Error("StatusResource: Read failed after retry budget exhausted",
+			"error", readErr,
+			"identifier", identifier,
+			"resourceType", typeName)
+	case readResult != nil && readResult.ErrorCode != "":
+		log.Error("StatusResource: Read returned CloudControl error after retry budget",
+			"errorCode", readResult.ErrorCode,
+			"identifier", identifier,
+			"resourceType", typeName)
+	case readResult != nil && readResult.Properties != "":
+		pr.ResourceProperties = json.RawMessage(readResult.Properties)
+	}
+
+	if pr.ResourceProperties != nil {
+		return
+	}
+
+	if enrichmentDeferred(readErr) {
+		// Whichever branch this takes, no ErrorCode is set: the underlying event
+		// is a Success event and the resource exists. What is lost is the
+		// read-back, so the row is committed with whatever the event carried.
+		switch verdict, elapsed := c.enrichmentDecision(ctx, request.RequestID, event.EventTime); verdict {
+		case enrichmentPendingRetry:
+			log.Info("StatusResource: read-back still pending, deferring to the next poll",
+				"identifier", identifier,
+				"resourceType", typeName,
+				"elapsed", elapsed)
+			pr.OperationStatus = resource.OperationStatusInProgress
+			pr.StatusMessage = fmt.Sprintf(
+				"the mutation succeeded; enrichment pending, %s is not readable yet", identifier)
+
+		case enrichmentWindowElapsed:
+			log.Error("StatusResource: enrichment window elapsed, reporting success without properties",
+				"identifier", identifier,
+				"resourceType", typeName,
+				"elapsed", elapsed,
+				"eventTime", aws.ToTime(event.EventTime),
+				"requestID", request.RequestID)
+			pr.StatusMessage = fmt.Sprintf(
+				"the mutation succeeded but %s could not be read back within the enrichment window; the recorded properties may be incomplete",
+				identifier)
+
+		case enrichmentUnbounded:
+			log.Error("StatusResource: no bounded retry window could be established for the read-back, reporting success without properties",
+				"identifier", identifier,
+				"resourceType", typeName,
+				"elapsed", elapsed,
+				"eventTime", aws.ToTime(event.EventTime),
+				"requestID", request.RequestID)
+			pr.StatusMessage = fmt.Sprintf(
+				"the mutation succeeded but %s could not be read back, and no bounded retry window could be established; the recorded properties may be incomplete",
+				identifier)
+		}
+		return
+	}
+
+	// Polling cannot fix whatever else stopped the read, so there is nothing to
+	// wait for: report the mutation's own outcome with what is available.
+	log.Error("StatusResource: Failed to read properties after retries",
+		"identifier", identifier,
+		"resourceType", typeName)
+}
+
+// enrichmentVerdict says what a poll whose read-back ran out of budget should do
+// about it.
+type enrichmentVerdict int
+
+const (
+	// enrichmentPendingRetry: the mutation completed recently enough that the
+	// read-back is worth another poll.
+	enrichmentPendingRetry enrichmentVerdict = iota
+	// enrichmentWindowElapsed: the read-back has had its window and did not
+	// come good; commit what we have.
+	enrichmentWindowElapsed
+	// enrichmentUnbounded: no bounded retry window could be established for
+	// the read-back -- either EventTime itself can't be trusted (missing or
+	// wildly skewed), or a trustworthy EventTime exists but the backstop
+	// stamp that would guard it against creeping forward isn't available
+	// (empty RequestID, or the tracker at its admission cap). Either way,
+	// don't start a wait that cannot be bounded; commit what we have.
+	enrichmentUnbounded
+)
+
+// enrichmentDecision decides whether to spend another poll on a read-back that
+// ran out of budget, and reports how long the mutation has been complete for the
+// caller's diagnostics.
+//
+// The event's own timestamp is the primary clock because it is stateless: an
+// operator restart, a plugin-process restart, or a poll served by a different
+// process all reach the same verdict from the same event. The process-local
+// stamp only backs it up, for a provider timestamp that creeps forward on every
+// poll and would otherwise keep the window perpetually young. Whichever fires
+// first ends the wait, so the backstop can only shorten the window, never
+// extend it.
+//
+// Every branch that cannot be bounded ends the wait rather than starting one:
+// with no usable timestamp, or no stamp to fall back on, committing a sparse row
+// now beats polling forever. That trade is only the right way round because the
+// fallback is a Success — the operation's outcome is not in doubt, only its
+// properties are.
+func (c *Client) enrichmentDecision(ctx context.Context, requestID string, eventTime *time.Time) (enrichmentVerdict, time.Duration) {
+	if eventTime == nil {
+		return enrichmentUnbounded, 0
+	}
+
+	now := c.clock()
+	elapsed := now.Sub(*eventTime)
+
+	// Far enough into this host's future that the timestamp is not measuring
+	// anything. Reported unclamped, since how far out it is is the diagnostic.
+	if elapsed < -enrichmentClockSkew {
+		return enrichmentUnbounded, elapsed
+	}
+	// Within the skew allowance: ordinary disagreement between the control
+	// plane's clock and this host's, so read it as a just-completed event.
+	if elapsed < 0 {
+		elapsed = 0
+	}
+
+	// Past the window, including an implausibly old event.
+	if elapsed >= enrichmentWindow {
+		return enrichmentWindowElapsed, elapsed
+	}
+
+	first, ok := c.stampEnrichmentPending(ctx, requestID)
+	if !ok {
+		// No request token to key a stamp on, or the tracker is at its
+		// admission cap: without a backstop there is nothing to shorten a
+		// creeping EventTime with, so don't start a wait at all.
+		return enrichmentUnbounded, elapsed
+	}
+	if now.Sub(first) >= enrichmentWindow {
+		return enrichmentWindowElapsed, elapsed
+	}
+	return enrichmentPendingRetry, elapsed
 }
 
 // populateResourceProperties performs a post-success Read to populate
 // ResourceProperties on a ProgressResult. Used when CloudControl returns
 // synchronous Success (no async polling, so StatusResource's Read loop
 // doesn't run). Wraps the call in retryRead so transient throttling
-// surfaced as ErrorCode doesn't leave the agent with a stale snapshot.
-func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) {
-	readResult, err := retryRead(ctx, retryOpts{}, "populateResourceProperties:"+resourceType,
+// surfaced as ErrorCode doesn't leave the agent with a stale snapshot, under
+// the watched-call budget so the retries can't outlast the RPC's watchdog
+// window.
+//
+// It returns whatever stopped the retry loop, or nil. An error wrapping
+// errRetryBudgetExhausted means the budget — not a terminal outcome — is why
+// enrichment didn't finish, so the caller can hand the remaining work to the
+// operator's poll loop. A nil return does not by itself mean properties were
+// populated: a non-recoverable CloudControl error code is logged and reported
+// as nil, keeping the caller's existing behaviour of returning Success with
+// whatever is available, since polling cannot fix it.
+func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.ProgressResult, identifier, resourceType string) error {
+	readResult, err := retryRead(ctx, retryOpts{Budget: c.watchedCallBudget()}, "populateResourceProperties:"+resourceType,
 		func(ctx context.Context) (*resource.ReadResult, error) {
 			return c.ReadResource(ctx, &resource.ReadRequest{
 				NativeID:     identifier,
@@ -490,18 +943,32 @@ func (c *Client) populateResourceProperties(ctx context.Context, pr *resource.Pr
 			"error", err,
 			"identifier", identifier,
 			"resourceType", resourceType)
-		return
+		return err
 	}
 	if readResult != nil && readResult.ErrorCode != "" {
 		plugin.LoggerFromContext(ctx).Error("post-success Read returned error after retries",
 			"errorCode", readResult.ErrorCode,
 			"identifier", identifier,
 			"resourceType", resourceType)
-		return
+		return nil
 	}
 	if readResult != nil && readResult.Properties != "" {
 		pr.ResourceProperties = json.RawMessage(readResult.Properties)
 	}
+	return nil
+}
+
+// enrichmentDeferred reports whether a post-success enrichment Read stopped
+// because it ran out of its wall-clock budget, which is the one outcome the
+// mutation paths convert on.
+//
+// The sentinel is authoritative here rather than the returned result: on a
+// budget exit retryRead may have nothing to report. It can also carry a
+// terminal cause, when the attempt that crossed the deadline happened to fail
+// non-recoverably — that resolves itself, because the next poll starts a fresh
+// budget and surfaces the real error immediately.
+func enrichmentDeferred(err error) bool {
+	return errors.Is(err, errRetryBudgetExhausted)
 }
 
 // ListResources lists resources using CloudControl. Wrapped in

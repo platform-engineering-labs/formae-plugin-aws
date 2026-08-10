@@ -7,6 +7,7 @@ package ccx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -45,12 +46,98 @@ const (
 	defaultRetryMaxDelay    = 30 * time.Second
 )
 
-// retryOpts allows callers to override the default budget for tests or for
-// call sites with different tolerance for latency.
+// retryOpts allows callers to override the default attempt limits for tests or
+// for call sites with different tolerance for latency.
 type retryOpts struct {
 	MaxAttempts int
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
+
+	// Budget bounds the whole loop by wall clock instead of by attempt count,
+	// counting the time spent inside each attempt as well as the backoff
+	// sleeps. It exists for calls made inside a plugin RPC that the agent's
+	// missing-in-action watchdog observes: while such an RPC is blocked the
+	// operator cannot iterate, so no progress is reported and a healthy
+	// operation is killed. Call sites that must return well inside that window
+	// set a Budget; leaving it zero keeps the attempt-bounded behaviour for
+	// unwatched call sites such as discovery.
+	//
+	// Because context deadlines are cooperative, the budget is approximate:
+	// it bounds when the loop stops asking for more work, not the instant an
+	// in-flight call unwinds.
+	Budget time.Duration
+
+	// Deadline bounds the loop against an absolute instant rather than a
+	// duration measured from entry, and takes precedence over Budget when set.
+	// It exists so that several AWS calls made inside one watched RPC share a
+	// single budget instead of each starting a fresh one: a status poll that
+	// spends most of the budget must leave the read-back that follows it
+	// correspondingly less, or the RPC as a whole outlasts the window the
+	// budget was derived against. With Deadline set, Budget means nothing more
+	// than "derive a deadline on entry", so callers set one or the other.
+	//
+	// Leaving both zero keeps the attempt-bounded behaviour for unwatched call
+	// sites exactly as it was.
+	Deadline time.Time
+}
+
+// errRetryBudgetExhausted marks a retry loop that stopped because its
+// wall-clock Budget ran out, rather than because the operation reached a
+// terminal outcome or ran out of attempts. Callers match it with errors.Is to
+// tell "still in progress, ask again later" apart from a real failure; the
+// last observed error is wrapped alongside it so the cause survives.
+var errRetryBudgetExhausted = errors.New("retry budget exhausted")
+
+// budgetExhaustedError builds the error a budget exit returns.
+func budgetExhaustedError(lastErr error) error {
+	if lastErr == nil {
+		return errRetryBudgetExhausted
+	}
+	return fmt.Errorf("%w: %w", errRetryBudgetExhausted, lastErr)
+}
+
+// withRetryBudget derives the context each attempt runs under. The deadline is
+// applied to the attempts themselves, not just to the sleeps between them: an
+// attempt is an AWS SDK call with its own internal retries and unbounded
+// service latency, so bounding only the sleeps under-counts wall clock.
+//
+// An explicit opts.Deadline is used as given, so callers that make several calls
+// inside one watched RPC can hand every loop the same instant and have them
+// share one budget. Otherwise a deadline is derived from opts.Budget on entry.
+//
+// The returned deadline is zero when unbudgeted, which disables every budget
+// check in the retry loops and leaves their behaviour exactly as it was.
+func withRetryBudget(ctx context.Context, opts retryOpts) (context.Context, time.Time, context.CancelFunc) {
+	deadline := opts.Deadline
+	if deadline.IsZero() {
+		if opts.Budget <= 0 {
+			return ctx, time.Time{}, func() {}
+		}
+		deadline = time.Now().Add(opts.Budget)
+	}
+	callCtx, cancel := context.WithDeadline(ctx, deadline)
+	return callCtx, deadline, cancel
+}
+
+// budgetSpent reports whether the wall-clock budget has no room left for
+// `lookahead` more waiting — and that it is our budget, rather than the
+// caller's own cancellation or deadline, that ran out. A lookahead of zero asks
+// whether the budget has already elapsed; a lookahead of one backoff delay asks
+// whether sleeping for it would cross the deadline.
+//
+// Exhaustion is decided from the budget's own clock rather than from the last
+// observed error on purpose: when the deadline fires mid-call the in-flight AWS
+// call returns context.DeadlineExceeded, which isRecoverable deliberately
+// rejects, so an "was the last failure recoverable?" test would miss the most
+// important case — a first attempt that blocked for the entire budget.
+//
+// Parent cancellation and a parent deadline propagate to the caller unchanged
+// and must never be reported as budget exhaustion.
+func budgetSpent(ctx context.Context, deadline time.Time, lookahead time.Duration) bool {
+	if deadline.IsZero() || ctx.Err() != nil {
+		return false
+	}
+	return !time.Now().Add(lookahead).Before(deadline)
 }
 
 func (o retryOpts) withDefaults() retryOpts {
@@ -70,9 +157,10 @@ func (o retryOpts) withDefaults() retryOpts {
 // returned ReadResult carries a recoverable CCAPI ErrorCode (or `fn`
 // returns a transient Go error). It exits on success (Properties
 // populated, ErrorCode empty), on non-recoverable failure, on context
-// cancellation, or once the attempt budget is exhausted. The last
-// observed result is returned in all exit paths so the caller can
-// inspect it.
+// cancellation, once the attempt budget is exhausted, or — when
+// opts.Budget or opts.Deadline is set — once the wall-clock budget is spent,
+// in which case the error wraps errRetryBudgetExhausted. The last observed
+// result is returned in all exit paths so the caller can inspect it.
 func retryRead(
 	ctx context.Context,
 	opts retryOpts,
@@ -81,18 +169,32 @@ func retryRead(
 ) (*resource.ReadResult, error) {
 	opts = opts.withDefaults()
 
+	callCtx, deadline, cancel := withRetryBudget(ctx, opts)
+	defer cancel()
+
 	var last *resource.ReadResult
 	var lastErr error
+	budgetExit := false
 	for attempt := 1; attempt <= opts.MaxAttempts; attempt++ {
-		res, err := fn(ctx)
+		res, err := fn(callCtx)
 		last = res
 		lastErr = err
+
+		if err == nil && res != nil && res.ErrorCode == "" && res.Properties != "" {
+			return res, nil
+		}
+
+		// The budget is consulted before the failure is classified, so that an
+		// attempt which consumed the whole window is reported as exhaustion
+		// rather than as the non-recoverable context error it surfaces as.
+		if budgetSpent(ctx, deadline, 0) {
+			budgetExit = true
+			break
+		}
 
 		switch {
 		case err != nil && !isRecoverable(err, ""):
 			return res, err
-		case err == nil && res != nil && res.ErrorCode == "" && res.Properties != "":
-			return res, nil
 		case err == nil && res != nil && res.ErrorCode != "" && !isRecoverable(nil, string(res.ErrorCode)):
 			// Non-recoverable CCAPI error code (e.g. NotFound) — surface
 			// without further retries.
@@ -104,6 +206,17 @@ func retryRead(
 		}
 
 		delay := backoffDelay(attempt, opts.BaseDelay, opts.MaxDelay)
+
+		// Declining to sleep past the deadline is a budget exit too: there is
+		// time left on the clock, just not enough to wait out the next backoff
+		// and still make another attempt. It has to raise the sentinel like any
+		// other budget exit — otherwise a run of fast failures would fall
+		// through to the ordinary return and read as a sparse success.
+		if budgetSpent(ctx, deadline, delay) {
+			budgetExit = true
+			break
+		}
+
 		errCode := ""
 		if res != nil {
 			errCode = string(res.ErrorCode)
@@ -117,12 +230,26 @@ func retryRead(
 			"errorCode", errCode)
 
 		select {
-		case <-ctx.Done():
-			return last, ctx.Err()
+		case <-callCtx.Done():
+			if err := ctx.Err(); err != nil {
+				return last, err
+			}
+			budgetExit = true
 		case <-time.After(delay):
+		}
+		if budgetExit {
+			break
 		}
 	}
 
+	if budgetExit {
+		plugin.LoggerFromContext(ctx).Info("ccx: retry budget exhausted on read",
+			"hint", logHint,
+			"budget", opts.Budget,
+			"deadline", deadline,
+			"err", lastErr)
+		return last, budgetExhaustedError(lastErr)
+	}
 	if lastErr != nil {
 		return last, lastErr
 	}
@@ -132,8 +259,10 @@ func retryRead(
 // retryCallable repeats `fn` with exponential-backoff-plus-jitter while
 // the returned error matches AWS's recoverable surface (Throttling,
 // HandlerFailure, internal service errors). It exits on success, on
-// non-recoverable error, on context cancellation, or once the attempt
-// budget is exhausted. The last observed result is returned.
+// non-recoverable error, on context cancellation, once the attempt budget
+// is exhausted, or — when opts.Budget or opts.Deadline is set — once the
+// wall-clock budget is spent, in which case the error wraps
+// errRetryBudgetExhausted. The last observed result is returned.
 func retryCallable[T any](
 	ctx context.Context,
 	opts retryOpts,
@@ -142,14 +271,23 @@ func retryCallable[T any](
 ) (T, error) {
 	opts = opts.withDefaults()
 
+	callCtx, deadline, cancel := withRetryBudget(ctx, opts)
+	defer cancel()
+
 	var last T
 	var lastErr error
+	budgetExit := false
 	for attempt := 1; attempt <= opts.MaxAttempts; attempt++ {
-		v, err := fn(ctx)
+		v, err := fn(callCtx)
 		last = v
 		lastErr = err
 		if err == nil {
 			return v, nil
+		}
+		// Consulted before the error is classified: see retryRead.
+		if budgetSpent(ctx, deadline, 0) {
+			budgetExit = true
+			break
 		}
 		if !isRecoverable(err, "") {
 			return v, err
@@ -158,6 +296,10 @@ func retryCallable[T any](
 			break
 		}
 		delay := backoffDelay(attempt, opts.BaseDelay, opts.MaxDelay)
+		if budgetSpent(ctx, deadline, delay) {
+			budgetExit = true
+			break
+		}
 		plugin.LoggerFromContext(ctx).Info("ccx: retrying call on recoverable error",
 			"hint", logHint,
 			"attempt", attempt,
@@ -165,10 +307,25 @@ func retryCallable[T any](
 			"delay", delay,
 			"err", err)
 		select {
-		case <-ctx.Done():
-			return last, ctx.Err()
+		case <-callCtx.Done():
+			if cerr := ctx.Err(); cerr != nil {
+				return last, cerr
+			}
+			budgetExit = true
 		case <-time.After(delay):
 		}
+		if budgetExit {
+			break
+		}
+	}
+
+	if budgetExit {
+		plugin.LoggerFromContext(ctx).Info("ccx: retry budget exhausted on call",
+			"hint", logHint,
+			"budget", opts.Budget,
+			"deadline", deadline,
+			"err", lastErr)
+		return last, budgetExhaustedError(lastErr)
 	}
 	return last, lastErr
 }
