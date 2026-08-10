@@ -10,6 +10,7 @@ package rds
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -136,6 +137,73 @@ func stringParam(name, value string) rdsdatatypes.SqlParameter {
 		Name:  aws.String(name),
 		Value: &rdsdatatypes.FieldMemberStringValue{Value: value},
 	}
+}
+
+// decodeRecords unmarshals a JSON-formatted Data API result set. An empty result
+// set decodes to no records rather than an error.
+func decodeRecords(out *rdsdata.ExecuteStatementOutput) ([]map[string]any, error) {
+	if out == nil || out.FormattedRecords == nil || *out.FormattedRecords == "" {
+		return nil, nil
+	}
+	var records []map[string]any
+	if err := json.Unmarshal([]byte(*out.FormattedRecords), &records); err != nil {
+		return nil, fmt.Errorf("failed to decode the result set: %w", err)
+	}
+	return records, nil
+}
+
+func recordString(record map[string]any, column string) string {
+	value, _ := record[column].(string)
+	return value
+}
+
+func recordBool(record map[string]any, column string) bool {
+	value, _ := record[column].(bool)
+	return value
+}
+
+// boolProperty reads an optional boolean property, falling back to the schema's
+// default when the agent did not send one.
+func boolProperty(props map[string]any, key string, fallback bool) bool {
+	value, ok := props[key].(bool)
+	if !ok {
+		return fallback
+	}
+	return value
+}
+
+// secretSafeError wraps an engine failure for a statement that carried secret
+// material. PostgreSQL quotes the offending statement back in some errors, so
+// the password and the verifier are redacted out of the message before it is
+// forwarded — the verifier is offline-attackable material, not a harmless
+// digest.
+func secretSafeError(err error, format string, name string, secrets ...string) error {
+	message := err.Error()
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, secret, "[redacted]")
+	}
+	return fmt.Errorf(format+": %s", name, message)
+}
+
+// synchronousStatus reports success immediately: every Data API call completes
+// before its response returns, so there is no asynchronous state to poll.
+func synchronousStatus(request *resource.StatusRequest) *resource.StatusResult {
+	return &resource.StatusResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:       resource.OperationCheckStatus,
+			OperationStatus: resource.OperationStatusSuccess,
+			NativeID:        request.NativeID,
+		},
+	}
+}
+
+// unsupportedListError explains why listing is refused rather than returning an
+// empty page, which would read as "there are none".
+func unsupportedListError(resourceType string) error {
+	return fmt.Errorf("listing is not supported: %s is not discoverable, because enumerating objects inside a cluster needs admin credentials discovery cannot supply", resourceType)
 }
 
 // classifyDataAPIError maps an rds-data fault onto an SDK error code and reports
