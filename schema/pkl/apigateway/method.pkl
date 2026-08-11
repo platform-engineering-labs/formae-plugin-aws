@@ -85,8 +85,18 @@ open class MethodResolvable extends formae.Resolvable {
 
 @aws.ResourceHint {
     type = module.type
-    identifier = "ResourceId" //identifier = "RestApiId|ResourceId|HttpMethod"
-    discoverable = false
+    // The CloudControl native ID is the composite
+    // "RestApiId|ResourceId|HttpMethod"; identifier names a single property
+    // by convention (see AWS::ECS::TaskSet for the same pattern).
+    identifier = "ResourceId"
+    parent = "AWS::ApiGateway::Resource"
+    // CloudControl has no list handler for Method; discovery uses a custom
+    // List provisioner (pkg/cfres/apigateway/method.go) scoped by the parent
+    // Resource, which carries both values below.
+    listParam = List(
+        new formae.ListProperty { parentProperty = "RestApiId" listParameter = "RestApiId" },
+        new formae.ListProperty { parentProperty = "ResourceId" listParameter = "ResourceId" }
+    )
 }
 open class Method extends formae.Resource {
 
