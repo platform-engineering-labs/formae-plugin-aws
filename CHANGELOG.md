@@ -194,6 +194,30 @@ formae agent.
   declaring the new five-resource forma. A later release will accept the older
   two-part identifier so this is unnecessary.
 
+### Fixed
+
+- An `AWS::CertificateManager::Certificate` with `subjectAlternativeNames` no
+  longer plans a destructive replace on every reconcile. ACM injects the
+  certificate's primary `domainName` into the subject alternative names it
+  returns from `DescribeCertificate`, whatever was requested, and
+  `subjectAlternativeNames` is `createOnly` — so a certificate declaring only
+  the additional names differed from the read-back on an immutable property and
+  every reconcile planned a destroy-and-recreate of an issued certificate,
+  cascading to the DNS validation records wired to its resolvables. The
+  read-back now reports the names *other than* the primary domain, so an
+  unchanged certificate reconciles as a no-op, while a genuine change to the
+  list still replaces the certificate. Declared names are unchanged on the way
+  out: whatever the forma lists is still sent to ACM verbatim.
+
+  The canonical way to declare `subjectAlternativeNames` is therefore **the
+  additional names only, excluding the primary `domainName`**. If your forma
+  lists the primary domain in `subjectAlternativeNames` — the workaround for
+  this bug — it will plan a replacement of the issued certificate once you pick
+  up this release. Remove the primary domain from the list. That edit is
+  declaration-only: ACM stores the same certificate either way, so the
+  declaration converges against the existing certificate with no cloud change.
+  Simulate before applying to confirm the plan is empty.
+
 ## [0.1.16]
 
 ### Changed
