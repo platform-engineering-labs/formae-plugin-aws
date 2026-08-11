@@ -17,8 +17,8 @@ formae agent.
   `AWS::CloudFront::Distribution`. Live API Gateway resources and methods and
   CloudFront distributions now appear in inventory and can be brought under
   management. Method has no CloudControl list handler, so the plugin
-  enumerates methods via the API Gateway control plane, scoped by the parent
-  resource.
+  enumerates methods via the API Gateway control plane, scoped per REST API so
+  methods on the implicit root resource are discovered too.
 - S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
   `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
   buckets that block SSE-C round-trip through extract and reconcile instead of
