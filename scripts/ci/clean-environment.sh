@@ -756,6 +756,22 @@ aws rds describe-db-clusters --region "$REGION" \
                 aws rds delete-db-instance --db-instance-identifier "$member" --skip-final-snapshot --region "$REGION" 2>/dev/null || true
             fi
         done
+        # delete-db-instance returns as soon as the request is accepted, but a
+        # cluster whose members are still attached cannot be deleted — without
+        # this wait the delete below fails, the error is swallowed, and the
+        # cluster survives the sweep it exists to remove. Budget 600s: an Aurora
+        # instance delete usually takes 3-8 minutes, and this only runs when a
+        # leftover cluster is actually present.
+        waited=0
+        while [ $waited -lt 600 ]; do
+            members=$(aws rds describe-db-clusters --db-cluster-identifier "$cluster" --region "$REGION" \
+                --query "length(DBClusters[0].DBClusterMembers)" --output text 2>/dev/null || echo 0)
+            [[ -z "$members" || "$members" == "None" ]] && members=0
+            [ "$members" = "0" ] && break
+            echo "    Waiting for $members cluster member(s) to finish deleting..."
+            sleep 15
+            waited=$((waited + 15))
+        done
         aws rds modify-db-cluster --db-cluster-identifier "$cluster" --no-deletion-protection --apply-immediately --region "$REGION" 2>/dev/null || true
         aws rds delete-db-cluster --db-cluster-identifier "$cluster" --skip-final-snapshot --region "$REGION" 2>/dev/null || true
     fi
