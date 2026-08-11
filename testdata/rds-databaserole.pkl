@@ -93,6 +93,24 @@ local ownerPassword = new secret.Secret {
   }
 }
 
+// The rotation target. Declared here as well as in the update forma, though
+// the role does not use it until the update. The harness destroys using THIS
+// forma, so a secret that only the update declares would be left behind and
+// the destroy would abort with ResourceHasDependents. Base and update
+// therefore carry the same resource set, and only the fields under test
+// differ between them.
+local rotatedPassword = new secret.Secret {
+  label = "test-rotated-secret-for-dbrole"
+  name = "formae-sdk-test-dbr-pw2-\(testRunID)"
+  description = "Replacement generated password for the role under test"
+  generateSecretString = new secret.GenerateSecretString {
+    secretStringTemplate = "{\"username\":\"formae_approle\"}"
+    generateStringKey = "password"
+    passwordLength = 24
+    excludeCharacters = "\"@/\\'"
+  }
+}
+
 forma {
   new formae.Stack {
     label = stackName
@@ -113,6 +131,7 @@ forma {
   testCluster
   testInstance
   ownerPassword
+  rotatedPassword
 
   // Resource under test — last, a singleton, and a leaf.
   new databaserole.DatabaseRole {

@@ -102,6 +102,32 @@ local ownerRole = new databaserole.DatabaseRole {
   password = ownerPassword.res.secretValue.json("password")
 }
 
+// Declared here as well as in the update forma, though the database is not
+// owned by it until the update. The harness destroys using THIS forma, so a
+// resource that only the update declares would be left behind holding a
+// reference to the cluster, and the destroy would abort with
+// ResourceHasDependents. Base and update therefore carry the same resource
+// set, and only the field under test differs between them.
+local secondOwnerPassword = new secret.Secret {
+  label = "test-owner2-secret-for-database"
+  name = "formae-sdk-test-db-own2-\(testRunID)"
+  description = "Generated password for the replacement database owner role"
+  generateSecretString = new secret.GenerateSecretString {
+    secretStringTemplate = "{\"username\":\"formae_owner2\"}"
+    generateStringKey = "password"
+    passwordLength = 24
+    excludeCharacters = "\"@/\\'"
+  }
+}
+
+local secondOwnerRole = new databaserole.DatabaseRole {
+  label = "test-owner2-role-for-database"
+  clusterArn = testCluster.res.dbClusterArn
+  adminSecretArn = testCluster.res.masterUserSecretSecretArn
+  roleName = "formae_owner2"
+  password = secondOwnerPassword.res.secretValue.json("password")
+}
+
 forma {
   new formae.Stack {
     label = stackName
@@ -123,6 +149,8 @@ forma {
   testInstance
   ownerPassword
   ownerRole
+  secondOwnerPassword
+  secondOwnerRole
 
   // Resource under test — last, a singleton, and a leaf.
   new database.Database {
