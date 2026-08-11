@@ -12,6 +12,13 @@ formae agent.
 
 ### Added
 
+- Discovery for `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, and
+  `AWS::CloudFront::Distribution`, and extract for
+  `AWS::CloudFront::Distribution`. Live API Gateway resources and methods and
+  CloudFront distributions now appear in inventory and can be brought under
+  management. Method has no CloudControl list handler, so the plugin
+  enumerates methods via the API Gateway control plane, scoped by the parent
+  resource.
 - S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
   `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
   buckets that block SSE-C round-trip through extract and reconcile instead of
