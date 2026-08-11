@@ -117,15 +117,33 @@ func (d *Database) Create(ctx context.Context, request *resource.CreateRequest) 
 // createWithClient reports a recognised Data API fault through the result, so
 // the agent sees its error code and can retry a condition that clears on its
 // own — most often a cluster that is not serving statements yet.
+//
+// The error is logged before it is handed back: the agent reports a classified
+// failure by its error code alone, so the text diagnosing it reaches no log
+// otherwise.
 func (d *Database) createWithClient(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
 	result, err := d.create(ctx, client, clusters, request)
 	if err != nil {
+		clusterArn, databaseName := d.declaredIdentity(request.Properties)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to create database",
+			"cluster_arn", clusterArn, "database_name", databaseName, "error", logSafeError(err))
 		if progress, ok := dataAPIProgressFailure(resource.OperationCreate, "", err); ok {
 			return &resource.CreateResult{ProgressResult: progress}, nil
 		}
 		return nil, err
 	}
 	return result, nil
+}
+
+// declaredIdentity names the cluster and the database a request was for, for a
+// log line. A request the plugin could not parse names nothing, which is the
+// diagnosis rather than a reason to fail the log.
+func (d *Database) declaredIdentity(properties json.RawMessage) (clusterArn, databaseName string) {
+	settings, err := d.parseSettings(properties)
+	if err != nil {
+		return "", ""
+	}
+	return settings.clusterArn, settings.databaseName
 }
 
 func (d *Database) create(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
@@ -300,6 +318,9 @@ func (d *Database) Read(ctx context.Context, request *resource.ReadRequest) (*re
 func (d *Database) readWithClient(ctx context.Context, client dataAPIClient, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	result, err := d.read(ctx, client, request)
 	if err != nil {
+		clusterArn, databaseName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to read database",
+			"cluster_arn", clusterArn, "database_name", databaseName, "error", logSafeError(err))
 		if code, ok := recognizeDataAPIFault(err); ok {
 			return &resource.ReadResult{ResourceType: databaseType, ErrorCode: code}, nil
 		}
@@ -354,6 +375,9 @@ func (d *Database) Update(ctx context.Context, request *resource.UpdateRequest) 
 func (d *Database) updateWithClient(ctx context.Context, client dataAPIClient, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	result, err := d.update(ctx, client, request)
 	if err != nil {
+		clusterArn, databaseName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to update database",
+			"cluster_arn", clusterArn, "database_name", databaseName, "error", logSafeError(err))
 		if progress, ok := dataAPIProgressFailure(resource.OperationUpdate, request.NativeID, err); ok {
 			return &resource.UpdateResult{ProgressResult: progress}, nil
 		}
@@ -431,6 +455,9 @@ func (d *Database) Delete(ctx context.Context, request *resource.DeleteRequest) 
 func (d *Database) deleteWithClient(ctx context.Context, client dataAPIClient, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
 	result, err := d.delete(ctx, client, request)
 	if err != nil {
+		clusterArn, databaseName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to drop database",
+			"cluster_arn", clusterArn, "database_name", databaseName, "error", logSafeError(err))
 		if progress, ok := dataAPIProgressFailure(resource.OperationDelete, request.NativeID, err); ok {
 			return &resource.DeleteResult{ProgressResult: progress}, nil
 		}

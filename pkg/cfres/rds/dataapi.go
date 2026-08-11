@@ -201,6 +201,30 @@ func clusterServing(ctx context.Context, client dataAPIClient, clusterArn, secre
 	return true, "", nil
 }
 
+// verifierPattern matches a PostgreSQL SCRAM-SHA-256 verifier wherever one
+// appears in text, whether or not it is the verifier this process composed.
+var verifierPattern = regexp.MustCompile(`SCRAM-SHA-256\$[^\s"']*`)
+
+// logSafeError renders an error for a log line with verifier-shaped text
+// removed. secretSafeError already redacts the exact verifier a statement
+// carried, which is the one the engine quotes back; this is the floor
+// underneath it, so that nothing shaped like a verifier reaches a log whatever
+// produced it.
+func logSafeError(err error) string {
+	return verifierPattern.ReplaceAllString(err.Error(), "[redacted]")
+}
+
+// nativeIdentity names the cluster and the object a NativeID refers to, for a
+// log line. A NativeID the plugin cannot parse names nothing, which is the
+// diagnosis rather than a reason to fail the log.
+func nativeIdentity(nativeID string) (clusterArn, name string) {
+	clusterArn, _, name, err := parseNativeID(nativeID)
+	if err != nil {
+		return "", ""
+	}
+	return clusterArn, name
+}
+
 // unsupportedListError explains why listing is refused rather than returning an
 // empty page, which would read as "there are none".
 func unsupportedListError(resourceType string) error {

@@ -105,15 +105,34 @@ func (r *DatabaseRole) Create(ctx context.Context, request *resource.CreateReque
 // createWithClient reports a recognised Data API fault through the result, so
 // the agent sees its error code and can retry a condition that clears on its
 // own — most often a cluster that is not serving statements yet.
+//
+// The error is logged before it is handed back: the agent reports a classified
+// failure by its error code alone, so the text diagnosing it reaches no log
+// otherwise. Every error this package returns for a statement carrying secret
+// material has been through secretSafeError first.
 func (r *DatabaseRole) createWithClient(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
 	result, err := r.create(ctx, client, clusters, request)
 	if err != nil {
+		clusterArn, roleName := r.declaredIdentity(request.Properties)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to create database role",
+			"cluster_arn", clusterArn, "role_name", roleName, "error", logSafeError(err))
 		if progress, ok := dataAPIProgressFailure(resource.OperationCreate, "", err); ok {
 			return &resource.CreateResult{ProgressResult: progress}, nil
 		}
 		return nil, err
 	}
 	return result, nil
+}
+
+// declaredIdentity names the cluster and the role a request was for, for a log
+// line. A request the plugin could not parse names nothing, which is the
+// diagnosis rather than a reason to fail the log.
+func (r *DatabaseRole) declaredIdentity(properties json.RawMessage) (clusterArn, roleName string) {
+	settings, err := r.parseSettings(properties)
+	if err != nil {
+		return "", ""
+	}
+	return settings.clusterArn, settings.roleName
 }
 
 // roleCreateIntent is everything a create needs to bring a role to its declared
@@ -254,6 +273,9 @@ func (r *DatabaseRole) Read(ctx context.Context, request *resource.ReadRequest) 
 func (r *DatabaseRole) readWithClient(ctx context.Context, client dataAPIClient, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	result, err := r.read(ctx, client, request)
 	if err != nil {
+		clusterArn, roleName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to read database role",
+			"cluster_arn", clusterArn, "role_name", roleName, "error", logSafeError(err))
 		if code, ok := recognizeDataAPIFault(err); ok {
 			return &resource.ReadResult{ResourceType: databaseRoleType, ErrorCode: code}, nil
 		}
@@ -310,6 +332,9 @@ func (r *DatabaseRole) Update(ctx context.Context, request *resource.UpdateReque
 func (r *DatabaseRole) updateWithClient(ctx context.Context, client dataAPIClient, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	result, err := r.update(ctx, client, request)
 	if err != nil {
+		clusterArn, roleName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to update database role",
+			"cluster_arn", clusterArn, "role_name", roleName, "error", logSafeError(err))
 		if progress, ok := dataAPIProgressFailure(resource.OperationUpdate, request.NativeID, err); ok {
 			return &resource.UpdateResult{ProgressResult: progress}, nil
 		}
@@ -398,6 +423,9 @@ func (r *DatabaseRole) Delete(ctx context.Context, request *resource.DeleteReque
 func (r *DatabaseRole) deleteWithClient(ctx context.Context, client dataAPIClient, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
 	result, err := r.delete(ctx, client, request)
 	if err != nil {
+		clusterArn, roleName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to drop database role",
+			"cluster_arn", clusterArn, "role_name", roleName, "error", logSafeError(err))
 		if progress, ok := dataAPIProgressFailure(resource.OperationDelete, request.NativeID, err); ok {
 			return &resource.DeleteResult{ProgressResult: progress}, nil
 		}
