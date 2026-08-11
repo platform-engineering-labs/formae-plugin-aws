@@ -131,10 +131,6 @@ func (d *Database) createWithClient(ctx context.Context, client dataAPIClient, c
 	log.Info("rds: creating database",
 		"cluster_arn", settings.clusterArn, "database_name", settings.databaseName, "owner", settings.owner)
 
-	if err := ensureOwnerMembership(ctx, client, settings); err != nil {
-		return nil, err
-	}
-
 	nativeID := buildNativeID(settings.clusterArn, settings.secretArn, settings.databaseName)
 
 	owner, exists, err := lookupDatabaseOwner(ctx, client, settings.clusterArn, settings.secretArn, settings.databaseName)
@@ -143,6 +139,13 @@ func (d *Database) createWithClient(ctx context.Context, client dataAPIClient, c
 	}
 
 	if !exists {
+		// The membership grant is permanent, so it is only attempted once the
+		// catalog says the create is going ahead: a name collision must fail
+		// without leaving the admin added to the requested owner role.
+		if err := ensureOwnerMembership(ctx, client, settings); err != nil {
+			return nil, err
+		}
+
 		statement := fmt.Sprintf("CREATE DATABASE %s OWNER %s",
 			quoteIdentifier(settings.databaseName), quoteIdentifier(settings.owner))
 		if _, err := execute(ctx, client, settings.clusterArn, settings.secretArn, statement, nil); err != nil {
