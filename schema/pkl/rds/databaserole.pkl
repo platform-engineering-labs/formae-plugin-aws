@@ -1,0 +1,107 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+module aws.rds.databaserole
+
+import "../aws.pkl"
+import "@formae/formae.pkl"
+
+const type = "AWS::RDS::DatabaseRole"
+
+open class DatabaseRoleResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden clusterArn: DatabaseRoleResolvable = (this) {
+        property = "ClusterArn"
+    }
+
+    hidden roleName: DatabaseRoleResolvable = (this) {
+        property = "RoleName"
+    }
+}
+
+/// A PostgreSQL login role inside an Aurora cluster.
+///
+/// Provisioned over the RDS Data API, so the plugin needs no network path to the
+/// database — only IAM-authenticated HTTPS. Aurora PostgreSQL only.
+///
+/// The password never reaches the SQL text: the plugin composes the PostgreSQL
+/// SCRAM-SHA-256 verifier and sends that, so neither CloudTrail's `rds-data`
+/// events nor any statement logging sees the plaintext. Passwords must be
+/// printable ASCII (U+0020 to U+007E), the range PostgreSQL's SASLprep
+/// normalization passes through unchanged; Secrets Manager's generated passwords
+/// already satisfy this.
+///
+/// DESTRUCTIVE DELETE: destroying this resource runs `DROP ROLE`. PostgreSQL
+/// refuses while the role owns any object — including objects in databases formae
+/// does not manage — and that refusal is reported as an actionable error naming
+/// the role. There are no retain semantics.
+///
+/// The principal running the plugin needs `rds-data:ExecuteStatement` on the
+/// cluster, `secretsmanager:GetSecretValue` on the admin secret, and `kms:Decrypt`
+/// on its key when the secret uses a customer-managed key.
+@aws.ResourceHint {
+    type = module.type
+    identifier = "$.RoleName"
+    discoverable = false
+    parent = "AWS::RDS::DBCluster"
+    parentRefs = new formae.ParentRef {
+        parentProperty = "DBClusterArn"
+        childProperty = "ClusterArn"
+    }
+}
+open class DatabaseRole extends formae.Resource {
+    hidden parent = this
+
+    /// ARN of the Aurora PostgreSQL cluster the role lives in.
+    @aws.FieldHint {
+        createOnly = true
+        required = true
+    }
+    clusterArn: String|formae.Resolvable
+
+    /// ARN of a Secrets Manager secret holding admin credentials for the cluster,
+    /// in the standard RDS JSON format. Deliberately NOT createOnly: repointing a
+    /// credential must not destroy the role.
+    @aws.FieldHint {
+        required = true
+    }
+    adminSecretArn: String|formae.Resolvable
+
+    /// Name of the role. Renaming replaces the resource, which drops the original.
+    @aws.FieldHint {
+        createOnly = true
+        required = true
+    }
+    roleName: String
+
+    /// The role's password, typically taken from a Secrets Manager secret so
+    /// rotating the secret rotates the role. Hashed at rest and never returned by
+    /// any operation: PostgreSQL stores a salted verifier, so no drift can be
+    /// reported for it, and re-deriving it for comparison is impossible by
+    /// construction. An update therefore writes the password when the planned
+    /// change touches it, and also whenever the plan carries no usable signal —
+    /// missing a rotation would be a correctness bug, where writing the same
+    /// password again converges. Each write stores a freshly salted verifier, so
+    /// a redundant one is convergent rather than a no-op.
+    @aws.FieldHint {
+        required = true
+        writeOnly = true
+        opaque = true
+    }
+    password: (String|formae.Resolvable|formae.Value|formae.SecretValue)
+
+    /// Whether the role may log in. Defaulted rather than left implicit so it is
+    /// always compared, and an out-of-band `ALTER ROLE ... NOLOGIN` shows up as
+    /// drift instead of silently breaking the consumer.
+    @aws.FieldHint
+    canLogin: Boolean = true
+
+    hidden res: DatabaseRoleResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

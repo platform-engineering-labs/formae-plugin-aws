@@ -1,0 +1,140 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/ec2/subnet.pkl"
+import "@aws/rds/dbsubnetgroup.pkl"
+import "@aws/rds/dbcluster.pkl"
+import "@aws/rds/dbinstance.pkl"
+import "@aws/rds/databaserole.pkl"
+import "@aws/secretsmanager/secret.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-rds-databaserole-\(testRunID)"
+
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-dbrole"
+  cidrBlock = "10.232.0.0/16"
+  enableDnsSupport = true
+}
+
+// Two subnets in different AZs required for the DB Subnet Group
+local testSubnet1 = new subnet.Subnet {
+  label = "test-subnet-1-for-dbrole"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.1.0/24"
+  availabilityZone = "us-east-1a"
+}
+
+local testSubnet2 = new subnet.Subnet {
+  label = "test-subnet-2-for-dbrole"
+  vpcId = testVpc.res.vpcId
+  cidrBlock = "10.232.2.0/24"
+  availabilityZone = "us-east-1b"
+}
+
+local testSubnetGroup = new dbsubnetgroup.DBSubnetGroup {
+  label = "test-dbsg-for-dbrole"
+  dbSubnetGroupName = "formae-sdk-test-dbr-sg-\(testRunID)"
+  dbSubnetGroupDescription = "DB subnet group for the Aurora database role test"
+  subnetIds {
+    testSubnet1.res.subnetId
+    testSubnet2.res.subnetId
+  }
+}
+
+// Aurora Serverless v2 with the Data API enabled. The master password is
+// RDS-managed, so its secret is already in the JSON format the Data API expects
+// and no password is authored in this repo.
+local testCluster = new dbcluster.DBCluster {
+  label = "test-cluster-for-dbrole"
+  dbClusterIdentifier = "formae-sdk-test-dbr-cl-\(testRunID)"
+  engine = "aurora-postgresql"
+  engineVersion = "16.14"
+  masterUsername = "formaeadmin"
+  manageMasterUserPassword = true
+  dbSubnetGroupName = testSubnetGroup.res.dbSubnetGroupName
+  enableHttpEndpoint = true
+  backupRetentionPeriod = 1
+  deletionProtection = false
+  // A floor above zero keeps the cluster from auto-pausing mid-test.
+  serverlessV2ScalingConfiguration = new dbcluster.ServerlessV2ScalingConfiguration {
+    minCapacity = 0.5
+    maxCapacity = 2
+  }
+}
+
+local testInstance = new dbinstance.DBInstance {
+  label = "test-instance-for-dbrole"
+  dbInstanceIdentifier = "formae-sdk-test-dbr-wr-\(testRunID)"
+  dbInstanceClass = "db.serverless"
+  engine = "aurora-postgresql"
+  dbClusterIdentifier = testCluster.res.dbClusterIdentifier
+  publiclyAccessible = false
+}
+
+local ownerPassword = new secret.Secret {
+  label = "test-owner-secret-for-dbrole"
+  name = "formae-sdk-test-dbr-pw-\(testRunID)"
+  description = "Generated password for the role under test"
+  generateSecretString = new secret.GenerateSecretString {
+    secretStringTemplate = "{\"username\":\"formae_owner\"}"
+    generateStringKey = "password"
+    passwordLength = 24
+    excludeCharacters = "\"@/\\'"
+  }
+}
+
+// A second generated secret, so the update exercises a real password rotation.
+local rotatedPassword = new secret.Secret {
+  label = "test-rotated-secret-for-dbrole"
+  name = "formae-sdk-test-dbr-pw2-\(testRunID)"
+  description = "Replacement generated password for the role under test"
+  generateSecretString = new secret.GenerateSecretString {
+    secretStringTemplate = "{\"username\":\"formae_approle\"}"
+    generateStringKey = "password"
+    passwordLength = 24
+    excludeCharacters = "\"@/\\'"
+  }
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for the Aurora RDS DatabaseRole resource"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  testSubnet1
+  testSubnet2
+  testSubnetGroup
+  testCluster
+  testInstance
+  ownerPassword
+  rotatedPassword
+
+  // Resource under test — last, a singleton, and a leaf.
+  new databaserole.DatabaseRole {
+    label = "plugin-sdk-test-databaserole"
+    clusterArn = testCluster.res.dbClusterArn
+    adminSecretArn = testCluster.res.masterUserSecretSecretArn
+    roleName = "formae_approle"
+    password = rotatedPassword.res.secretValue.json("password")
+    canLogin = false
+  }
+}

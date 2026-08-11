@@ -17,6 +17,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.12
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.8
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.0
+	github.com/aws/aws-sdk-go-v2/service/rds v1.108.0
+	github.com/aws/aws-sdk-go-v2/service/rdsdata v1.32.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.62.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.1
 	github.com/aws/aws-sdk-go-v2/service/s3control v1.68.1
@@ -30,7 +32,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.26
 	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.1
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260807190231-e53140dcb057
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630
 	github.com/stretchr/testify v1.11.1
 )
 
