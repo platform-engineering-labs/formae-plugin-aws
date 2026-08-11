@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/rdsdata"
 	rdsdatatypes "github.com/aws/aws-sdk-go-v2/service/rdsdata/types"
 
@@ -94,16 +95,23 @@ func (r *DatabaseRole) parseSettings(properties json.RawMessage) (*roleSettings,
 }
 
 func (r *DatabaseRole) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	client, err := r.newClient(ctx)
+	cfg, err := r.cfg.ToAwsConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load AWS config: %w", err)
+	}
+	return r.createWithClient(ctx, rdsdata.NewFromConfig(cfg), rds.NewFromConfig(cfg), request)
+}
+
+func (r *DatabaseRole) createWithClient(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
+	settings, err := r.parseSettings(request.Properties)
 	if err != nil {
 		return nil, err
 	}
-	return r.createWithClient(ctx, client, request)
-}
 
-func (r *DatabaseRole) createWithClient(ctx context.Context, client dataAPIClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	settings, err := r.parseSettings(request.Properties)
-	if err != nil {
+	// One describe at the point where a clear diagnosis is worth most, matching
+	// the database resource: an unsupported engine is named here rather than
+	// reaching the engine as a catalog query it cannot answer.
+	if err := preflightCluster(ctx, clusters, settings.clusterArn); err != nil {
 		return nil, err
 	}
 

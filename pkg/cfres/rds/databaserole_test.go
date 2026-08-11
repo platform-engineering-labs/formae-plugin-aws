@@ -14,6 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/aws-sdk-go-v2/service/rdsdata"
 	rdsdatatypes "github.com/aws/aws-sdk-go-v2/service/rdsdata/types"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -78,7 +81,7 @@ func TestDatabaseRoleCreateIssuesCreateRoleWhenAbsent(t *testing.T) {
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(existingRoleCatalog(t, true), nil).Once()
 
-	result, err := testRole().createWithClient(context.Background(), client,
+	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
 		&resource.CreateRequest{Properties: roleProps(t, nil)})
 	require.NoError(t, err)
 
@@ -109,7 +112,7 @@ func TestDatabaseRoleCreateAdoptsAnExistingRole(t *testing.T) {
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(existingRoleCatalog(t, true), nil).Once()
 
-	result, err := testRole().createWithClient(context.Background(), client,
+	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
 		&resource.CreateRequest{Properties: roleProps(t, nil)})
 	require.NoError(t, err)
 
@@ -137,7 +140,7 @@ func TestDatabaseRoleCreateAdoptsARacedRole(t *testing.T) {
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(existingRoleCatalog(t, true), nil).Once()
 
-	result, err := testRole().createWithClient(context.Background(), client,
+	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
 		&resource.CreateRequest{Properties: roleProps(t, nil)})
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
@@ -162,11 +165,46 @@ func TestDatabaseRoleCreateValidatesBeforeReachingTheWire(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &mockDataAPIClient{}
-			_, err := testRole().createWithClient(context.Background(), client,
+			_, err := testRole().createWithClient(context.Background(), client, aurora(t),
 				&resource.CreateRequest{Properties: roleProps(t, tt.overrides)})
 			require.Error(t, err)
 			assert.Contains(t, strings.ToLower(err.Error()), strings.ToLower(tt.wantErr))
 			assert.Empty(t, client.statements, "nothing may reach the wire once validation fails")
+		})
+	}
+}
+
+// The role is as Aurora-PostgreSQL-only as the database is, so an unsupported
+// engine must be named outright rather than surfacing as a stray SQL error from
+// a catalog query no MySQL cluster can answer.
+func TestDatabaseRoleCreateRejectsANonAuroraPostgresCluster(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		cluster rdstypes.DBCluster
+		wantErr string
+	}{
+		{
+			name:    "wrong engine",
+			cluster: rdstypes.DBCluster{Engine: aws.String("aurora-mysql"), HttpEndpointEnabled: aws.Bool(true)},
+			wantErr: "aurora-postgresql",
+		},
+		{
+			name:    "data api disabled",
+			cluster: rdstypes.DBCluster{Engine: aws.String("aurora-postgresql"), HttpEndpointEnabled: aws.Bool(false)},
+			wantErr: "Data API",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clusters := &mockRDSClusterClient{}
+			clusters.On("DescribeDBClusters", mock.Anything, mock.Anything).
+				Return(&rds.DescribeDBClustersOutput{DBClusters: []rdstypes.DBCluster{tt.cluster}}, nil)
+
+			client := &mockDataAPIClient{}
+			_, err := testRole().createWithClient(context.Background(), client, clusters,
+				&resource.CreateRequest{Properties: roleProps(t, nil)})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Empty(t, client.statements, "the preflight must fail before any statement is sent")
 		})
 	}
 }
@@ -362,7 +400,7 @@ func TestDatabaseRoleNeverLeaksPasswordOrVerifier(t *testing.T) {
 			Message: strPtr(`ERROR: syntax error at or near "SCRAM-SHA-256$4096:AAAA$BBBB:CCCC"`),
 		}).Once()
 
-	_, err := testRole().createWithClient(ctx, client,
+	_, err := testRole().createWithClient(ctx, client, aurora(t),
 		&resource.CreateRequest{Properties: roleProps(t, nil)})
 	require.Error(t, err)
 
