@@ -369,8 +369,8 @@ func (r *DatabaseRole) update(ctx context.Context, client dataAPIClient, request
 					OperationStatus: resource.OperationStatusFailure,
 					NativeID:        request.NativeID,
 					ErrorCode:       code,
-					StatusMessage: fmt.Sprintf("the replacement admin secret %q could not be used to reach the cluster: %v",
-						desired.secretArn, err),
+					StatusMessage: fmt.Sprintf("the replacement admin secret %q could not be used to reach the cluster: %s",
+						desired.secretArn, logSafeError(err)),
 				},
 			}, nil
 		}
@@ -479,7 +479,14 @@ func (r *DatabaseRole) Status(ctx context.Context, request *resource.StatusReque
 }
 
 func (r *DatabaseRole) statusWithClient(ctx context.Context, client dataAPIClient, request *resource.StatusRequest) (*resource.StatusResult, error) {
-	return resumeCreate(ctx, client, pendingRoles, request, r.ensureRole)
+	result, err := resumeCreate(ctx, client, pendingRoles, request, r.ensureRole)
+	if err != nil {
+		clusterArn, roleName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to finish creating database role",
+			"cluster_arn", clusterArn, "role_name", roleName, "error", logSafeError(err))
+		return nil, err
+	}
+	return result, nil
 }
 
 // List is registered so an unsupported listing fails loudly here rather than

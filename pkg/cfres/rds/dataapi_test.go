@@ -270,6 +270,33 @@ func TestSQLStatePredicatesIgnoreUnrelatedErrors(t *testing.T) {
 	assert.False(t, isUndefinedObjectError(errors.New("boom")))
 }
 
+// Redaction must not cost the fault its identity: the classifier keys on the
+// typed exception, so an error whose chain was severed by the redaction stops
+// being recognised and a condition that clears on its own turns terminal.
+func TestSecretSafeErrorRedactsWithoutHidingTheFault(t *testing.T) {
+	cause := &rdsdatatypes.DatabaseUnavailableException{
+		Message: strPtr(`ERROR: near "SCRAM-SHA-256$4096:AAAA$BBBB:CCCC"`),
+	}
+	err := secretSafeError(cause, "failed to create role %q", "appuser", "SCRAM-SHA-256$4096:AAAA$BBBB:CCCC")
+
+	assert.NotContains(t, err.Error(), "AAAA$BBBB")
+	assert.Contains(t, err.Error(), "appuser")
+
+	code, ok := recognizeDataAPIFault(err)
+	require.True(t, ok, "the redacted error must still be recognisable as the fault it wraps")
+	assert.Equal(t, resource.OperationErrorCodeNotStabilized, code)
+}
+
+func TestLogSafeErrorStripsVerifierShapedText(t *testing.T) {
+	for _, message := range []string{
+		`ERROR: near "SCRAM-SHA-256$4096:AAAA$BBBB:CCCC"`,
+		`ERROR: near 'scram-sha-256$4096:aaaa$bbbb:cccc'`,
+	} {
+		scrubbed := logSafeError(errors.New(message))
+		assert.NotContains(t, strings.ToLower(scrubbed), "scram-sha-256$", "got: %s", scrubbed)
+	}
+}
+
 func TestExecuteSendsStatementAgainstTheAdminDatabase(t *testing.T) {
 	client := &mockDataAPIClient{}
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).

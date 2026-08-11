@@ -400,14 +400,20 @@ func TestDatabaseRoleNeverLeaksPasswordOrVerifier(t *testing.T) {
 			Message: strPtr(`ERROR: syntax error at or near "SCRAM-SHA-256$4096:AAAA$BBBB:CCCC"`),
 		}).Once()
 
-	_, err := testRole().createWithClient(ctx, client, aurora(t),
+	result, err := testRole().createWithClient(ctx, client, aurora(t),
 		&resource.CreateRequest{Properties: roleProps(t, nil)})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, result)
 
 	verifier := extractVerifier(t, client.statements)
+	// The engine quoted back a verifier this run did not compose, so it cannot
+	// be redacted by value: nothing verifier-shaped may survive into what the
+	// agent is handed, or into a log line.
+	reported := result.ProgressResult.StatusMessage
 
-	assert.NotContains(t, err.Error(), testPassword)
-	assert.NotContains(t, err.Error(), verifier)
+	assert.NotContains(t, reported, testPassword)
+	assert.NotContains(t, reported, verifier)
+	assert.NotContains(t, reported, "SCRAM-SHA-256$")
 	assert.NotContains(t, logged.String(), testPassword)
 	assert.NotContains(t, logged.String(), verifier)
 	assert.NotContains(t, logged.String(), "SCRAM-SHA-256$",

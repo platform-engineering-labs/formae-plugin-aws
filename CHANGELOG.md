@@ -69,7 +69,9 @@ formae agent.
   forma therefore works, instead of exhausting the retry budget minutes short of
   the cluster being ready. The wait is bounded — a create still waiting after
   fifteen minutes fails, naming the cluster — and no statement that changes
-  anything is sent until the cluster answers. Other conditions that clear on
+  anything is sent until the cluster answers. A wait interrupted by the plugin
+  restarting fails and asks for the apply to be run again, rather than reporting
+  a create that never ran. Other conditions that clear on
   their own (an endpoint still coming up, a resuming or unavailable database, a
   service fault or timeout) are reported to the agent as recoverable on every
   operation, so it retries them instead of failing the resource. Faults that

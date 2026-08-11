@@ -27,9 +27,10 @@ import (
 // the agent, while a SCRAM verifier is offline-attackable material. The intent
 // is therefore parked in this process-local store, keyed by NativeID.
 //
-// The store lives and dies with the plugin process. A poll that finds no parked
-// intent reports a recoverable failure so the agent drives the create again,
-// rather than reporting success for a create that never ran.
+// The store lives and dies with the plugin process, and so does the operator
+// that could re-issue the create. A poll that finds no parked intent therefore
+// fails the create outright: nothing left running can re-drive it, and reporting
+// success would report a create that never ran.
 
 // pendingCreateTimeout bounds the wait for a cluster to start serving. An
 // Aurora cluster takes around six minutes from available to serving; the rest is
@@ -39,16 +40,21 @@ const pendingCreateTimeout = 15 * time.Minute
 // pendingNow is the clock the wait is measured against.
 var pendingNow = time.Now
 
-// pendingEntry is one create waiting for its cluster.
+// pendingEntry is one create waiting for its cluster. The sequence identifies
+// this parking of this NativeID, so a poll can only end the wait it was
+// answering — a stale poll must not throw away an intent a newer create parked
+// under the same name.
 type pendingEntry[T any] struct {
 	intent   T
 	deadline time.Time
+	sequence uint64
 }
 
 // pendingStore holds the intents of deferred creates, keyed by NativeID.
 type pendingStore[T any] struct {
-	mu      sync.Mutex
-	entries map[string]pendingEntry[T]
+	mu       sync.Mutex
+	entries  map[string]pendingEntry[T]
+	sequence uint64
 }
 
 func newPendingStore[T any]() *pendingStore[T] {
@@ -61,12 +67,28 @@ var (
 )
 
 // park records an intent for a later poll to finish, bounding its wait.
+//
+// An abandoned create — a cancelled changeset, a dependency that failed — is
+// never polled again, so its deadline is never reached by a poll. Parking is
+// therefore where expired intents are dropped, rather than holding a verifier
+// for the life of the process.
 func (s *pendingStore[T]) park(nativeID string, intent T) {
+	now := pendingNow()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	for key, entry := range s.entries {
+		if now.After(entry.deadline) {
+			delete(s.entries, key)
+		}
+	}
+
+	s.sequence++
 	s.entries[nativeID] = pendingEntry[T]{
 		intent:   intent,
-		deadline: pendingNow().Add(pendingCreateTimeout),
+		deadline: now.Add(pendingCreateTimeout),
+		sequence: s.sequence,
 	}
 }
 
@@ -79,12 +101,16 @@ func (s *pendingStore[T]) peek(nativeID string) (pendingEntry[T], bool) {
 	return entry, ok
 }
 
-// release ends a wait. Every terminal outcome goes through it — a finished
-// create, a fault that will not clear, an expired deadline.
-func (s *pendingStore[T]) release(nativeID string) {
+// release ends the wait the sequence identifies. A terminal outcome goes
+// through it — a finished create, a fault that will not clear, an expired
+// deadline — and a poll answering a wait that has already been replaced ends
+// nothing.
+func (s *pendingStore[T]) release(nativeID string, sequence uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.entries, nativeID)
+	if entry, ok := s.entries[nativeID]; ok && entry.sequence == sequence {
+		delete(s.entries, nativeID)
+	}
 }
 
 // deferCreate parks an intent and reports the create as still running.
@@ -115,39 +141,59 @@ func resumeCreate[T any](
 
 	entry, parked := store.peek(request.NativeID)
 	if !parked {
+		// The intent is gone, so this process cannot finish the create — it no
+		// longer knows what it was asked to build. The failure is deliberately
+		// not recoverable: the only path that reaches here is a plugin that
+		// restarted mid-wait, which also took with it the operator holding the
+		// original request, so a retry can only schedule another poll of a
+		// process that will never have the intent. Reporting success would be
+		// worse still — it would report a create that never ran.
 		return pollResult(request, &resource.ProgressResult{
 			Operation:       resource.OperationCreate,
 			OperationStatus: resource.OperationStatusFailure,
 			NativeID:        request.NativeID,
-			ErrorCode:       resource.OperationErrorCodeNotStabilized,
-			StatusMessage:   "no create is waiting on this resource in this plugin process; the create has to be issued again",
+			ErrorCode:       resource.OperationErrorCodeGeneralServiceException,
+			StatusMessage:   "the create was interrupted before the cluster started serving statements and cannot be resumed; apply again to create the resource",
 		}), nil
-	}
-
-	if pendingNow().After(entry.deadline) {
-		store.release(request.NativeID)
-		return nil, fmt.Errorf("cluster %q did not start serving statements within %s of the create", clusterArn, pendingCreateTimeout)
 	}
 
 	ready, code, err := clusterServing(ctx, client, clusterArn, secretArn)
 	switch {
 	case ready:
-	case resource.IsRecoverable(code):
+	case code == "" || resource.IsRecoverable(code):
+		// An unrecognised failure is not evidence the cluster will never serve:
+		// the Data API raises no throttling exception, so a throttle, a reset
+		// connection or an expired call deadline all arrive unclassified. The
+		// deadline is what bounds this wait, not one failed probe.
+		//
+		// The cluster is probed before the deadline is given up on, so one that
+		// starts serving on the boundary still finishes.
+		if pendingNow().After(entry.deadline) {
+			store.release(request.NativeID, entry.sequence)
+			return nil, fmt.Errorf("cluster %q did not start serving statements within %s of the create: %w",
+				clusterArn, pendingCreateTimeout, err)
+		}
 		return pollResult(request, &resource.ProgressResult{
 			Operation:       resource.OperationCreate,
 			OperationStatus: resource.OperationStatusInProgress,
 			NativeID:        request.NativeID,
 		}), nil
 	default:
-		store.release(request.NativeID)
+		store.release(request.NativeID, entry.sequence)
 		return pollFailure(request, err)
 	}
 
 	progress, err := ensure(ctx, client, entry.intent)
-	store.release(request.NativeID)
 	if err != nil {
+		// A fault that clears on its own — a failover between the probe and the
+		// statement — leaves the intent parked, so whichever call comes next can
+		// finish the create rather than find nothing to do.
+		if faultCode, recognised := recognizeDataAPIFault(err); !recognised || !resource.IsRecoverable(faultCode) {
+			store.release(request.NativeID, entry.sequence)
+		}
 		return pollFailure(request, err)
 	}
+	store.release(request.NativeID, entry.sequence)
 	return pollResult(request, progress), nil
 }
 

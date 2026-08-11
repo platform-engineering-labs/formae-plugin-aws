@@ -61,6 +61,28 @@ func TestRecognizeDataAPIFaultIgnoresUnrelatedErrors(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// The readiness probe absorbs a cluster that cannot serve yet, so a recoverable
+// fault raised by the DDL itself — a failover between the probe and the create
+// — is the remaining way a create meets one. The redaction the statement's
+// secrets go through must not cost the agent that classification.
+func TestDatabaseRoleCreateReportsARecoverableFaultRaisedByTheDDL(t *testing.T) {
+	client := &mockDataAPIClient{}
+	servingProbe(client)
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(emptyRoleCatalog(t), nil).Once()
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(nil, &rdsdatatypes.DatabaseUnavailableException{Message: strPtr("the database is unavailable")}).Once()
+
+	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
+		&resource.CreateRequest{Properties: roleProps(t, nil)})
+
+	require.NoError(t, err, "a fault that clears on its own must reach the agent as a code, not as an error")
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeNotStabilized, result.ProgressResult.ErrorCode)
+	assert.True(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
+}
+
 func TestDatabaseRoleReadReportsARecoverableClusterFaultToTheAgent(t *testing.T) {
 	client := &mockDataAPIClient{}
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -149,23 +171,20 @@ func TestClassifiedFailureNeverLeaksPasswordOrVerifier(t *testing.T) {
 	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
 		&resource.CreateRequest{Properties: roleProps(t, nil)})
 
-	var reported string
-	if err != nil {
-		reported = err.Error()
-	} else {
-		require.NotNil(t, result)
-		reported = result.ProgressResult.StatusMessage
-		var props map[string]any
-		if len(result.ProgressResult.ResourceProperties) > 0 {
-			require.NoError(t, json.Unmarshal(result.ProgressResult.ResourceProperties, &props))
-			assert.NotContains(t, props, "Password")
-		}
-	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeInvalidRequest, result.ProgressResult.ErrorCode)
 
+	reported := result.ProgressResult.StatusMessage
 	assert.NotContains(t, reported, testPassword, "the plaintext password must never be reported")
-	verifier := extractVerifier(t, client.statements)
-	if verifier != "" {
-		assert.NotContains(t, reported, verifier, "the verifier must never be reported")
+	assert.NotContains(t, reported, extractVerifier(t, client.statements),
+		"the verifier must never be reported")
+
+	var props map[string]any
+	if len(result.ProgressResult.ResourceProperties) > 0 {
+		require.NoError(t, json.Unmarshal(result.ProgressResult.ResourceProperties, &props))
+		assert.NotContains(t, props, "Password")
 	}
 }
 

@@ -9,6 +9,7 @@ package rds
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -38,8 +39,12 @@ func stashClock(t *testing.T) *time.Time {
 func forgetPending(t *testing.T, nativeID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		pendingDatabases.release(nativeID)
-		pendingRoles.release(nativeID)
+		if entry, parked := pendingDatabases.peek(nativeID); parked {
+			pendingDatabases.release(nativeID, entry.sequence)
+		}
+		if entry, parked := pendingRoles.peek(nativeID); parked {
+			pendingRoles.release(nativeID, entry.sequence)
+		}
 	})
 }
 
@@ -196,10 +201,90 @@ func TestDatabaseRoleStatusCreatesTheRoleOnceTheClusterServes(t *testing.T) {
 	assert.False(t, parked, "a finished create must not stay parked")
 }
 
+// The Data API raises no throttling exception, so a throttle — like a reset
+// connection or an expired call deadline — reaches the probe unrecognised. That
+// is not evidence the cluster will never serve, and ending the wait on it would
+// fail exactly the create the wait exists to protect.
+func TestStatusKeepsWaitingWhenTheProbeFailsUnrecognisably(t *testing.T) {
+	nativeID := buildNativeID(testClusterArn, testSecretArn, "appdb")
+	forgetPending(t, nativeID)
+
+	_, err := testDatabase().createWithClient(context.Background(), notServing(), aurora(t),
+		&resource.CreateRequest{Properties: databaseProps(t, nil)})
+	require.NoError(t, err)
+
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(nil, errors.New("connection reset by peer")).Once()
+
+	result, err := testDatabase().statusWithClient(context.Background(), client,
+		&resource.StatusRequest{NativeID: nativeID})
+	require.NoError(t, err)
+
+	assert.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+	_, parked := pendingDatabases.peek(nativeID)
+	assert.True(t, parked, "an unrecognised probe failure must not end the wait")
+}
+
+// A recoverable fault raised while the create is being finished — a failover
+// mid-DDL — leaves the intent parked, so the poll that follows can finish the
+// create instead of finding nothing to do.
+func TestARecoverableFaultWhileFinishingLeavesTheCreateParked(t *testing.T) {
+	nativeID := buildNativeID(testClusterArn, testSecretArn, "appdb")
+	forgetPending(t, nativeID)
+
+	_, err := testDatabase().createWithClient(context.Background(), notServing(), aurora(t),
+		&resource.CreateRequest{Properties: databaseProps(t, nil)})
+	require.NoError(t, err)
+
+	client := &mockDataAPIClient{}
+	servingProbe(client)
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(nil, &rdsdatatypes.DatabaseUnavailableException{Message: strPtr("the database is unavailable")}).Once()
+
+	result, err := testDatabase().statusWithClient(context.Background(), client,
+		&resource.StatusRequest{NativeID: nativeID})
+	require.NoError(t, err)
+
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeNotStabilized, result.ProgressResult.ErrorCode)
+	_, parked := pendingDatabases.peek(nativeID)
+	assert.True(t, parked, "a fault that clears on its own must not throw the intent away")
+}
+
+// An abandoned create — a cancelled changeset, a dependency that failed — is
+// never polled again, so its deadline is never reached by a poll. Parking is
+// where the expired ones are dropped, so nothing holds a verifier for the life
+// of the process.
+func TestParkingDropsIntentsWhoseWaitHasRunOut(t *testing.T) {
+	abandoned := buildNativeID(testClusterArn, testSecretArn, "olddb")
+	fresh := buildNativeID(testClusterArn, testSecretArn, "appdb")
+	forgetPending(t, abandoned)
+	forgetPending(t, fresh)
+	clock := stashClock(t)
+
+	_, err := testDatabase().createWithClient(context.Background(), notServing(), aurora(t),
+		&resource.CreateRequest{Properties: databaseProps(t, map[string]any{"DatabaseName": "olddb"})})
+	require.NoError(t, err)
+
+	*clock = clock.Add(pendingCreateTimeout + time.Minute)
+
+	_, err = testDatabase().createWithClient(context.Background(), notServing(), aurora(t),
+		&resource.CreateRequest{Properties: databaseProps(t, nil)})
+	require.NoError(t, err)
+
+	_, parked := pendingDatabases.peek(abandoned)
+	assert.False(t, parked, "an expired intent must not outlive the wait it belongs to")
+	_, parked = pendingDatabases.peek(fresh)
+	assert.True(t, parked)
+}
+
 // A plugin process that restarted mid-wait no longer knows what it was asked to
-// build. Reporting success would report a create that never ran, so the wait
-// ends in a recoverable failure and the agent drives the create again.
-func TestStatusWithNoParkedCreateAsksForTheCreateAgain(t *testing.T) {
+// build, and the poll is all that survives: the operator that could re-drive the
+// create died with the process, so a recoverable failure here would poll a
+// plugin that can never answer. The create is failed instead, and the apply is
+// run again.
+func TestStatusWithNoParkedCreateFailsTerminally(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		object string
@@ -215,8 +300,10 @@ func TestStatusWithNoParkedCreateAsksForTheCreateAgain(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
-			assert.Equal(t, resource.OperationErrorCodeNotStabilized, result.ProgressResult.ErrorCode)
-			assert.True(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
+			assert.Equal(t, resource.OperationErrorCodeGeneralServiceException, result.ProgressResult.ErrorCode)
+			assert.False(t, resource.IsRecoverable(result.ProgressResult.ErrorCode),
+				"a retry would poll a plugin that cannot know what to build, forever")
+			assert.NotEmpty(t, result.ProgressResult.StatusMessage)
 			assert.Empty(t, client.statements, "nothing may reach the wire without a parked create")
 		})
 	}
@@ -233,12 +320,14 @@ func TestStatusFailsTerminallyOnceTheWaitRunsOut(t *testing.T) {
 
 	*clock = clock.Add(pendingCreateTimeout + time.Minute)
 
-	client := &mockDataAPIClient{}
+	// The cluster is probed before the wait is given up on, so one that starts
+	// serving on the boundary still finishes rather than being failed anyway.
+	client := notServing()
 	_, err = testDatabase().statusWithClient(context.Background(), client,
 		&resource.StatusRequest{NativeID: nativeID})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), testClusterArn)
-	assert.Empty(t, client.statements, "an expired wait is decided without another call")
+	assert.Equal(t, []string{"SELECT 1"}, client.statements)
 
 	_, parked := pendingDatabases.peek(nativeID)
 	assert.False(t, parked, "an expired wait must not stay parked")

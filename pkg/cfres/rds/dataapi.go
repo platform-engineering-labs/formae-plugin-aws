@@ -172,6 +172,21 @@ func boolProperty(props map[string]any, key string, fallback bool) bool {
 	return value
 }
 
+// redactedError carries a redacted message over an intact cause. The message is
+// what any caller reads; the cause stays reachable through errors.As, which is
+// what the fault classifier keys on.
+type redactedError struct {
+	message string
+	cause   error
+}
+
+func (e *redactedError) Error() string { return e.message }
+
+// Unwrap keeps the typed exception underneath reachable. Formatting the cause
+// into the message instead would sever the chain, and a fault the classifier can
+// no longer recognise is reported as terminal however transient it is.
+func (e *redactedError) Unwrap() error { return e.cause }
+
 // secretSafeError wraps an engine failure for a statement that carried secret
 // material. PostgreSQL quotes the offending statement back in some errors, so
 // the password and the verifier are redacted out of the message before it is
@@ -185,7 +200,10 @@ func secretSafeError(err error, format string, name string, secrets ...string) e
 		}
 		message = strings.ReplaceAll(message, secret, "[redacted]")
 	}
-	return fmt.Errorf(format+": %s", name, message)
+	return &redactedError{
+		message: fmt.Sprintf(format+": %s", name, message),
+		cause:   err,
+	}
 }
 
 // clusterServing reports whether the cluster can run a statement right now. A
@@ -203,12 +221,12 @@ func clusterServing(ctx context.Context, client dataAPIClient, clusterArn, secre
 
 // verifierPattern matches a PostgreSQL SCRAM-SHA-256 verifier wherever one
 // appears in text, whether or not it is the verifier this process composed.
-var verifierPattern = regexp.MustCompile(`SCRAM-SHA-256\$[^\s"']*`)
+var verifierPattern = regexp.MustCompile(`(?i)SCRAM-SHA-256\$[^\s"']*`)
 
-// logSafeError renders an error for a log line with verifier-shaped text
-// removed. secretSafeError already redacts the exact verifier a statement
-// carried, which is the one the engine quotes back; this is the floor
-// underneath it, so that nothing shaped like a verifier reaches a log whatever
+// logSafeError renders an error with verifier-shaped text removed.
+// secretSafeError already redacts the exact verifier a statement carried, which
+// is the one the engine quotes back; this is the floor underneath it, so that
+// nothing shaped like a verifier reaches a log line or the agent whatever
 // produced it.
 func logSafeError(err error) string {
 	return verifierPattern.ReplaceAllString(err.Error(), "[redacted]")
@@ -347,7 +365,7 @@ func dataAPIProgressFailure(op resource.Operation, nativeID string, err error) (
 		OperationStatus: resource.OperationStatusFailure,
 		NativeID:        nativeID,
 		ErrorCode:       code,
-		StatusMessage:   err.Error(),
+		StatusMessage:   logSafeError(err),
 	}, true
 }
 

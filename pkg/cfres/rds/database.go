@@ -409,8 +409,8 @@ func (d *Database) update(ctx context.Context, client dataAPIClient, request *re
 					OperationStatus: resource.OperationStatusFailure,
 					NativeID:        request.NativeID,
 					ErrorCode:       code,
-					StatusMessage: fmt.Sprintf("the replacement admin secret %q could not be used to reach the cluster: %v",
-						desired.secretArn, err),
+					StatusMessage: fmt.Sprintf("the replacement admin secret %q could not be used to reach the cluster: %s",
+						desired.secretArn, logSafeError(err)),
 				},
 			}, nil
 		}
@@ -521,7 +521,14 @@ func (d *Database) Status(ctx context.Context, request *resource.StatusRequest) 
 }
 
 func (d *Database) statusWithClient(ctx context.Context, client dataAPIClient, request *resource.StatusRequest) (*resource.StatusResult, error) {
-	return resumeCreate(ctx, client, pendingDatabases, request, d.ensureDatabase)
+	result, err := resumeCreate(ctx, client, pendingDatabases, request, d.ensureDatabase)
+	if err != nil {
+		clusterArn, databaseName := nativeIdentity(request.NativeID)
+		plugin.LoggerFromContext(ctx).Error("rds: failed to finish creating database",
+			"cluster_arn", clusterArn, "database_name", databaseName, "error", logSafeError(err))
+		return nil, err
+	}
+	return result, nil
 }
 
 // List is registered so an unsupported listing fails loudly here rather than
