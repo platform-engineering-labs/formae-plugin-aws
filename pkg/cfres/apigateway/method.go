@@ -120,7 +120,7 @@ func (m *Method) Status(ctx context.Context, request *resource.StatusRequest) (*
 }
 
 type apiGatewayMethodClientInterface interface {
-	GetResource(ctx context.Context, params *apigateway.GetResourceInput, optFns ...func(*apigateway.Options)) (*apigateway.GetResourceOutput, error)
+	GetResources(ctx context.Context, params *apigateway.GetResourcesInput, optFns ...func(*apigateway.Options)) (*apigateway.GetResourcesOutput, error)
 }
 
 func (m *Method) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
@@ -146,37 +146,47 @@ func (m *Method) listWithClient(ctx context.Context, client apiGatewayMethodClie
 	if !ok || restApiID == "" {
 		return nil, fmt.Errorf("AWS::ApiGateway::Method list requires RestApiId filter")
 	}
-	resourceID, ok := request.AdditionalProperties["ResourceId"]
-	if !ok || resourceID == "" {
-		return nil, fmt.Errorf("AWS::ApiGateway::Method list requires ResourceId filter")
-	}
 
 	// CloudControl has no list handler for Method, so enumerate methods via
-	// the API Gateway control plane. GetResource with embed=methods returns
-	// the resource's full method map in one call.
-	output, err := client.GetResource(ctx, &apigateway.GetResourceInput{
-		RestApiId:  aws.String(restApiID),
-		ResourceId: aws.String(resourceID),
-		Embed:      []string{"methods"},
-	})
-	if err != nil {
-		// Treat a missing parent as an empty list rather than a discovery
-		// failure: the resource may have been deleted between the list
-		// operation being queued and the call landing.
-		var notFound *apigwtypes.NotFoundException
-		if errors.As(err, &notFound) {
-			return &resource.ListResult{NativeIDs: []string{}}, nil
+	// the API Gateway control plane. GetResources with embed=methods returns
+	// every resource's method map, including the implicit root resource,
+	// whose methods a per-resource scoping would miss.
+	nativeIDs := []string{}
+	var position *string
+	for {
+		output, err := client.GetResources(ctx, &apigateway.GetResourcesInput{
+			RestApiId: aws.String(restApiID),
+			Embed:     []string{"methods"},
+			Limit:     aws.Int32(500),
+			Position:  position,
+		})
+		if err != nil {
+			// Treat a missing parent as an empty list rather than a discovery
+			// failure: the API may have been deleted between the list
+			// operation being queued and the call landing.
+			var notFound *apigwtypes.NotFoundException
+			if errors.As(err, &notFound) {
+				return &resource.ListResult{NativeIDs: []string{}}, nil
+			}
+			return nil, fmt.Errorf("listing API Gateway resources: %w", err)
 		}
-		return nil, fmt.Errorf("getting API Gateway resource: %w", err)
-	}
-
-	// Composite native ID mirrors the CloudControl CRUD path for Method:
-	//   <RestApiId>|<ResourceId>|<HttpMethod>
-	// Discovery must produce the same shape or inventory lookups diverge
-	// between discovered and managed Methods.
-	nativeIDs := make([]string, 0, len(output.ResourceMethods))
-	for httpMethod := range output.ResourceMethods {
-		nativeIDs = append(nativeIDs, fmt.Sprintf("%s|%s|%s", restApiID, resourceID, httpMethod))
+		for _, item := range output.Items {
+			if item.Id == nil {
+				continue
+			}
+			// Composite native ID mirrors the CloudControl CRUD path for
+			// Method:
+			//   <RestApiId>|<ResourceId>|<HttpMethod>
+			// Discovery must produce the same shape or inventory lookups
+			// diverge between discovered and managed Methods.
+			for httpMethod := range item.ResourceMethods {
+				nativeIDs = append(nativeIDs, fmt.Sprintf("%s|%s|%s", restApiID, *item.Id, httpMethod))
+			}
+		}
+		if output.Position == nil || *output.Position == "" {
+			break
+		}
+		position = output.Position
 	}
 	sort.Strings(nativeIDs)
 	return &resource.ListResult{NativeIDs: nativeIDs}, nil

@@ -230,87 +230,137 @@ func TestHandleLambdaIntegration_LambdaFunctionArnWinsOverUri(t *testing.T) {
 	assert.False(t, hasArn)
 }
 
-// List enumerates a Method's HTTP methods via the API Gateway control plane
-// (GetResource with embed=methods) since CloudControl has no list handler for
-// this resource type. Native IDs are composite: RestApiId|ResourceId|HttpMethod.
+// List enumerates every Method in a RestApi via the API Gateway control plane
+// (GetResources with embed=methods) since CloudControl has no list handler for
+// this resource type. Scoping by RestApi rather than by Resource keeps methods
+// on the implicit root resource discoverable, since the root never syncs as a
+// Resource on its own. Native IDs are composite: RestApiId|ResourceId|HttpMethod.
 
 type mockAPIGatewayMethodClient struct {
 	mock.Mock
 }
 
-func (m *mockAPIGatewayMethodClient) GetResource(ctx context.Context, params *apigateway.GetResourceInput, optFns ...func(*apigateway.Options)) (*apigateway.GetResourceOutput, error) {
+func (m *mockAPIGatewayMethodClient) GetResources(ctx context.Context, params *apigateway.GetResourcesInput, optFns ...func(*apigateway.Options)) (*apigateway.GetResourcesOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*apigateway.GetResourceOutput), args.Error(1)
+	return args.Get(0).(*apigateway.GetResourcesOutput), args.Error(1)
 }
 
 func TestMethod_List_ReturnsCompositeNativeIDs(t *testing.T) {
 	ctx := context.Background()
 	client := &mockAPIGatewayMethodClient{}
 
-	client.On("GetResource", ctx, mock.MatchedBy(func(input *apigateway.GetResourceInput) bool {
+	client.On("GetResources", ctx, mock.MatchedBy(func(input *apigateway.GetResourcesInput) bool {
 		return input.RestApiId != nil && *input.RestApiId == "api123" &&
-			input.ResourceId != nil && *input.ResourceId == "res456" &&
 			len(input.Embed) == 1 && input.Embed[0] == "methods"
-	})).Return(&apigateway.GetResourceOutput{
-		Id: aws.String("res456"),
-		ResourceMethods: map[string]apigwtypes.Method{
-			"POST":    {},
-			"OPTIONS": {},
+	})).Return(&apigateway.GetResourcesOutput{
+		Items: []apigwtypes.Resource{
+			{
+				// The implicit root resource: no ParentId/PathPart set.
+				Id: aws.String("rootres"),
+				ResourceMethods: map[string]apigwtypes.Method{
+					"GET": {},
+				},
+			},
+			{
+				Id:       aws.String("childres"),
+				ParentId: aws.String("rootres"),
+				PathPart: aws.String("test"),
+				ResourceMethods: map[string]apigwtypes.Method{
+					"POST":    {},
+					"OPTIONS": {},
+				},
+			},
 		},
 	}, nil)
 
 	m := &Method{cfg: &config.Config{}}
 	result, err := m.listWithClient(ctx, client, &resource.ListRequest{
-		AdditionalProperties: map[string]string{"RestApiId": "api123", "ResourceId": "res456"},
+		AdditionalProperties: map[string]string{"RestApiId": "api123"},
 	})
 
 	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{"api123|res456|POST", "api123|res456|OPTIONS"}, result.NativeIDs)
+	assert.ElementsMatch(t, []string{"api123|rootres|GET", "api123|childres|POST", "api123|childres|OPTIONS"}, result.NativeIDs)
 }
 
-func TestMethod_List_EmptyMethodMapReturnsEmpty(t *testing.T) {
+func TestMethod_List_PaginatesAcrossPositions(t *testing.T) {
 	ctx := context.Background()
 	client := &mockAPIGatewayMethodClient{}
-	client.On("GetResource", ctx, mock.Anything).Return(&apigateway.GetResourceOutput{
-		Id:              aws.String("res456"),
-		ResourceMethods: map[string]apigwtypes.Method{},
+
+	client.On("GetResources", ctx, mock.MatchedBy(func(input *apigateway.GetResourcesInput) bool {
+		return input.Position == nil
+	})).Return(&apigateway.GetResourcesOutput{
+		Items: []apigwtypes.Resource{
+			{
+				Id:              aws.String("rootres"),
+				ResourceMethods: map[string]apigwtypes.Method{"GET": {}},
+			},
+		},
+		Position: aws.String("p2"),
+	}, nil).Once()
+
+	client.On("GetResources", ctx, mock.MatchedBy(func(input *apigateway.GetResourcesInput) bool {
+		return input.Position != nil && *input.Position == "p2"
+	})).Return(&apigateway.GetResourcesOutput{
+		Items: []apigwtypes.Resource{
+			{
+				Id:              aws.String("childres"),
+				ResourceMethods: map[string]apigwtypes.Method{"POST": {}},
+			},
+		},
+	}, nil).Once()
+
+	m := &Method{cfg: &config.Config{}}
+	result, err := m.listWithClient(ctx, client, &resource.ListRequest{
+		AdditionalProperties: map[string]string{"RestApiId": "api123"},
+	})
+
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"api123|rootres|GET", "api123|childres|POST"}, result.NativeIDs)
+	client.AssertExpectations(t)
+}
+
+func TestMethod_List_ResourcesWithoutMethodsYieldNothing(t *testing.T) {
+	ctx := context.Background()
+	client := &mockAPIGatewayMethodClient{}
+	client.On("GetResources", ctx, mock.Anything).Return(&apigateway.GetResourcesOutput{
+		Items: []apigwtypes.Resource{
+			{
+				Id:              aws.String("rootres"),
+				ResourceMethods: nil,
+			},
+		},
 	}, nil)
 
 	m := &Method{cfg: &config.Config{}}
 	result, err := m.listWithClient(ctx, client, &resource.ListRequest{
-		AdditionalProperties: map[string]string{"RestApiId": "api123", "ResourceId": "res456"},
+		AdditionalProperties: map[string]string{"RestApiId": "api123"},
 	})
 
 	assert.NoError(t, err)
 	assert.Empty(t, result.NativeIDs)
 }
 
-func TestMethod_List_MissingListParamsErrors(t *testing.T) {
+func TestMethod_List_MissingListParamErrors(t *testing.T) {
 	ctx := context.Background()
 	m := &Method{cfg: &config.Config{}}
 
 	_, err := m.listWithClient(ctx, &mockAPIGatewayMethodClient{}, &resource.ListRequest{
-		AdditionalProperties: map[string]string{"ResourceId": "res456"},
+		AdditionalProperties: map[string]string{},
 	})
 	assert.ErrorContains(t, err, "RestApiId")
-
-	_, err = m.listWithClient(ctx, &mockAPIGatewayMethodClient{}, &resource.ListRequest{
-		AdditionalProperties: map[string]string{"RestApiId": "api123"},
-	})
-	assert.ErrorContains(t, err, "ResourceId")
 }
 
 func TestMethod_List_DeletedParentReturnsEmpty(t *testing.T) {
 	ctx := context.Background()
 	client := &mockAPIGatewayMethodClient{}
-	client.On("GetResource", ctx, mock.Anything).Return(nil, &apigwtypes.NotFoundException{Message: aws.String("Invalid Resource identifier specified")})
+	client.On("GetResources", ctx, mock.Anything).Return(nil, &apigwtypes.NotFoundException{Message: aws.String("Invalid RestApi identifier specified")})
 
 	m := &Method{cfg: &config.Config{}}
 	result, err := m.listWithClient(ctx, client, &resource.ListRequest{
-		AdditionalProperties: map[string]string{"RestApiId": "api123", "ResourceId": "res456"},
+		AdditionalProperties: map[string]string{"RestApiId": "api123"},
 	})
 
 	assert.NoError(t, err)
@@ -320,11 +370,11 @@ func TestMethod_List_DeletedParentReturnsEmpty(t *testing.T) {
 func TestMethod_List_OtherErrorsPropagate(t *testing.T) {
 	ctx := context.Background()
 	client := &mockAPIGatewayMethodClient{}
-	client.On("GetResource", ctx, mock.Anything).Return(nil, errors.New("throttled"))
+	client.On("GetResources", ctx, mock.Anything).Return(nil, errors.New("throttled"))
 
 	m := &Method{cfg: &config.Config{}}
 	_, err := m.listWithClient(ctx, client, &resource.ListRequest{
-		AdditionalProperties: map[string]string{"RestApiId": "api123", "ResourceId": "res456"},
+		AdditionalProperties: map[string]string{"RestApiId": "api123"},
 	})
 
 	assert.ErrorContains(t, err, "throttled")
