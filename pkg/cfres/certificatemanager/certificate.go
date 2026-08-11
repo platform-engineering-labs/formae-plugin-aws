@@ -334,21 +334,16 @@ func (c *Certificate) readProperties(
 	if cert.DomainName != nil {
 		props["DomainName"] = *cert.DomainName
 	}
-	// ACM populates SubjectAlternativeNames with [DomainName] when the
-	// operator doesn't specify any SANs explicitly. Skip the field when
-	// the readback only contains the domain name itself — that's the
-	// server default and would otherwise look like drift to the
-	// reconciler.
-	if len(cert.SubjectAlternativeNames) > 0 {
-		domainName := ""
-		if cert.DomainName != nil {
-			domainName = *cert.DomainName
-		}
-		isJustDomain := len(cert.SubjectAlternativeNames) == 1 &&
-			cert.SubjectAlternativeNames[0] == domainName
-		if !isJustDomain {
-			props["SubjectAlternativeNames"] = cert.SubjectAlternativeNames
-		}
+	// ACM always injects the primary DomainName into the
+	// SubjectAlternativeNames it returns, whether or not the operator
+	// declared it. The readback reports the names *other than* the
+	// primary domain, so the canonical declaration — the additional
+	// names only — round-trips. SubjectAlternativeNames is createOnly,
+	// so without this the injected entry reads as drift and every
+	// reconcile plans a replacement. The key is omitted when no
+	// additional names remain.
+	if sans := sansExcludingDomain(ctx, cert); len(sans) > 0 {
+		props["SubjectAlternativeNames"] = sans
 	}
 	if cert.KeyAlgorithm != "" {
 		// ACM API returns KeyAlgorithm with hyphens (e.g. "RSA-2048"),
@@ -393,6 +388,36 @@ func (c *Certificate) readProperties(
 	}
 
 	return props, nil
+}
+
+// sansExcludingDomain returns the certificate's subject alternative
+// names with every occurrence of its primary domain removed, preserving
+// the order and exact spelling of the remaining names as ACM returned
+// them. The comparison is case-insensitive; ACM lowercases both sides
+// already, so this only guards against that changing. A response
+// without a domain name passes its names through untouched.
+func sansExcludingDomain(ctx context.Context, cert *acmtypes.CertificateDetail) []string {
+	if cert.DomainName == nil {
+		return cert.SubjectAlternativeNames
+	}
+
+	domainName := strings.ToLower(*cert.DomainName)
+	sans := make([]string, 0, len(cert.SubjectAlternativeNames))
+	occurrences := 0
+	for _, san := range cert.SubjectAlternativeNames {
+		if strings.ToLower(san) == domainName {
+			occurrences++
+			continue
+		}
+		sans = append(sans, san)
+	}
+	if occurrences > 1 {
+		plugin.LoggerFromContext(ctx).Warn("acm: domain name appears more than once in SubjectAlternativeNames",
+			"domain_name", *cert.DomainName,
+			"occurrences", occurrences)
+	}
+
+	return sans
 }
 
 // normalizeKeyAlgorithmForCFN translates ACM API key-algorithm values
