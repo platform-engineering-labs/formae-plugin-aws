@@ -188,16 +188,17 @@ func secretSafeError(err error, format string, name string, secrets ...string) e
 	return fmt.Errorf(format+": %s", name, message)
 }
 
-// synchronousStatus reports success immediately: every Data API call completes
-// before its response returns, so there is no asynchronous state to poll.
-func synchronousStatus(request *resource.StatusRequest) *resource.StatusResult {
-	return &resource.StatusResult{
-		ProgressResult: &resource.ProgressResult{
-			Operation:       resource.OperationCheckStatus,
-			OperationStatus: resource.OperationStatusSuccess,
-			NativeID:        request.NativeID,
-		},
+// clusterServing reports whether the cluster can run a statement right now. A
+// fault the Data API is known to raise comes back as its error code, so the
+// caller can tell a cluster that is still coming up — which clears on its own —
+// from one that will never answer; the error itself is returned either way, and
+// an unrecognised one carries no code.
+func clusterServing(ctx context.Context, client dataAPIClient, clusterArn, secretArn string) (bool, resource.OperationErrorCode, error) {
+	if _, err := execute(ctx, client, clusterArn, secretArn, "SELECT 1", nil); err != nil {
+		code, _ := recognizeDataAPIFault(err)
+		return false, code, err
 	}
+	return true, "", nil
 }
 
 // unsupportedListError explains why listing is refused rather than returning an

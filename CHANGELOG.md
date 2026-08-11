@@ -62,12 +62,19 @@ formae agent.
   **A cluster that is not serving yet is waited out, not failed.** An Aurora
   cluster reports itself available, with the Data API enabled, for several
   minutes before it can answer a statement — until it has a running DB instance
-  every call is rejected. Conditions that clear on their own (a cluster with no
-  instance yet, an endpoint still coming up, a resuming or unavailable database,
-  a service fault or timeout) are now reported to the agent as recoverable on
-  every operation, so it retries them instead of failing the resource. Faults
-  that will not clear — access denied, an unusable secret, a rejected statement
-  — stay terminal and keep their diagnosis.
+  every call is rejected. Creating a database or a role probes the cluster
+  first, and a cluster that cannot answer yet defers the create: the operation
+  reports itself as still running and finishes from a later status check, once
+  the cluster serves. Declaring a cluster, its instance and a database in one
+  forma therefore works, instead of exhausting the retry budget minutes short of
+  the cluster being ready. The wait is bounded — a create still waiting after
+  fifteen minutes fails, naming the cluster — and no statement that changes
+  anything is sent until the cluster answers. Other conditions that clear on
+  their own (an endpoint still coming up, a resuming or unavailable database, a
+  service fault or timeout) are reported to the agent as recoverable on every
+  operation, so it retries them instead of failing the resource. Faults that
+  will not clear — access denied, an unusable secret, a rejected statement —
+  stay terminal, keep their diagnosis, and never start a wait.
 - S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
   `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
   buckets that block SSE-C round-trip through extract and reconcile instead of

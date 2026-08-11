@@ -141,6 +141,33 @@ func (d *Database) create(ctx context.Context, client dataAPIClient, clusters rd
 		return nil, err
 	}
 
+	nativeID := buildNativeID(settings.clusterArn, settings.secretArn, settings.databaseName)
+
+	// A cluster that reports itself available can still be minutes away from
+	// running a statement. The probe decides that before any DDL is composed, so
+	// the wait costs nothing but a SELECT.
+	ready, code, err := clusterServing(ctx, client, settings.clusterArn, settings.secretArn)
+	if !ready {
+		if !resource.IsRecoverable(code) {
+			return nil, err
+		}
+		plugin.LoggerFromContext(ctx).Info("rds: cluster is not serving statements yet; waiting to create the database",
+			"cluster_arn", settings.clusterArn, "database_name", settings.databaseName)
+		return &resource.CreateResult{ProgressResult: deferCreate(pendingDatabases, nativeID, settings)}, nil
+	}
+
+	progress, err := d.ensureDatabase(ctx, client, settings)
+	if err != nil {
+		return nil, err
+	}
+	return &resource.CreateResult{ProgressResult: progress}, nil
+}
+
+// ensureDatabase brings the database to its declared state. It is idempotent —
+// it adopts a database that already has the declared owner, refuses one owned by
+// somebody else, and creates it otherwise — which is what lets both the create
+// and the poll that finishes a deferred create run it.
+func (d *Database) ensureDatabase(ctx context.Context, client dataAPIClient, settings *databaseSettings) (*resource.ProgressResult, error) {
 	log := plugin.LoggerFromContext(ctx)
 	log.Info("rds: creating database",
 		"cluster_arn", settings.clusterArn, "database_name", settings.databaseName, "owner", settings.owner)
@@ -180,15 +207,13 @@ func (d *Database) create(ctx context.Context, client dataAPIClient, clusters rd
 	}
 
 	if exists && owner != settings.owner {
-		return &resource.CreateResult{
-			ProgressResult: &resource.ProgressResult{
-				Operation:       resource.OperationCreate,
-				OperationStatus: resource.OperationStatusFailure,
-				NativeID:        nativeID,
-				ErrorCode:       resource.OperationErrorCodeAlreadyExists,
-				StatusMessage: fmt.Sprintf("database %q already exists and is owned by %q, not %q",
-					settings.databaseName, owner, settings.owner),
-			},
+		return &resource.ProgressResult{
+			Operation:       resource.OperationCreate,
+			OperationStatus: resource.OperationStatusFailure,
+			NativeID:        nativeID,
+			ErrorCode:       resource.OperationErrorCodeAlreadyExists,
+			StatusMessage: fmt.Sprintf("database %q already exists and is owned by %q, not %q",
+				settings.databaseName, owner, settings.owner),
 		}, nil
 	}
 
@@ -197,13 +222,11 @@ func (d *Database) create(ctx context.Context, client dataAPIClient, clusters rd
 		return nil, err
 	}
 
-	return &resource.CreateResult{
-		ProgressResult: &resource.ProgressResult{
-			Operation:          resource.OperationCreate,
-			OperationStatus:    resource.OperationStatusSuccess,
-			NativeID:           nativeID,
-			ResourceProperties: properties,
-		},
+	return &resource.ProgressResult{
+		Operation:          resource.OperationCreate,
+		OperationStatus:    resource.OperationStatusSuccess,
+		NativeID:           nativeID,
+		ResourceProperties: properties,
 	}, nil
 }
 
@@ -459,9 +482,19 @@ func (d *Database) delete(ctx context.Context, client dataAPIClient, request *re
 	}, nil
 }
 
-// Status returns success immediately — every Data API call is synchronous.
-func (d *Database) Status(_ context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
-	return synchronousStatus(request), nil
+// Status finishes a create that was deferred because the cluster could not run
+// a statement yet. Every Data API call is synchronous, so this is the only
+// operation with anything to poll.
+func (d *Database) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
+	client, err := d.newClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return d.statusWithClient(ctx, client, request)
+}
+
+func (d *Database) statusWithClient(ctx context.Context, client dataAPIClient, request *resource.StatusRequest) (*resource.StatusResult, error) {
+	return resumeCreate(ctx, client, pendingDatabases, request, d.ensureDatabase)
 }
 
 // List is registered so an unsupported listing fails loudly here rather than

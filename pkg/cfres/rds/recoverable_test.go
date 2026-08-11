@@ -61,39 +61,6 @@ func TestRecognizeDataAPIFaultIgnoresUnrelatedErrors(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestDatabaseRoleCreateReportsARecoverableClusterFaultToTheAgent(t *testing.T) {
-	client := &mockDataAPIClient{}
-	client.On("ExecuteStatement", mock.Anything, mock.Anything).
-		Return(nil, clusterNotServing()).Once()
-
-	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
-		&resource.CreateRequest{Properties: roleProps(t, nil)})
-
-	// A classified failure is reported through the result, not as a Go error:
-	// only the result carries the error code the agent retries on.
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
-	assert.Equal(t, resource.OperationErrorCodeNotStabilized, result.ProgressResult.ErrorCode)
-	assert.True(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
-	assert.NotEmpty(t, result.ProgressResult.StatusMessage)
-}
-
-func TestDatabaseCreateReportsARecoverableClusterFaultToTheAgent(t *testing.T) {
-	client := &mockDataAPIClient{}
-	client.On("ExecuteStatement", mock.Anything, mock.Anything).
-		Return(nil, clusterNotServing()).Once()
-
-	result, err := testDatabase().createWithClient(context.Background(), client, aurora(t),
-		&resource.CreateRequest{Properties: databaseProps(t, nil)})
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
-	assert.Equal(t, resource.OperationErrorCodeNotStabilized, result.ProgressResult.ErrorCode)
-	assert.True(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
-}
-
 func TestDatabaseRoleReadReportsARecoverableClusterFaultToTheAgent(t *testing.T) {
 	client := &mockDataAPIClient{}
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -171,6 +138,7 @@ func TestCreateStillReturnsPlainErrorsForBadInput(t *testing.T) {
 // flight must not carry the password or the verifier into the status message.
 func TestClassifiedFailureNeverLeaksPasswordOrVerifier(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(emptyRoleCatalog(t), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -219,6 +187,7 @@ func TestRecoverableCodesAreTheOnesTheAgentRetries(t *testing.T) {
 
 func TestDatabaseRoleCreateSucceedsUnchangedWhenTheClusterIsServing(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(emptyRoleCatalog(t), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -232,5 +201,5 @@ func TestDatabaseRoleCreateSucceedsUnchangedWhenTheClusterIsServing(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Empty(t, result.ProgressResult.ErrorCode)
-	assert.True(t, strings.HasPrefix(client.statements[1], `CREATE ROLE "appuser" LOGIN PASSWORD '`))
+	assert.True(t, strings.HasPrefix(client.statements[2], `CREATE ROLE "appuser" LOGIN PASSWORD '`))
 }

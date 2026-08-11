@@ -71,8 +71,14 @@ func existingDatabaseCatalog(t *testing.T, owner string) *rdsdata.ExecuteStateme
 	return recordsOutput(t, []map[string]any{{"datname": "appdb", "rolname": owner}})
 }
 
+// servingProbe answers the readiness probe every create starts with.
+func servingProbe(client *mockDataAPIClient) {
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+}
+
 func TestDatabaseCreateGrantsMembershipThenCreates(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	// catalog probe → absent
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(emptyDatabaseCatalog(t), nil).Once()
 	// membership probe → not a member
@@ -90,12 +96,13 @@ func TestDatabaseCreateGrantsMembershipThenCreates(t *testing.T) {
 
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, buildNativeID(testClusterArn, testSecretArn, "appdb"), result.ProgressResult.NativeID)
-	assert.Equal(t, `GRANT "appuser" TO CURRENT_USER`, client.statements[2])
-	assert.Equal(t, `CREATE DATABASE "appdb" OWNER "appuser"`, client.statements[3])
+	assert.Equal(t, `GRANT "appuser" TO CURRENT_USER`, client.statements[3])
+	assert.Equal(t, `CREATE DATABASE "appdb" OWNER "appuser"`, client.statements[4])
 }
 
 func TestDatabaseCreateSkipsTheGrantWhenMembershipIsAlreadyHeld(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(emptyDatabaseCatalog(t), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(membershipHeld(t, true), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
@@ -111,6 +118,7 @@ func TestDatabaseCreateSkipsTheGrantWhenMembershipIsAlreadyHeld(t *testing.T) {
 
 func TestDatabaseCreateStopsWhenTheGrantFails(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(emptyDatabaseCatalog(t), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(membershipHeld(t, false), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -134,6 +142,7 @@ func TestDatabaseCreateStopsWhenTheGrantFails(t *testing.T) {
 
 func TestDatabaseCreateAdoptsADatabaseWithTheSameOwner(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(existingDatabaseCatalog(t, "appuser"), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(existingDatabaseCatalog(t, "appuser"), nil).Once()
 
@@ -154,6 +163,7 @@ func TestDatabaseCreateAdoptsADatabaseWithTheSameOwner(t *testing.T) {
 // so it may only be attempted once the create is known to be going ahead.
 func TestDatabaseCreateRefusesADatabaseOwnedBySomeoneElse(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(existingDatabaseCatalog(t, "someone-else"), nil).Once()
 
 	result, err := testDatabase().createWithClient(context.Background(), client, aurora(t),
@@ -175,6 +185,7 @@ func TestDatabaseCreateRefusesADatabaseOwnedBySomeoneElse(t *testing.T) {
 // with us: a database that appeared with a different owner is still a collision.
 func TestDatabaseCreateRefusesARacedDatabaseWithAnotherOwner(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(emptyDatabaseCatalog(t), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).Return(membershipHeld(t, true), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -369,12 +380,6 @@ func TestDatabaseDeleteIsIdempotent(t *testing.T) {
 
 	result, err := testDatabase().deleteWithClient(context.Background(), client,
 		&resource.DeleteRequest{NativeID: buildNativeID(testClusterArn, testSecretArn, "appdb")})
-	require.NoError(t, err)
-	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
-}
-
-func TestDatabaseStatusSucceedsImmediately(t *testing.T) {
-	result, err := testDatabase().Status(context.Background(), &resource.StatusRequest{NativeID: "x"})
 	require.NoError(t, err)
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 }

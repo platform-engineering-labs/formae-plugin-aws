@@ -116,6 +116,18 @@ func (r *DatabaseRole) createWithClient(ctx context.Context, client dataAPIClien
 	return result, nil
 }
 
+// roleCreateIntent is everything a create needs to bring a role to its declared
+// state. The plaintext password is deliberately absent: it is turned into a
+// verifier before the intent is built, and only the verifier ever reaches the
+// engine — so this is what a deferred create can be parked with.
+type roleCreateIntent struct {
+	clusterArn string
+	secretArn  string
+	roleName   string
+	canLogin   bool
+	verifier   string
+}
+
 func (r *DatabaseRole) create(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
 	settings, err := r.parseSettings(request.Properties)
 	if err != nil {
@@ -134,26 +146,59 @@ func (r *DatabaseRole) create(ctx context.Context, client dataAPIClient, cluster
 		return nil, err
 	}
 
+	intent := &roleCreateIntent{
+		clusterArn: settings.clusterArn,
+		secretArn:  settings.secretArn,
+		roleName:   settings.roleName,
+		canLogin:   settings.canLogin,
+		verifier:   verifier,
+	}
+	nativeID := buildNativeID(intent.clusterArn, intent.secretArn, intent.roleName)
+
+	// A cluster that reports itself available can still be minutes away from
+	// running a statement. The probe decides that before any DDL is composed, so
+	// the wait costs nothing but a SELECT.
+	ready, code, err := clusterServing(ctx, client, intent.clusterArn, intent.secretArn)
+	if !ready {
+		if !resource.IsRecoverable(code) {
+			return nil, err
+		}
+		plugin.LoggerFromContext(ctx).Info("rds: cluster is not serving statements yet; waiting to create the database role",
+			"cluster_arn", intent.clusterArn, "role_name", intent.roleName)
+		return &resource.CreateResult{ProgressResult: deferCreate(pendingRoles, nativeID, intent)}, nil
+	}
+
+	progress, err := r.ensureRole(ctx, client, intent)
+	if err != nil {
+		return nil, err
+	}
+	return &resource.CreateResult{ProgressResult: progress}, nil
+}
+
+// ensureRole brings the role to its declared state. It is idempotent — it adopts
+// a role that already exists and re-asserts its attributes — which is what lets
+// both the create and the poll that finishes a deferred create run it.
+func (r *DatabaseRole) ensureRole(ctx context.Context, client dataAPIClient, intent *roleCreateIntent) (*resource.ProgressResult, error) {
 	log := plugin.LoggerFromContext(ctx)
 	log.Info("rds: creating database role",
-		"cluster_arn", settings.clusterArn, "role_name", settings.roleName)
+		"cluster_arn", intent.clusterArn, "role_name", intent.roleName)
 
-	exists, err := roleExists(ctx, client, settings)
+	exists, err := roleExists(ctx, client, intent)
 	if err != nil {
 		return nil, err
 	}
 
 	if !exists {
 		create := fmt.Sprintf("CREATE ROLE %s %s PASSWORD %s",
-			quoteIdentifier(settings.roleName), loginClause(settings.canLogin), quoteLiteral(verifier))
-		if _, err := execute(ctx, client, settings.clusterArn, settings.secretArn, create, nil); err != nil {
+			quoteIdentifier(intent.roleName), loginClause(intent.canLogin), quoteLiteral(intent.verifier))
+		if _, err := execute(ctx, client, intent.clusterArn, intent.secretArn, create, nil); err != nil {
 			// The call may have committed before its response was lost, so a
 			// duplicate here means the role is ours to adopt, not a failure.
 			if !isDuplicateObjectError(err) {
-				return nil, secretSafeError(err, "failed to create role %q", settings.roleName, settings.password, verifier)
+				return nil, secretSafeError(err, "failed to create role %q", intent.roleName, intent.verifier)
 			}
 			log.Info("rds: role already existed on create; adopting it",
-				"cluster_arn", settings.clusterArn, "role_name", settings.roleName)
+				"cluster_arn", intent.clusterArn, "role_name", intent.roleName)
 			exists = true
 		}
 	}
@@ -161,40 +206,38 @@ func (r *DatabaseRole) create(ctx context.Context, client dataAPIClient, cluster
 	if exists {
 		// The stored verifier is salted, so the declared password cannot be
 		// compared against it — re-assert both attributes instead.
-		if err := r.assertRoleState(ctx, client, settings, verifier); err != nil {
+		if err := r.assertRoleState(ctx, client, intent); err != nil {
 			return nil, err
 		}
 	}
 
-	nativeID := buildNativeID(settings.clusterArn, settings.secretArn, settings.roleName)
+	nativeID := buildNativeID(intent.clusterArn, intent.secretArn, intent.roleName)
 	properties, err := r.readBack(ctx, client, nativeID)
 	if err != nil {
 		return nil, err
 	}
 
-	return &resource.CreateResult{
-		ProgressResult: &resource.ProgressResult{
-			Operation:          resource.OperationCreate,
-			OperationStatus:    resource.OperationStatusSuccess,
-			NativeID:           nativeID,
-			ResourceProperties: properties,
-		},
+	return &resource.ProgressResult{
+		Operation:          resource.OperationCreate,
+		OperationStatus:    resource.OperationStatusSuccess,
+		NativeID:           nativeID,
+		ResourceProperties: properties,
 	}, nil
 }
 
 // assertRoleState re-applies the declared password and login attribute to a role
 // that already exists.
-func (r *DatabaseRole) assertRoleState(ctx context.Context, client dataAPIClient, settings *roleSettings, verifier string) error {
+func (r *DatabaseRole) assertRoleState(ctx context.Context, client dataAPIClient, intent *roleCreateIntent) error {
 	setPassword := fmt.Sprintf("ALTER ROLE %s PASSWORD %s",
-		quoteIdentifier(settings.roleName), quoteLiteral(verifier))
-	if _, err := execute(ctx, client, settings.clusterArn, settings.secretArn, setPassword, nil); err != nil {
-		return secretSafeError(err, "failed to set the password of role %q", settings.roleName, settings.password, verifier)
+		quoteIdentifier(intent.roleName), quoteLiteral(intent.verifier))
+	if _, err := execute(ctx, client, intent.clusterArn, intent.secretArn, setPassword, nil); err != nil {
+		return secretSafeError(err, "failed to set the password of role %q", intent.roleName, intent.verifier)
 	}
 
 	setLogin := fmt.Sprintf("ALTER ROLE %s %s",
-		quoteIdentifier(settings.roleName), loginClause(settings.canLogin))
-	if _, err := execute(ctx, client, settings.clusterArn, settings.secretArn, setLogin, nil); err != nil {
-		return fmt.Errorf("failed to set the login attribute of role %q: %w", settings.roleName, err)
+		quoteIdentifier(intent.roleName), loginClause(intent.canLogin))
+	if _, err := execute(ctx, client, intent.clusterArn, intent.secretArn, setLogin, nil); err != nil {
+		return fmt.Errorf("failed to set the login attribute of role %q: %w", intent.roleName, err)
 	}
 
 	return nil
@@ -396,9 +439,19 @@ func (r *DatabaseRole) delete(ctx context.Context, client dataAPIClient, request
 	}, nil
 }
 
-// Status returns success immediately — every Data API call is synchronous.
-func (r *DatabaseRole) Status(_ context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
-	return synchronousStatus(request), nil
+// Status finishes a create that was deferred because the cluster could not run
+// a statement yet. Every Data API call is synchronous, so this is the only
+// operation with anything to poll.
+func (r *DatabaseRole) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
+	client, err := r.newClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.statusWithClient(ctx, client, request)
+}
+
+func (r *DatabaseRole) statusWithClient(ctx context.Context, client dataAPIClient, request *resource.StatusRequest) (*resource.StatusResult, error) {
+	return resumeCreate(ctx, client, pendingRoles, request, r.ensureRole)
 }
 
 // List is registered so an unsupported listing fails loudly here rather than
@@ -438,8 +491,8 @@ func queryRole(ctx context.Context, client dataAPIClient, clusterArn, secretArn,
 	return decodeRecords(out)
 }
 
-func roleExists(ctx context.Context, client dataAPIClient, settings *roleSettings) (bool, error) {
-	records, err := queryRole(ctx, client, settings.clusterArn, settings.secretArn, settings.roleName)
+func roleExists(ctx context.Context, client dataAPIClient, intent *roleCreateIntent) (bool, error) {
+	records, err := queryRole(ctx, client, intent.clusterArn, intent.secretArn, intent.roleName)
 	if err != nil {
 		return false, err
 	}

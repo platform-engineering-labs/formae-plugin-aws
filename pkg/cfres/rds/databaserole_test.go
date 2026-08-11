@@ -73,6 +73,7 @@ func existingRoleCatalog(t *testing.T, canLogin bool) *rdsdata.ExecuteStatementO
 
 func TestDatabaseRoleCreateIssuesCreateRoleWhenAbsent(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	// catalog probe → absent, CREATE ROLE, then the read-back probe
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(emptyRoleCatalog(t), nil).Once()
@@ -88,7 +89,7 @@ func TestDatabaseRoleCreateIssuesCreateRoleWhenAbsent(t *testing.T) {
 	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
 	assert.Equal(t, buildNativeID(testClusterArn, testSecretArn, "appuser"), result.ProgressResult.NativeID)
 
-	create := client.statements[1]
+	create := client.statements[2]
 	// Asserted as a prefix, not a substring: "LOGIN" is also a substring of
 	// "NOLOGIN", so a substring check could not tell the two apart.
 	assert.True(t, strings.HasPrefix(create, `CREATE ROLE "appuser" LOGIN PASSWORD '`), "got: %s", create)
@@ -105,6 +106,7 @@ func TestDatabaseRoleCreateIssuesCreateRoleWhenAbsent(t *testing.T) {
 
 func TestDatabaseRoleCreateAdoptsAnExistingRole(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(existingRoleCatalog(t, false), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -122,13 +124,14 @@ func TestDatabaseRoleCreateAdoptsAnExistingRole(t *testing.T) {
 	// The declared state is re-asserted: the password cannot be compared, and
 	// LOGIN may have drifted out of band.
 	assert.Contains(t, joined, `ALTER ROLE "appuser" PASSWORD`)
-	assert.Equal(t, `ALTER ROLE "appuser" LOGIN`, client.statements[2])
+	assert.Equal(t, `ALTER ROLE "appuser" LOGIN`, client.statements[3])
 }
 
 // A Data API call can commit and lose its response, so a CREATE can fail with
 // "already exists" even though the catalog probe said the role was absent.
 func TestDatabaseRoleCreateAdoptsARacedRole(t *testing.T) {
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(emptyRoleCatalog(t), nil).Once()
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -372,12 +375,6 @@ func TestDatabaseRoleDeleteReportsOwnedObjectsActionably(t *testing.T) {
 	assert.Contains(t, strings.ToLower(result.ProgressResult.StatusMessage), "owns")
 }
 
-func TestDatabaseRoleStatusSucceedsImmediately(t *testing.T) {
-	result, err := testRole().Status(context.Background(), &resource.StatusRequest{NativeID: "x"})
-	require.NoError(t, err)
-	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
-}
-
 func TestDatabaseRoleListIsUnsupported(t *testing.T) {
 	_, err := testRole().List(context.Background(), &resource.ListRequest{})
 	require.Error(t, err)
@@ -394,6 +391,7 @@ func TestDatabaseRoleNeverLeaksPasswordOrVerifier(t *testing.T) {
 		plugin.NewPluginLogger(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 
 	client := &mockDataAPIClient{}
+	servingProbe(client)
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(emptyRoleCatalog(t), nil).Once()
 	// The engine rejects the statement and quotes it back — verifier included.
