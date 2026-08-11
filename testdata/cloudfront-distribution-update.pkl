@@ -1,0 +1,52 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/cloudfront/distribution.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-cloudfront-distribution-\(testRunID)"
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for CloudFront Distribution"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new distribution.Distribution {
+    label = "plugin-sdk-test-distribution"
+    distributionConfig = new distribution.DistributionConfig {
+      enabled = false
+      comment = "Plugin SDK test Distribution (updated)"
+      origins = new Listing<distribution.Origin> {
+        new {
+          id = "primary-origin"
+          domainName = "example.com"
+          customOriginConfig = new distribution.CustomOriginConfig {
+            originProtocolPolicy = "https-only"
+          }
+        }
+      }
+      defaultCacheBehavior = new distribution.DefaultCacheBehavior {
+        targetOriginId = "primary-origin"
+        viewerProtocolPolicy = "redirect-to-https"
+        // AWS managed cache policy "CachingDisabled"
+        cachePolicyId = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+      }
+    }
+  }
+}
