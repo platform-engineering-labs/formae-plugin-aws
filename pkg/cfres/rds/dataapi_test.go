@@ -186,13 +186,19 @@ func TestClassifyDataAPIError(t *testing.T) {
 		{"service unavailable", &rdsdatatypes.ServiceUnavailableError{}, resource.OperationErrorCodeServiceInternalError, true},
 		{"internal server error", &rdsdatatypes.InternalServerErrorException{}, resource.OperationErrorCodeServiceInternalError, true},
 		{"statement timeout", &rdsdatatypes.StatementTimeoutException{}, resource.OperationErrorCodeServiceTimeout, true},
-		{"http endpoint disabled", &rdsdatatypes.HttpEndpointNotEnabledException{}, resource.OperationErrorCodeInvalidRequest, false},
+		// A disabled endpoint is named by the create preflight before any
+		// statement is sent, so past that point it is an endpoint still coming
+		// up with its cluster.
+		{"http endpoint disabled", &rdsdatatypes.HttpEndpointNotEnabledException{}, resource.OperationErrorCodeNotStabilized, true},
 		{"access denied", &rdsdatatypes.AccessDeniedException{}, resource.OperationErrorCodeAccessDenied, false},
 		{"forbidden", &rdsdatatypes.ForbiddenException{}, resource.OperationErrorCodeAccessDenied, false},
 		{"invalid secret", &rdsdatatypes.InvalidSecretException{}, resource.OperationErrorCodeInvalidCredentials, false},
 		{"secrets error", &rdsdatatypes.SecretsErrorException{}, resource.OperationErrorCodeInvalidCredentials, false},
-		{"database not found", &rdsdatatypes.DatabaseNotFoundException{}, resource.OperationErrorCodeNotFound, false},
-		{"not found", &rdsdatatypes.NotFoundException{}, resource.OperationErrorCodeNotFound, false},
+		// Every statement addresses the administrative database, which exists on
+		// any Aurora PostgreSQL cluster, so this can only mean the cluster is
+		// not serving statements yet.
+		{"database not found", &rdsdatatypes.DatabaseNotFoundException{}, resource.OperationErrorCodeNotStabilized, true},
+		{"not found", &rdsdatatypes.NotFoundException{}, resource.OperationErrorCodeNotFound, true},
 	}
 
 	for _, tt := range tests {

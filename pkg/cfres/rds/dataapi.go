@@ -216,7 +216,26 @@ func unsupportedListError(resourceType string) error {
 // The recoverable flag is advisory for callers that need it; the agent's retry
 // decision is driven by the returned code, which it looks up in its own
 // recoverable-code table.
+//
+// Every fault is classified: one the mapping does not recognise is reported as a
+// general service exception. Callers that need to tell a recognised Data API
+// fault from an unrelated error use recognizeDataAPIFault instead.
 func classifyDataAPIError(err error) (resource.OperationErrorCode, bool) {
+	if code, ok := recognizeDataAPIFault(err); ok {
+		return code, resource.IsRecoverable(code)
+	}
+	if err == nil {
+		return "", false
+	}
+	return resource.OperationErrorCodeGeneralServiceException, false
+}
+
+// recognizeDataAPIFault maps a fault the Data API is known to raise onto an SDK
+// error code, and reports whether it recognised one at all. Anything it does not
+// recognise — a property the plugin rejected before the call, a control-plane
+// failure, a bug — reports false, so it keeps surfacing as a plain error rather
+// than being dressed up as a classified AWS fault.
+func recognizeDataAPIFault(err error) (resource.OperationErrorCode, bool) {
 	if err == nil {
 		return "", false
 	}
@@ -224,6 +243,25 @@ func classifyDataAPIError(err error) (resource.OperationErrorCode, bool) {
 	var resuming *rdsdatatypes.DatabaseResumingException
 	var unavailable *rdsdatatypes.DatabaseUnavailableException
 	if errors.As(err, &resuming) || errors.As(err, &unavailable) {
+		return resource.OperationErrorCodeNotStabilized, true
+	}
+
+	// An Aurora cluster answers DescribeDBClusters as available, with the Data
+	// API switched on, minutes before it can run a statement: until the cluster
+	// has a running DB instance every call is rejected. Because every statement
+	// here addresses the administrative database, which exists on any Aurora
+	// PostgreSQL cluster, this fault cannot mean the database is missing — it
+	// means the cluster is not serving yet, and it clears on its own.
+	var databaseNotFound *rdsdatatypes.DatabaseNotFoundException
+	if errors.As(err, &databaseNotFound) {
+		return resource.OperationErrorCodeNotStabilized, true
+	}
+
+	// The create preflight reads the cluster and names a genuinely disabled
+	// HTTP endpoint before any statement is sent, so reaching this exception
+	// past that check means the endpoint is still coming up with the cluster.
+	var httpEndpointDisabled *rdsdatatypes.HttpEndpointNotEnabledException
+	if errors.As(err, &httpEndpointDisabled) {
 		return resource.OperationErrorCodeNotStabilized, true
 	}
 
@@ -238,39 +276,54 @@ func classifyDataAPIError(err error) (resource.OperationErrorCode, bool) {
 		return resource.OperationErrorCodeServiceTimeout, true
 	}
 
-	var httpEndpointDisabled *rdsdatatypes.HttpEndpointNotEnabledException
-	if errors.As(err, &httpEndpointDisabled) {
-		return resource.OperationErrorCodeInvalidRequest, false
-	}
-
 	var accessDenied *rdsdatatypes.AccessDeniedException
 	var forbidden *rdsdatatypes.ForbiddenException
 	if errors.As(err, &accessDenied) || errors.As(err, &forbidden) {
-		return resource.OperationErrorCodeAccessDenied, false
+		return resource.OperationErrorCodeAccessDenied, true
 	}
 
 	var invalidSecret *rdsdatatypes.InvalidSecretException
 	var secretsError *rdsdatatypes.SecretsErrorException
 	if errors.As(err, &invalidSecret) || errors.As(err, &secretsError) {
-		return resource.OperationErrorCodeInvalidCredentials, false
+		return resource.OperationErrorCodeInvalidCredentials, true
 	}
 
-	var databaseNotFound *rdsdatatypes.DatabaseNotFoundException
 	var notFound *rdsdatatypes.NotFoundException
-	if errors.As(err, &databaseNotFound) || errors.As(err, &notFound) {
-		return resource.OperationErrorCodeNotFound, false
+	if errors.As(err, &notFound) {
+		return resource.OperationErrorCodeNotFound, true
 	}
 
 	var badRequest *rdsdatatypes.BadRequestException
 	var databaseError *rdsdatatypes.DatabaseErrorException
 	if errors.As(err, &badRequest) || errors.As(err, &databaseError) {
 		if isDuplicateObjectError(err) {
-			return resource.OperationErrorCodeAlreadyExists, false
+			return resource.OperationErrorCodeAlreadyExists, true
 		}
-		return resource.OperationErrorCodeInvalidRequest, false
+		return resource.OperationErrorCodeInvalidRequest, true
 	}
 
-	return resource.OperationErrorCodeGeneralServiceException, false
+	return "", false
+}
+
+// dataAPIProgressFailure repackages a recognised Data API fault as a failed
+// ProgressResult carrying its error code, and reports whether it recognised one.
+//
+// The distinction matters: the agent reads the retry decision off the error code
+// on a result, and a plugin that returns a Go error instead produces no code at
+// all. A transient fault returned as an error is therefore terminal, however
+// carefully it was classified.
+func dataAPIProgressFailure(op resource.Operation, nativeID string, err error) (*resource.ProgressResult, bool) {
+	code, ok := recognizeDataAPIFault(err)
+	if !ok {
+		return nil, false
+	}
+	return &resource.ProgressResult{
+		Operation:       op,
+		OperationStatus: resource.OperationStatusFailure,
+		NativeID:        nativeID,
+		ErrorCode:       code,
+		StatusMessage:   err.Error(),
+	}, true
 }
 
 // PostgreSQL SQLSTATEs the provisioners branch on.

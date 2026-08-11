@@ -363,11 +363,13 @@ func TestDatabaseRoleDeleteReportsOwnedObjectsActionably(t *testing.T) {
 			Message: strPtr(`ERROR: role "appuser" cannot be dropped because some objects depend on it; SQLState: 2BP01`),
 		}).Once()
 
-	_, err := testRole().deleteWithClient(context.Background(), client,
+	result, err := testRole().deleteWithClient(context.Background(), client,
 		&resource.DeleteRequest{NativeID: buildNativeID(testClusterArn, testSecretArn, "appuser")})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "appuser")
-	assert.Contains(t, strings.ToLower(err.Error()), "owns")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Contains(t, result.ProgressResult.StatusMessage, "appuser")
+	assert.Contains(t, strings.ToLower(result.ProgressResult.StatusMessage), "owns")
 }
 
 func TestDatabaseRoleStatusSucceedsImmediately(t *testing.T) {

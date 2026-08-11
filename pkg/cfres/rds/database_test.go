@@ -118,10 +118,16 @@ func TestDatabaseCreateStopsWhenTheGrantFails(t *testing.T) {
 			Message: strPtr(`ERROR: must have admin option on role "appuser"; SQLState: 42501`),
 		}).Once()
 
-	_, err := testDatabase().createWithClient(context.Background(), client, aurora(t),
+	result, err := testDatabase().createWithClient(context.Background(), client, aurora(t),
 		&resource.CreateRequest{Properties: databaseProps(t, nil)})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "appuser")
+	// The engine rejected the grant, so the failure comes back classified on the
+	// result; the diagnosis travels in the status message.
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Contains(t, result.ProgressResult.StatusMessage, "appuser")
+	assert.False(t, resource.IsRecoverable(result.ProgressResult.ErrorCode),
+		"a refused grant is not going to clear on a retry")
 	assert.NotContains(t, strings.Join(client.statements, "\n"), "CREATE DATABASE",
 		"no DDL may be attempted once the ownership grant fails")
 }
@@ -345,9 +351,11 @@ func TestDatabaseDeleteDoesNotForceOnOtherErrors(t *testing.T) {
 			Message: strPtr(`ERROR: permission denied to drop database; SQLState: 42501`),
 		}).Once()
 
-	_, err := testDatabase().deleteWithClient(context.Background(), client,
+	result, err := testDatabase().deleteWithClient(context.Background(), client,
 		&resource.DeleteRequest{NativeID: buildNativeID(testClusterArn, testSecretArn, "appdb")})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
 	assert.Equal(t, []string{`DROP DATABASE "appdb"`}, client.statements,
 		"FORCE must never follow an error that is not an in-use error")
 }

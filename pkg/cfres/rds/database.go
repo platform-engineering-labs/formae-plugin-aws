@@ -114,7 +114,21 @@ func (d *Database) Create(ctx context.Context, request *resource.CreateRequest) 
 	return d.createWithClient(ctx, rdsdata.NewFromConfig(cfg), rds.NewFromConfig(cfg), request)
 }
 
+// createWithClient reports a recognised Data API fault through the result, so
+// the agent sees its error code and can retry a condition that clears on its
+// own — most often a cluster that is not serving statements yet.
 func (d *Database) createWithClient(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
+	result, err := d.create(ctx, client, clusters, request)
+	if err != nil {
+		if progress, ok := dataAPIProgressFailure(resource.OperationCreate, "", err); ok {
+			return &resource.CreateResult{ProgressResult: progress}, nil
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+func (d *Database) create(ctx context.Context, client dataAPIClient, clusters rdsClusterClient, request *resource.CreateRequest) (*resource.CreateResult, error) {
 	settings, err := d.parseSettings(request.Properties)
 	if err != nil {
 		return nil, err
@@ -261,6 +275,17 @@ func (d *Database) Read(ctx context.Context, request *resource.ReadRequest) (*re
 }
 
 func (d *Database) readWithClient(ctx context.Context, client dataAPIClient, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	result, err := d.read(ctx, client, request)
+	if err != nil {
+		if code, ok := recognizeDataAPIFault(err); ok {
+			return &resource.ReadResult{ResourceType: databaseType, ErrorCode: code}, nil
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+func (d *Database) read(ctx context.Context, client dataAPIClient, request *resource.ReadRequest) (*resource.ReadResult, error) {
 	clusterArn, secretArn, databaseName, err := parseNativeID(request.NativeID)
 	if err != nil {
 		return nil, err
@@ -304,6 +329,17 @@ func (d *Database) Update(ctx context.Context, request *resource.UpdateRequest) 
 }
 
 func (d *Database) updateWithClient(ctx context.Context, client dataAPIClient, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	result, err := d.update(ctx, client, request)
+	if err != nil {
+		if progress, ok := dataAPIProgressFailure(resource.OperationUpdate, request.NativeID, err); ok {
+			return &resource.UpdateResult{ProgressResult: progress}, nil
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+func (d *Database) update(ctx context.Context, client dataAPIClient, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
 	desired, err := d.parseSettings(request.DesiredProperties)
 	if err != nil {
 		return nil, err
@@ -370,6 +406,17 @@ func (d *Database) Delete(ctx context.Context, request *resource.DeleteRequest) 
 }
 
 func (d *Database) deleteWithClient(ctx context.Context, client dataAPIClient, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
+	result, err := d.delete(ctx, client, request)
+	if err != nil {
+		if progress, ok := dataAPIProgressFailure(resource.OperationDelete, request.NativeID, err); ok {
+			return &resource.DeleteResult{ProgressResult: progress}, nil
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+func (d *Database) delete(ctx context.Context, client dataAPIClient, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
 	clusterArn, secretArn, databaseName, err := parseNativeID(request.NativeID)
 	if err != nil {
 		return nil, err

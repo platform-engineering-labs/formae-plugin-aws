@@ -58,6 +58,16 @@ formae agent.
   `secretsmanager:GetSecretValue` on the admin secret (plus `kms:Decrypt` on its
   key for a customer-managed key), and `rds:DescribeDBClusters` for the
   create-time preflight.
+
+  **A cluster that is not serving yet is waited out, not failed.** An Aurora
+  cluster reports itself available, with the Data API enabled, for several
+  minutes before it can answer a statement — until it has a running DB instance
+  every call is rejected. Conditions that clear on their own (a cluster with no
+  instance yet, an endpoint still coming up, a resuming or unavailable database,
+  a service fault or timeout) are now reported to the agent as recoverable on
+  every operation, so it retries them instead of failing the resource. Faults
+  that will not clear — access denied, an unusable secret, a rejected statement
+  — stay terminal and keep their diagnosis.
 - S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
   `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
   buckets that block SSE-C round-trip through extract and reconcile instead of
