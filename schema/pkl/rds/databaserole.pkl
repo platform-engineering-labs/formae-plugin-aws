@@ -82,7 +82,11 @@ open class DatabaseRole extends formae.Resource {
     /// rotating the secret rotates the role. Hashed at rest and never returned by
     /// any operation: PostgreSQL stores a salted verifier, so no drift can be
     /// reported for it, and re-deriving it for comparison is impossible by
-    /// construction. A changed value emits exactly one `ALTER ROLE ... PASSWORD`.
+    /// construction. An update therefore writes the password when the planned
+    /// change touches it, and also whenever the plan carries no usable signal —
+    /// missing a rotation would be a correctness bug, where writing the same
+    /// password again converges. Each write stores a freshly salted verifier, so
+    /// a redundant one is convergent rather than a no-op.
     @aws.FieldHint {
         required = true
         writeOnly = true

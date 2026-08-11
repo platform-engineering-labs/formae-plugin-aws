@@ -36,7 +36,12 @@ formae agent.
   itself and sends that; the plaintext appears in neither CloudTrail's
   `rds-data` events nor any statement logging. The password field is write-only
   and opaque, so it is hashed at rest and never compared against the salted
-  verifier the engine stores. Passwords must be printable ASCII (U+0020 to
+  verifier the engine stores. Rotation is therefore driven from the change being
+  applied: the password is written when that change touches it, and also when it
+  carries no usable signal — a missed rotation is a correctness bug, while
+  writing the same password again converges. Each write stores a freshly salted
+  verifier, so a redundant one is convergent rather than a no-op.
+  Passwords must be printable ASCII (U+0020 to
   U+007E), the range PostgreSQL's SASLprep normalization passes through
   unchanged; Secrets Manager's generated passwords already satisfy this.
 

@@ -94,6 +94,39 @@ func (r *DatabaseRole) parseSettings(properties json.RawMessage) (*roleSettings,
 	}, nil
 }
 
+// rolePriorPropertiesModel is the comparable half of a role's last-known model.
+//
+// The password is deliberately absent, and this type exists so it cannot be read
+// by accident. Prior state is comparison context: an opaque property's prior
+// value is redacted to something that is not the type the schema declares, so
+// reading it fails. That is not the whole reason though — the password is
+// write-only, so prior state could never carry it even unredacted, and comparing
+// a declared password against it is unsatisfiable by construction. The cluster
+// and the role name are createOnly, so a change to either replaces the resource
+// rather than reaching an update; the update reads the live ones from the desired
+// side.
+type rolePriorPropertiesModel struct {
+	secretArn string
+	canLogin  bool
+}
+
+func parseRolePriorProperties(properties json.RawMessage) (*rolePriorPropertiesModel, error) {
+	var props map[string]any
+	if err := json.Unmarshal(properties, &props); err != nil {
+		return nil, fmt.Errorf("failed to parse prior properties: %w", err)
+	}
+
+	secretArn, err := utils.GetStringProperty(props, "AdminSecretArn")
+	if err != nil {
+		return nil, fmt.Errorf("invalid prior AdminSecretArn: %w", err)
+	}
+
+	return &rolePriorPropertiesModel{
+		secretArn: secretArn,
+		canLogin:  boolProperty(props, "CanLogin", true),
+	}, nil
+}
+
 func (r *DatabaseRole) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
 	cfg, err := r.cfg.ToAwsConfig(ctx)
 	if err != nil {
@@ -348,7 +381,7 @@ func (r *DatabaseRole) update(ctx context.Context, client dataAPIClient, request
 	if err != nil {
 		return nil, err
 	}
-	prior, err := r.parseSettings(request.PriorProperties)
+	prior, err := parseRolePriorProperties(request.PriorProperties)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +409,12 @@ func (r *DatabaseRole) update(ctx context.Context, client dataAPIClient, request
 		}
 	}
 
-	if desired.password != prior.password {
+	// The password cannot be compared — nothing readable holds the old one — so
+	// the planned change is what decides whether to write it. Re-issuing the same
+	// password is not free: the verifier is salted afresh every time, so an
+	// unnecessary write churns pg_authid rather than being a no-op. It is still
+	// the right way to be wrong, which is why an unusable patch means write.
+	if patchAffects(request.PatchDocument, "/Password") {
 		verifier, err := newScramVerifier(desired.password)
 		if err != nil {
 			return nil, err

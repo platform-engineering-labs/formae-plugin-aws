@@ -248,6 +248,25 @@ func TestDatabaseRoleReadReportsNotFoundOnZeroRows(t *testing.T) {
 	assert.Equal(t, resource.OperationErrorCodeNotFound, result.ErrorCode)
 }
 
+// priorRoleProps is what the agent really sends as prior state: the password is
+// opaque, so its prior value is redacted to an unusable non-scalar sentinel.
+func priorRoleProps(t *testing.T, overrides map[string]any) json.RawMessage {
+	t.Helper()
+	props := map[string]any{"Password": map[string]any{"$opaque": "redacted"}}
+	for k, v := range overrides {
+		props[k] = v
+	}
+	return roleProps(t, props)
+}
+
+func patchDoc(t *testing.T, ops []map[string]any) *string {
+	t.Helper()
+	encoded, err := json.Marshal(ops)
+	require.NoError(t, err)
+	document := string(encoded)
+	return &document
+}
+
 func TestDatabaseRoleUpdateRotatesThePassword(t *testing.T) {
 	client := &mockDataAPIClient{}
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
@@ -258,8 +277,11 @@ func TestDatabaseRoleUpdateRotatesThePassword(t *testing.T) {
 	nativeID := buildNativeID(testClusterArn, testSecretArn, "appuser")
 	result, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
 		NativeID:          nativeID,
-		PriorProperties:   roleProps(t, map[string]any{"Password": "oldPassword123"}),
+		PriorProperties:   priorRoleProps(t, nil),
 		DesiredProperties: roleProps(t, nil),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/Password", "value": testPassword},
+		}),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, nativeID, result.ProgressResult.NativeID)
@@ -269,7 +291,32 @@ func TestDatabaseRoleUpdateRotatesThePassword(t *testing.T) {
 	assert.NotContains(t, client.statements[0], testPassword)
 }
 
-func TestDatabaseRoleUpdateTogglesLogin(t *testing.T) {
+// The password is write-only, so prior state can never carry it: an opaque
+// property's prior value arrives redacted, and reading it at all fails the
+// update before any statement is composed.
+func TestDatabaseRoleUpdateDoesNotReadTheRedactedPriorPassword(t *testing.T) {
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(existingRoleCatalog(t, true), nil).Once()
+
+	result, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+		NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+		PriorProperties:   priorRoleProps(t, nil),
+		DesiredProperties: roleProps(t, nil),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/Password", "value": testPassword},
+		}),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.ProgressResult)
+	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+}
+
+// The patch is the only signal that separates a rotation from an unrelated
+// change, since the declared password cannot be compared against prior state.
+func TestDatabaseRoleUpdateLeavesThePasswordAloneWhenThePatchDoes(t *testing.T) {
 	client := &mockDataAPIClient{}
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).
 		Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
@@ -279,14 +326,85 @@ func TestDatabaseRoleUpdateTogglesLogin(t *testing.T) {
 	nativeID := buildNativeID(testClusterArn, testSecretArn, "appuser")
 	_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
 		NativeID:          nativeID,
-		PriorProperties:   roleProps(t, nil),
+		PriorProperties:   priorRoleProps(t, nil),
 		DesiredProperties: roleProps(t, map[string]any{"CanLogin": false}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/CanLogin", "value": false},
+		}),
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, `ALTER ROLE "appuser" NOLOGIN`, client.statements[0])
 	assert.NotContains(t, strings.Join(client.statements, "\n"), "PASSWORD",
-		"an unchanged password must not be rewritten")
+		"a patch that leaves the password alone must not rewrite it")
+}
+
+// A parent-object or whole-document replacement carries the password with it, so
+// matching the exact path would silently miss the rotation. The schema's own
+// spelling of the property counts too.
+func TestDatabaseRoleUpdateAppliesThePasswordForAnOpAboveIt(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		ops  []map[string]any
+	}{
+		{"whole document replaced", []map[string]any{{"op": "replace", "path": ""}}},
+		{"schema-cased property", []map[string]any{{"op": "replace", "path": "/password"}}},
+		{"moved onto the property", []map[string]any{{"op": "move", "from": "/Other", "path": "/Password"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &mockDataAPIClient{}
+			client.On("ExecuteStatement", mock.Anything, mock.Anything).
+				Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+			client.On("ExecuteStatement", mock.Anything, mock.Anything).
+				Return(existingRoleCatalog(t, true), nil).Once()
+
+			_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+				NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+				PriorProperties:   priorRoleProps(t, nil),
+				DesiredProperties: roleProps(t, nil),
+				PatchDocument:     patchDoc(t, tt.ops),
+			})
+			require.NoError(t, err)
+			assert.Contains(t, client.statements[0], `ALTER ROLE "appuser" PASSWORD`)
+		})
+	}
+}
+
+// A missed rotation is a correctness bug; a re-applied password converges. So an
+// unusable signal means apply, not skip.
+func TestDatabaseRoleUpdateAppliesThePasswordWithoutAUsableSignal(t *testing.T) {
+	empty := ""
+	emptyOps := "[]"
+	malformed := "{not a patch"
+	null := "null"
+
+	for _, tt := range []struct {
+		name  string
+		patch *string
+	}{
+		{"absent", nil},
+		{"empty string", &empty},
+		{"no operations", &emptyOps},
+		{"unparseable", &malformed},
+		{"json null", &null},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &mockDataAPIClient{}
+			client.On("ExecuteStatement", mock.Anything, mock.Anything).
+				Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+			client.On("ExecuteStatement", mock.Anything, mock.Anything).
+				Return(existingRoleCatalog(t, true), nil).Once()
+
+			_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+				NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+				PriorProperties:   priorRoleProps(t, nil),
+				DesiredProperties: roleProps(t, nil),
+				PatchDocument:     tt.patch,
+			})
+			require.NoError(t, err)
+			assert.Contains(t, client.statements[0], `ALTER ROLE "appuser" PASSWORD`)
+		})
+	}
 }
 
 func TestDatabaseRoleUpdateProvesANewAdminSecretBeforeRewritingTheNativeID(t *testing.T) {
@@ -301,8 +419,11 @@ func TestDatabaseRoleUpdateProvesANewAdminSecretBeforeRewritingTheNativeID(t *te
 	oldNativeID := buildNativeID(testClusterArn, testSecretArn, "appuser")
 	result, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
 		NativeID:          oldNativeID,
-		PriorProperties:   roleProps(t, nil),
+		PriorProperties:   priorRoleProps(t, nil),
 		DesiredProperties: roleProps(t, map[string]any{"AdminSecretArn": newSecret}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/AdminSecretArn", "value": newSecret},
+		}),
 	})
 	require.NoError(t, err)
 
@@ -310,6 +431,8 @@ func TestDatabaseRoleUpdateProvesANewAdminSecretBeforeRewritingTheNativeID(t *te
 	probe := client.Calls[0].Arguments.Get(1).(*rdsdata.ExecuteStatementInput)
 	assert.Equal(t, newSecret, *probe.SecretArn)
 	assert.Equal(t, buildNativeID(testClusterArn, newSecret, "appuser"), result.ProgressResult.NativeID)
+	assert.NotContains(t, strings.Join(client.statements, "\n"), "ALTER ROLE",
+		"repointing the admin credential changes nothing about the role itself")
 }
 
 func TestDatabaseRoleUpdateKeepsTheOldNativeIDWhenTheNewSecretFails(t *testing.T) {
@@ -322,7 +445,7 @@ func TestDatabaseRoleUpdateKeepsTheOldNativeIDWhenTheNewSecretFails(t *testing.T
 	oldNativeID := buildNativeID(testClusterArn, testSecretArn, "appuser")
 	result, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
 		NativeID:          oldNativeID,
-		PriorProperties:   roleProps(t, nil),
+		PriorProperties:   priorRoleProps(t, nil),
 		DesiredProperties: roleProps(t, map[string]any{"AdminSecretArn": newSecret}),
 	})
 	require.NoError(t, err)
