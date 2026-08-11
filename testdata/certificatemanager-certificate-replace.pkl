@@ -31,17 +31,17 @@ forma {
   new certificate.Certificate {
     label = "plugin-sdk-test-cert"
     domainName = certDomain
-    // Unchanged from the base fixture: subject alternative names are
-    // createOnly, so this update is a tag-only change.
+    // One additional name differs from the base fixture. Subject
+    // alternative names are createOnly, so a genuine change to the list
+    // must replace the certificate.
     subjectAlternativeNames = new Listing<String> {
       "auth.\(certDomain)"
-      "cloud.\(certDomain)"
+      "api.\(certDomain)"
     }
     validationMethod = "DNS"
     keyAlgorithm = "RSA_2048"
     tags = new Listing<aws.Tag> {
       new { key = "Owner"; value = "plugin-sdk" }
-      new { key = "Environment"; value = "test" }
     }
   }
 }

@@ -92,6 +92,14 @@ open class Certificate extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     domainName: String
 
+    /// Additional names the certificate should cover, **excluding** the
+    /// primary `domainName`. ACM injects the primary domain into the
+    /// subject alternative names it returns, so the Read provisioner at
+    /// pkg/cfres/certificatemanager/certificate.go subtracts it again
+    /// and reports only the additional names. Listing the primary domain
+    /// here therefore differs from the read-back, and because this field
+    /// is createOnly that difference plans a replacement of the
+    /// certificate on every reconcile.
     @aws.FieldHint { createOnly = true }
     subjectAlternativeNames: Listing<String>?
 
