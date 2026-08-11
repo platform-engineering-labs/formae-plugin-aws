@@ -468,6 +468,175 @@ func TestRead_PopulatesValidationMethodFromDomainValidationOption(t *testing.T) 
 	}
 }
 
+func TestRead_SubjectAlternativeNames_ExcludesPrimaryDomain(t *testing.T) {
+	tests := []struct {
+		name       string
+		domainName *string
+		readback   []string
+		wantSANs   []string
+		wantAbsent bool
+	}{
+		{
+			name:       "primary first",
+			domainName: aws.String("example.com"),
+			readback:   []string{"example.com", "cloud.example.com", "auth.example.com"},
+			wantSANs:   []string{"cloud.example.com", "auth.example.com"},
+		},
+		{
+			name:       "primary in the middle",
+			domainName: aws.String("example.com"),
+			readback:   []string{"cloud.example.com", "example.com", "auth.example.com"},
+			wantSANs:   []string{"cloud.example.com", "auth.example.com"},
+		},
+		{
+			name:       "only the primary",
+			domainName: aws.String("example.com"),
+			readback:   []string{"example.com"},
+			wantAbsent: true,
+		},
+		{
+			name:       "primary repeated",
+			domainName: aws.String("example.com"),
+			readback:   []string{"example.com", "example.com", "auth.example.com"},
+			wantSANs:   []string{"auth.example.com"},
+		},
+		{
+			name:       "primary absent from readback",
+			domainName: aws.String("example.com"),
+			readback:   []string{"cloud.example.com", "auth.example.com"},
+			wantSANs:   []string{"cloud.example.com", "auth.example.com"},
+		},
+		{
+			name:       "primary differs only by case",
+			domainName: aws.String("Example.COM"),
+			readback:   []string{"example.com", "auth.example.com"},
+			wantSANs:   []string{"auth.example.com"},
+		},
+		{
+			name:       "duplicate non-primary names are preserved",
+			domainName: aws.String("example.com"),
+			readback:   []string{"example.com", "auth.example.com", "auth.example.com"},
+			wantSANs:   []string{"auth.example.com", "auth.example.com"},
+		},
+		{
+			name:     "no domain name in the response",
+			readback: []string{"cloud.example.com", "auth.example.com"},
+			wantSANs: []string{"cloud.example.com", "auth.example.com"},
+		},
+		{
+			name:       "empty readback list",
+			domainName: aws.String("example.com"),
+			readback:   []string{},
+			wantAbsent: true,
+		},
+		{
+			name:       "nil readback list",
+			domainName: aws.String("example.com"),
+			readback:   nil,
+			wantAbsent: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeACMClient{
+				describeCertificateOut: &acm.DescribeCertificateOutput{
+					Certificate: &acmtypes.CertificateDetail{
+						CertificateArn:          aws.String("arn:fake"),
+						DomainName:              tt.domainName,
+						SubjectAlternativeNames: tt.readback,
+					},
+				},
+			}
+			cert := newCertificateWithFake(fake)
+
+			res, err := cert.Read(context.Background(), &resource.ReadRequest{
+				NativeID:     "arn:fake",
+				ResourceType: "AWS::CertificateManager::Certificate",
+			})
+			if err != nil {
+				t.Fatalf("Read failed: %v", err)
+			}
+
+			var props map[string]any
+			if err := json.Unmarshal([]byte(res.Properties), &props); err != nil {
+				t.Fatalf("unmarshal properties: %v", err)
+			}
+
+			raw, present := props["SubjectAlternativeNames"]
+			if tt.wantAbsent {
+				if present {
+					t.Errorf("SubjectAlternativeNames: want key absent, got %v", raw)
+				}
+				return
+			}
+			if !present {
+				t.Fatalf("SubjectAlternativeNames: want %v, got key absent", tt.wantSANs)
+			}
+			got, ok := raw.([]any)
+			if !ok {
+				t.Fatalf("SubjectAlternativeNames not a list: %T", raw)
+			}
+			if len(got) != len(tt.wantSANs) {
+				t.Fatalf("SubjectAlternativeNames: want %v, got %v", tt.wantSANs, got)
+			}
+			for i, want := range tt.wantSANs {
+				if got[i] != want {
+					t.Errorf("SubjectAlternativeNames[%d]: want %q, got %q", i, want, got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestCreate_ReadbackSubjectAlternativeNames_ExcludePrimaryDomain(t *testing.T) {
+	fake := &fakeACMClient{
+		requestCertificateOut: &acm.RequestCertificateOutput{
+			CertificateArn: aws.String("arn:fake"),
+		},
+		describeCertificateOut: &acm.DescribeCertificateOutput{
+			Certificate: &acmtypes.CertificateDetail{
+				CertificateArn: aws.String("arn:fake"),
+				DomainName:     aws.String("example.com"),
+				Status:         acmtypes.CertificateStatusPendingValidation,
+				// ACM injects the primary domain into the SAN list it
+				// returns, whatever the operator declared.
+				SubjectAlternativeNames: []string{"example.com", "cloud.example.com", "auth.example.com"},
+			},
+		},
+	}
+	cert := newCertificateWithFake(fake)
+
+	props := map[string]any{
+		"DomainName":              "example.com",
+		"SubjectAlternativeNames": []any{"cloud.example.com", "auth.example.com"},
+		"ValidationMethod":        "DNS",
+	}
+	body, _ := json.Marshal(props)
+	res, err := cert.Create(context.Background(), &resource.CreateRequest{Properties: body})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	var readback map[string]any
+	if err := json.Unmarshal([]byte(res.ProgressResult.ResourceProperties), &readback); err != nil {
+		t.Fatalf("unmarshal resource properties: %v", err)
+	}
+	sans, ok := readback["SubjectAlternativeNames"].([]any)
+	if !ok {
+		t.Fatalf("SubjectAlternativeNames not a list: %T", readback["SubjectAlternativeNames"])
+	}
+	want := []string{"cloud.example.com", "auth.example.com"}
+	if len(sans) != len(want) {
+		t.Fatalf("SubjectAlternativeNames: want %v, got %v", want, sans)
+	}
+	for i, w := range want {
+		if sans[i] != w {
+			t.Errorf("SubjectAlternativeNames[%d]: want %q, got %q", i, w, sans[i])
+		}
+	}
+}
+
 func TestRead_NotFound_ReturnsErrorCode(t *testing.T) {
 	fake := &fakeACMClient{
 		describeCertificateErr: &acmtypes.ResourceNotFoundException{Message: aws.String("nope")},

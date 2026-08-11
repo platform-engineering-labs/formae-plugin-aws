@@ -10,7 +10,6 @@ import "@formae/formae.pkl"
 import "@aws/aws.pkl"
 
 import "@aws/apigateway/restapi.pkl"
-import "@aws/apigateway/resource.pkl"
 import "@aws/apigateway/method.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
@@ -24,14 +23,6 @@ local testApi = new restapi.RestApi {
   endpointConfiguration = new restapi.EndpointConfiguration {
     types = new Listing { "REGIONAL" }
   }
-}
-
-// Resource dependency - Method needs a resource
-local testResource = new resource.Resource {
-  label = "test-resource-for-method"
-  restApiId = testApi.res.restApiId
-  parentId = testApi.res.rootResourceId
-  pathPart = "test"
 }
 
 forma {
@@ -50,14 +41,11 @@ forma {
   // Parent RestApi
   testApi
 
-  // Parent Resource
-  testResource
-
-  // Method under test
+  // Method under test, attached to the API's implicit root resource
   new method.Method {
     label = "plugin-sdk-test-method"
     restApiId = testApi.res.restApiId
-    resourceId = testResource.res.resourceId
+    resourceId = testApi.res.rootResourceId
     httpMethod = "GET"
     authorizationType = "NONE"
     integration = new method.Integration {

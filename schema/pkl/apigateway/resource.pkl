@@ -28,7 +28,6 @@ open class ResourceResolvable extends formae.Resolvable {
     identifier = "ResourceId"
     parent = "AWS::ApiGateway::RestApi"
     listParam = new formae.ListProperty { parentProperty = "RestApiId" listParameter = "RestApiId" }
-    discoverable = false
     extractable = true
 }
 open class Resource extends formae.Resource {

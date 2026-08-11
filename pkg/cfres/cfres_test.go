@@ -29,3 +29,7 @@ func TestS3ObjectRegistration(t *testing.T) {
 	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationCheckStatus, cfg))
 	assert.NotNil(t, GetProvisionerForOperation("AWS::S3::Object", resource.OperationList, cfg))
 }
+
+func TestApiGatewayMethodListRegistration(t *testing.T) {
+	assert.NotNil(t, GetProvisionerForOperation("AWS::ApiGateway::Method", resource.OperationList, &config.Config{Region: "us-east-1"}))
+}
