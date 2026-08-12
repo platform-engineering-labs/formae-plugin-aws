@@ -7,10 +7,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/arn"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -259,9 +261,28 @@ func matchesFilter(propertiesJSON string, filter map[string]string) bool {
 			// Not a simple string (could be object/array) — can't compare, include the resource
 			continue
 		}
-		if propValue != filterValue {
+		if !filterValuesEquivalent(propValue, filterValue) {
 			return false
 		}
 	}
 	return true
+}
+
+// filterValuesEquivalent reports whether a listed resource's property value and
+// a filter value name the same thing. CloudControl echoes some properties in a
+// different form than the one used to scope the list: Lambda::Permission, for
+// example, lists with a FunctionName but echoes it back as the function ARN.
+// Two values are equivalent when they are equal, or when one is an ARN whose
+// trailing resource id equals the other.
+func filterValuesEquivalent(propValue, filterValue string) bool {
+	if propValue == filterValue {
+		return true
+	}
+	if strings.HasPrefix(propValue, "arn:") && arn.IdFrom(propValue) == filterValue {
+		return true
+	}
+	if strings.HasPrefix(filterValue, "arn:") && arn.IdFrom(filterValue) == propValue {
+		return true
+	}
+	return false
 }
