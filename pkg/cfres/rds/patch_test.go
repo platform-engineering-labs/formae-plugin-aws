@@ -28,6 +28,7 @@ func TestPatchAffects(t *testing.T) {
 		{"move source", document(`[{"op":"move","from":"/Password","path":"/Other"}]`), true},
 		{"another property", document(`[{"op":"replace","path":"/CanLogin","value":false}]`), false},
 		{"a property whose name starts the same", document(`[{"op":"replace","path":"/PasswordPolicy","value":"x"}]`), false},
+		{"unknown op value with a legitimate non-overlapping path", document(`[{"op":"invented","path":"/CanLogin"}]`), false},
 		// An unusable signal must not be read as "nothing changed": re-applying a
 		// value converges, missing a rotation does not.
 		{"absent", nil, true},
@@ -37,7 +38,13 @@ func TestPatchAffects(t *testing.T) {
 		{"json null", document("null"), true},
 		{"unparseable", document("{not a patch"), true},
 		{"not an array of operations", document(`{"op":"replace","path":"/CanLogin"}`), true},
-		{"operation with no path", document(`[{"op":"replace","value":"x"}]`), false},
+		{"an unreadable operation counts as affecting", document(`[{"op":"replace","value":"x"}]`), true},
+		{"empty operation", document(`[{}]`), true},
+		{"non-string path", document(`[{"op":"replace","path":7}]`), true},
+		{"no op but a usable unrelated pointer", document(`[{"path":"/CanLogin"}]`), true},
+		{"non-string op", document(`[{"op":7,"path":"/CanLogin"}]`), true},
+		{"non-string from on a move", document(`[{"op":"move","from":7,"path":"/CanLogin"}]`), true},
+		{"a well-formed unrelated op followed by an unreadable one", document(`[{"op":"replace","path":"/CanLogin"},{}]`), true},
 	}
 
 	for _, tt := range tests {
