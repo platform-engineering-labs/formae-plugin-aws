@@ -454,6 +454,288 @@ func TestDatabaseRoleUpdateKeepsTheOldNativeIDWhenTheNewSecretFails(t *testing.T
 		"the old NativeID still works and must survive a failed credential swap")
 }
 
+// unusableRoleProps is desired state whose declared password cannot be read:
+// the property is present, but its value is not the type the schema declares.
+// The encoding below is one shape of that rather than the shape — what is
+// asserted is the type, which is the only thing guaranteed about such a value.
+func unusableRoleProps(t *testing.T, overrides map[string]any) json.RawMessage {
+	t.Helper()
+	props := map[string]any{"Password": map[string]any{"$opaque": "preserved"}}
+	for k, v := range overrides {
+		props[k] = v
+	}
+	return roleProps(t, props)
+}
+
+// A password that cannot be read is only a problem for an update that writes it.
+// Failing on it regardless would freeze the role: neither the login attribute nor
+// the admin credential could ever be changed again.
+func TestDatabaseRoleUpdateTogglesCanLoginWithAnUnusablePassword(t *testing.T) {
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(existingRoleCatalog(t, false), nil).Once()
+
+	nativeID := buildNativeID(testClusterArn, testSecretArn, "appuser")
+	result, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+		NativeID:          nativeID,
+		PriorProperties:   priorRoleProps(t, nil),
+		DesiredProperties: unusableRoleProps(t, map[string]any{"CanLogin": false}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/CanLogin", "value": false},
+		}),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, result.ProgressResult.OperationStatus)
+
+	assert.Equal(t, `ALTER ROLE "appuser" NOLOGIN`, client.statements[0])
+	assert.NotContains(t, strings.Join(client.statements, "\n"), "PASSWORD",
+		"a password that is not written does not need to be readable")
+}
+
+func TestDatabaseRoleUpdateRepointsTheAdminSecretWithAnUnusablePassword(t *testing.T) {
+	newSecret := "arn:aws:secretsmanager:us-east-1:123456789012:secret:formae-test-new456"
+
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(existingRoleCatalog(t, true), nil).Once()
+
+	result, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+		NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+		PriorProperties:   priorRoleProps(t, nil),
+		DesiredProperties: unusableRoleProps(t, map[string]any{"AdminSecretArn": newSecret}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/AdminSecretArn", "value": newSecret},
+		}),
+	})
+	require.NoError(t, err)
+
+	probe := client.Calls[0].Arguments.Get(1).(*rdsdata.ExecuteStatementInput)
+	assert.Equal(t, "SELECT 1", *probe.Sql)
+	assert.Equal(t, newSecret, *probe.SecretArn)
+	assert.Equal(t, buildNativeID(testClusterArn, newSecret, "appuser"), result.ProgressResult.NativeID)
+	assert.NotContains(t, strings.Join(client.statements, "\n"), "PASSWORD",
+		"repointing the admin credential does not write the password")
+}
+
+// The patch is biased towards yes, so plenty of shapes mean write. When the
+// declared password cannot be read, every one of them must fail: writing
+// hash-derived material would lock the role's consumer out while the operation
+// reported success.
+func TestDatabaseRoleUpdateFailsWhenAnUnusablePasswordMustBeWritten(t *testing.T) {
+	document := func(body string) *string { return &body }
+
+	for _, tt := range []struct {
+		name  string
+		patch *string
+	}{
+		{"an op on the property", document(`[{"op":"replace","path":"/Password","value":"x"}]`)},
+		{"the whole document replaced", document(`[{"op":"replace","path":"","value":{}}]`)},
+		{"moved onto the property", document(`[{"op":"move","from":"/Other","path":"/Password"}]`)},
+		{"copied onto the property", document(`[{"op":"copy","from":"/Other","path":"/Password"}]`)},
+		{"copied from the property", document(`[{"op":"copy","from":"/Password","path":"/Other"}]`)},
+		{"absent", nil},
+		{"empty string", document("")},
+		{"no operations", document("[]")},
+		{"unparseable", document("{not a patch")},
+		{"json null", document("null")},
+		{"an empty operation", document(`[{}]`)},
+		{"a non-string path", document(`[{"op":"replace","path":7}]`)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &mockDataAPIClient{}
+			_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+				NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+				PriorProperties:   priorRoleProps(t, nil),
+				DesiredProperties: unusableRoleProps(t, nil),
+				PatchDocument:     tt.patch,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "appuser")
+			assert.Empty(t, client.statements,
+				"a password that cannot be read must be written as nothing at all")
+		})
+	}
+}
+
+// Proving a replacement credential is read-only and precedes the password, so a
+// combined change probes before it fails. Nothing has been written by then.
+func TestDatabaseRoleUpdateProbesANewAdminSecretBeforeFailingOnAnUnusablePassword(t *testing.T) {
+	newSecret := "arn:aws:secretsmanager:us-east-1:123456789012:secret:formae-test-new456"
+
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+
+	_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+		NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+		PriorProperties:   priorRoleProps(t, nil),
+		DesiredProperties: unusableRoleProps(t, map[string]any{"AdminSecretArn": newSecret}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/AdminSecretArn", "value": newSecret},
+			{"op": "replace", "path": "/Password"},
+		}),
+	})
+	require.Error(t, err)
+
+	require.Len(t, client.statements, 1)
+	assert.Equal(t, "SELECT 1", client.statements[0])
+	assert.NotContains(t, strings.Join(client.statements, "\n"), "ALTER ROLE",
+		"the probe reads; nothing about the role is altered")
+}
+
+// The login attribute is written after the password, so a failure on the
+// password leaves it alone.
+func TestDatabaseRoleUpdateWritesNoLoginAttributeWhenThePasswordCannotBeRead(t *testing.T) {
+	client := &mockDataAPIClient{}
+
+	_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+		NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+		PriorProperties:   priorRoleProps(t, nil),
+		DesiredProperties: unusableRoleProps(t, map[string]any{"CanLogin": false}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/Password"},
+			{"op": "replace", "path": "/CanLogin", "value": false},
+		}),
+	})
+	require.Error(t, err)
+	assert.Empty(t, client.statements, "the login attribute must not be written on its own")
+}
+
+// What makes a declared password unreadable is that it is not the type the
+// schema declares, not any particular encoding of it.
+func TestDatabaseRoleUpdateReadsThePasswordByTypeNotByEncoding(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value any
+	}{
+		{"object", map[string]any{"$opaque": "preserved"}},
+		{"array", []any{"preserved"}},
+		{"number", 7},
+		{"boolean", true},
+		{"null", json.RawMessage("null")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			desired := func(overrides map[string]any) json.RawMessage {
+				overrides["Password"] = tt.value
+				return roleProps(t, overrides)
+			}
+
+			t.Run("tolerated when the password is not written", func(t *testing.T) {
+				client := &mockDataAPIClient{}
+				client.On("ExecuteStatement", mock.Anything, mock.Anything).
+					Return(&rdsdata.ExecuteStatementOutput{}, nil).Once()
+				client.On("ExecuteStatement", mock.Anything, mock.Anything).
+					Return(existingRoleCatalog(t, false), nil).Once()
+
+				_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+					NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+					PriorProperties:   priorRoleProps(t, nil),
+					DesiredProperties: desired(map[string]any{"CanLogin": false}),
+					PatchDocument: patchDoc(t, []map[string]any{
+						{"op": "replace", "path": "/CanLogin", "value": false},
+					}),
+				})
+				require.NoError(t, err)
+				assert.Equal(t, `ALTER ROLE "appuser" NOLOGIN`, client.statements[0])
+				assert.NotContains(t, strings.Join(client.statements, "\n"), "PASSWORD")
+			})
+
+			t.Run("loud when it must be written", func(t *testing.T) {
+				client := &mockDataAPIClient{}
+				_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+					NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+					PriorProperties:   priorRoleProps(t, nil),
+					DesiredProperties: desired(map[string]any{}),
+					PatchDocument: patchDoc(t, []map[string]any{
+						{"op": "replace", "path": "/Password"},
+					}),
+				})
+				require.Error(t, err)
+				assert.Empty(t, client.statements)
+			})
+		})
+	}
+}
+
+// An absent password is malformed rather than unreadable: the desired document
+// is complete, and the property is required.
+func TestDatabaseRoleRejectsAnAbsentPassword(t *testing.T) {
+	absent := map[string]any{"Password": nil}
+
+	t.Run("create", func(t *testing.T) {
+		client := &mockDataAPIClient{}
+		_, err := testRole().createWithClient(context.Background(), client, aurora(t),
+			&resource.CreateRequest{Properties: roleProps(t, absent)})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "required property Password not found")
+		assert.Empty(t, client.statements)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		client := &mockDataAPIClient{}
+		_, err := testRole().updateWithClient(context.Background(), client, &resource.UpdateRequest{
+			NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+			PriorProperties:   priorRoleProps(t, nil),
+			DesiredProperties: roleProps(t, absent),
+			PatchDocument: patchDoc(t, []map[string]any{
+				{"op": "replace", "path": "/CanLogin", "value": false},
+			}),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "required property Password not found",
+			"an absent password fails even where an unreadable one is tolerated")
+		assert.Empty(t, client.statements)
+	})
+}
+
+// A create always writes the password, so it demands a readable one up front —
+// before the cluster is described, let alone asked to run anything.
+func TestDatabaseRoleCreateRejectsAnUnusablePasswordBeforeAnyAWSCall(t *testing.T) {
+	client := &mockDataAPIClient{}
+	clusters := &mockRDSClusterClient{}
+
+	_, err := testRole().createWithClient(context.Background(), client, clusters,
+		&resource.CreateRequest{Properties: unusableRoleProps(t, nil)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "appuser")
+
+	clusters.AssertNotCalled(t, "DescribeDBClusters", mock.Anything, mock.Anything)
+	assert.Empty(t, client.statements)
+}
+
+// The declared value of an opaque property is hash-derived material, so it is
+// classed as secret alongside the password and the verifier: refusing it must
+// not quote it back.
+func TestDatabaseRoleUnreadablePasswordIsNeverQuotedBack(t *testing.T) {
+	var logged bytes.Buffer
+	ctx := plugin.WithLogger(context.Background(),
+		plugin.NewPluginLogger(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))))
+
+	const material = "S0LqZmF0ZWtleQ"
+
+	client := &mockDataAPIClient{}
+	_, err := testRole().updateWithClient(ctx, client, &resource.UpdateRequest{
+		NativeID:          buildNativeID(testClusterArn, testSecretArn, "appuser"),
+		PriorProperties:   priorRoleProps(t, nil),
+		DesiredProperties: roleProps(t, map[string]any{"Password": map[string]any{"$opaque": material}}),
+		PatchDocument: patchDoc(t, []map[string]any{
+			{"op": "replace", "path": "/Password"},
+		}),
+	})
+	require.Error(t, err)
+
+	// The role name is not secret and already names the failure elsewhere.
+	assert.Contains(t, err.Error(), "appuser")
+	assert.NotContains(t, err.Error(), material)
+	assert.NotContains(t, err.Error(), "SCRAM-SHA-256$")
+	assert.NotContains(t, logged.String(), material)
+	assert.NotContains(t, logged.String(), "SCRAM-SHA-256$")
+}
+
 func TestDatabaseRoleDeleteDropsTheRole(t *testing.T) {
 	client := &mockDataAPIClient{}
 	client.On("ExecuteStatement", mock.Anything, mock.Anything).

@@ -40,7 +40,13 @@ formae agent.
   applied: the password is written when that change touches it, and also when it
   carries no usable signal — a missed rotation is a correctness bug, while
   writing the same password again converges. Each write stores a freshly salted
-  verifier, so a redundant one is convergent rather than a no-op.
+  verifier, so a redundant one is convergent rather than a no-op. A password the
+  plugin cannot read is treated the same way. Once formae holds an opaque value
+  only as a hash it stops sending the value itself, and what arrives in its place
+  is deliberately not the type the schema declares; an update that is not writing
+  the password tolerates that rather than failing, so the login attribute and the
+  admin credential stay changeable, while one that *is* writing it fails outright
+  rather than storing something no client could authenticate against.
   Passwords must be printable ASCII (U+0020 to
   U+007E), the range PostgreSQL's SASLprep normalization passes through
   unchanged; Secrets Manager's generated passwords already satisfy this.

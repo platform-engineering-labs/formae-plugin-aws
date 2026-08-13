@@ -51,8 +51,56 @@ type roleSettings struct {
 	clusterArn string
 	secretArn  string
 	roleName   string
-	password   string
+	password   declaredPassword
 	canLogin   bool
+}
+
+// declaredPassword is a declared password that may not be one.
+//
+// The property is opaque, so an update whose value formae holds only as a hash
+// carries something present but unusable in its place. The encoding of that
+// stand-in is unspecified and must not be branched on; the one guarantee is that
+// it is not the type the schema declares. So the test is structural — a declared
+// password that is not a string is not a password — and it holds whatever the
+// stand-in looks like.
+//
+// The value is wrapped rather than carried as a bare string beside a flag so the
+// obligation travels with it: composing a verifier from it does not compile
+// without asking for the plaintext first. Writing hash-derived material into a
+// role would lock its consumer out while the operation reported success.
+type declaredPassword struct {
+	value  string
+	usable bool
+}
+
+// plaintext returns the declared password, or refuses if what was declared
+// cannot be read as one.
+//
+// The message is fixed and quotes nothing: the value it refuses is hash-derived
+// material. The caller names the role, which is not secret.
+func (p declaredPassword) plaintext() (string, error) {
+	if !p.usable {
+		return "", fmt.Errorf("the declared password is not a string")
+	}
+	return p.value, nil
+}
+
+// declaredPasswordFrom reads the declared Password out of a properties document.
+//
+// Absent is malformed and fails here: the document is the complete desired
+// state, and the property is required. Present but not a string is recorded
+// unusable rather than rejected, so only an operation that writes the password
+// has to have a readable one.
+func declaredPasswordFrom(props map[string]any) (declaredPassword, error) {
+	raw, present := props["Password"]
+	if !present {
+		return declaredPassword{}, fmt.Errorf("required property Password not found")
+	}
+	value, isString := raw.(string)
+	if !isString {
+		return declaredPassword{}, nil
+	}
+	return declaredPassword{value: value, usable: true}, nil
 }
 
 func (r *DatabaseRole) parseSettings(properties json.RawMessage) (*roleSettings, error) {
@@ -73,7 +121,7 @@ func (r *DatabaseRole) parseSettings(properties json.RawMessage) (*roleSettings,
 	if err != nil {
 		return nil, fmt.Errorf("invalid RoleName: %w", err)
 	}
-	password, err := utils.GetStringProperty(props, "Password")
+	password, err := declaredPasswordFrom(props)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Password: %w", err)
 	}
@@ -186,6 +234,13 @@ func (r *DatabaseRole) create(ctx context.Context, client dataAPIClient, cluster
 		return nil, err
 	}
 
+	// A create always writes the password, so it is demanded before anything is
+	// asked of AWS rather than at the point of composing the verifier.
+	password, err := settings.password.plaintext()
+	if err != nil {
+		return nil, fmt.Errorf("cannot set the password of role %q: %w", settings.roleName, err)
+	}
+
 	// One describe at the point where a clear diagnosis is worth most, matching
 	// the database resource: an unsupported engine is named here rather than
 	// reaching the engine as a catalog query it cannot answer.
@@ -193,7 +248,7 @@ func (r *DatabaseRole) create(ctx context.Context, client dataAPIClient, cluster
 		return nil, err
 	}
 
-	verifier, err := newScramVerifier(settings.password)
+	verifier, err := newScramVerifier(password)
 	if err != nil {
 		return nil, err
 	}
@@ -414,15 +469,24 @@ func (r *DatabaseRole) update(ctx context.Context, client dataAPIClient, request
 	// password is not free: the verifier is salted afresh every time, so an
 	// unnecessary write churns pg_authid rather than being a no-op. It is still
 	// the right way to be wrong, which is why an unusable patch means write.
+	//
+	// The declared password is demanded here rather than at the top, so an update
+	// that does not write it tolerates one it could not have written. Nothing
+	// above this point has changed anything — the only statement that can precede
+	// it is the read-only probe — so failing here writes nothing either way.
 	if patchAffects(request.PatchDocument, "/Password") {
-		verifier, err := newScramVerifier(desired.password)
+		password, err := desired.password.plaintext()
+		if err != nil {
+			return nil, fmt.Errorf("cannot rotate the password of role %q: %w", desired.roleName, err)
+		}
+		verifier, err := newScramVerifier(password)
 		if err != nil {
 			return nil, err
 		}
 		statement := fmt.Sprintf("ALTER ROLE %s PASSWORD %s",
 			quoteIdentifier(desired.roleName), quoteLiteral(verifier))
 		if _, err := execute(ctx, client, desired.clusterArn, desired.secretArn, statement, nil); err != nil {
-			return nil, secretSafeError(err, "failed to rotate the password of role %q", desired.roleName, desired.password, verifier)
+			return nil, secretSafeError(err, "failed to rotate the password of role %q", desired.roleName, password, verifier)
 		}
 	}
 
