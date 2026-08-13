@@ -454,9 +454,10 @@ func TestDatabaseRoleUpdateKeepsTheOldNativeIDWhenTheNewSecretFails(t *testing.T
 		"the old NativeID still works and must survive a failed credential swap")
 }
 
-// unusableRoleProps is what the agent really sends as desired state when it
-// holds the declared password only as a hash: the property is present, but its
-// value is not the type the schema declares, so it cannot be read as a password.
+// unusableRoleProps is desired state whose declared password cannot be read:
+// the property is present, but its value is not the type the schema declares.
+// The encoding below is one shape of that rather than the shape — what is
+// asserted is the type, which is the only thing guaranteed about such a value.
 func unusableRoleProps(t *testing.T, overrides map[string]any) json.RawMessage {
 	t.Helper()
 	props := map[string]any{"Password": map[string]any{"$opaque": "preserved"}}
