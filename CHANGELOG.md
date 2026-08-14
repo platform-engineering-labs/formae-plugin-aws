@@ -209,9 +209,14 @@ formae agent.
 
   Two consequences to declare against. Removing a pin from the listing is a
   no-op in the registry, so a placed pin is removable only out of band or by a
-  lifecycle policy. And teardown removes only `imageTag`, so a repository that
-  accumulates pins does not empty itself: declare it `emptyOnDelete` or give it
-  a lifecycle policy that ages pins out.
+  lifecycle policy. And a repository that accumulates pins cannot be emptied by
+  tearing the `ImageBuild` down: teardown removes only `imageTag`, while every
+  pin is by design a manifest meant to outlive the build that produced it. Its
+  lifecycle becomes yours to manage — a repository lifecycle policy that ages
+  pins out, or an out-of-band delete. A formae-managed `AWS::ECR::Repository`
+  that still holds images cannot be destroyed, and `emptyOnDelete` does not
+  currently change that: CloudControl's delete carries no resource model, so the
+  repository's delete handler never sees the property.
 
 ### Changed
 
