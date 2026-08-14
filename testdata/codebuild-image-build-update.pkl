@@ -11,19 +11,38 @@ import "@aws/aws.pkl"
 
 import "@aws/iam/role.pkl"
 import "@aws/logs/loggroup.pkl"
-import "@aws/ecr/repository.pkl"
 import "@aws/codebuild/project.pkl"
 import "@aws/codebuild/imagebuild.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local accountID = read("env:FORMAE_TEST_ACCOUNT_ID")
 local stackName = "plugin-sdk-test-codebuild-image-build-\(testRunID)"
 local logGroupNameValue = "/formae/plugin-sdk-test/codebuild-image-build/\(testRunID)"
-local repoNameValue = "formae-plugin-sdk-test-imgbuild-\(testRunID)"
+local regionValue = "us-east-1"
 
 // The immutable pin. It is placed on the first build's manifest and never moved,
 // so it stays a pullable reference to that image after the rebuild moves the
 // mutable tag on to a new digest.
 local pinTagValue = "sdk-pin-\(testRunID)"
+
+// Push target for the built image: a PERSISTENT, formae-UNMANAGED prerequisite
+// provisioned by scripts/ci/clean-environment.sh, which creates it if absent and
+// empties it between runs but never deletes it. Retaining a pin is the whole
+// point of this fixture, and a retained pin means the repository still holds an
+// image when the stack is torn down; CloudControl refuses to delete a repository
+// that still contains images, so managing the repository here made the
+// whole-stack Destroy fail. `emptyOnDelete` does not rescue it — CloudControl's
+// delete carries no resource model, so the repository's delete handler never
+// sees the property. Referencing the repository by name keeps it out of formae's
+// lifecycle, the same arrangement testdata/cloudtrail-trail.pkl uses for its
+// log-delivery bucket.
+//
+// The URI and ARN are assembled literally because there is no managed resource
+// to take a resolvable from, and because the replace variant interpolates the
+// URI into the middle of a Dockerfile string, where a resolvable cannot go.
+local repoNameValue = "formae-plugin-sdk-test-imgbuild-\(accountID)"
+local repoUriValue = "\(accountID).dkr.ecr.\(regionValue).amazonaws.com/\(repoNameValue)"
+local repoArnValue = "arn:aws:ecr:\(regionValue):\(accountID):repository/\(repoNameValue)"
 
 // Placeholder build spec. The ImageBuild supplies the spec it runs as a per-build
 // override, so the project's own spec is never read — it only has to be a
@@ -35,16 +54,6 @@ local testBuildSpec = """
       commands:
         - echo "plugin sdk test"
   """
-
-// Push target for the built image. Deleting the ImageBuild removes only the image
-// under its own tag, so the pinned predecessor outlives it by design; the
-// repository empties itself on delete, which is the contract a repository that
-// accumulates pins has to declare.
-local testRepo = new repository.Repository {
-  label = "test-ecr-for-image-build"
-  repositoryName = repoNameValue
-  emptyOnDelete = true
-}
 
 // CloudWatch Logs destination for the build's logs.
 local testLogGroup = new loggroup.LogGroup {
@@ -103,7 +112,7 @@ local buildRole = new role.Role {
               "ecr:CompleteLayerUpload"
               "ecr:PutImage"
             }
-            ["Resource"] = testRepo.res.arn
+            ["Resource"] = repoArnValue
           }
           // Build logs. A log group's ARN already carries a ":*" suffix, so it
           // covers the log streams under the group — which is what these two
@@ -160,7 +169,7 @@ forma {
   new formae.Target {
     label = "aws-target"
     config = new aws.Config {
-      region = "us-east-1"
+      region = regionValue
     }
   }
 
@@ -169,9 +178,6 @@ forma {
 
   // Log group the build writes its logs to (referenced as a resolvable below).
   testLogGroup
-
-  // ECR repository the image is pushed to (referenced as a resolvable below).
-  testRepo
 
   // Build project the image build runs on (referenced as a resolvable below).
   testProject
@@ -184,7 +190,7 @@ forma {
   // uses to prove the pin did not move on to this manifest.
   new imagebuild.ImageBuild {
     label = "plugin-sdk-test-image-build"
-    ecrRepositoryUri = testRepo.res.repositoryUri
+    ecrRepositoryUri = repoUriValue
     imageTag = "sdk-test-\(testRunID)"
     additionalTags = new Listing { pinTagValue }
     dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\nRUN touch /rebuilt\n"

@@ -1512,11 +1512,19 @@ done
 # ECR Resources (regional)
 # ============================================================================
 
+# The PERSISTENT ImageBuild push-target repository, exempted from the delete
+# sweep below and provisioned + emptied in 28d instead. Empty if the account id
+# cannot be read, in which case both steps simply do nothing.
+imgbuild_repo=""
+if acct=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && [[ -n "$acct" && "$acct" != "None" ]]; then
+    imgbuild_repo="${FORMAE_PREFIX}-imgbuild-${acct}"
+fi
+
 # 28. Delete ECR repositories with test prefix
 echo "Cleaning ECR test repositories..."
 aws ecr describe-repositories --region "$REGION" \
     --query "repositories[?contains(repositoryName, '$TEST_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
-    if [[ -n "$repo" ]]; then
+    if [[ -n "$repo" && "$repo" != "$imgbuild_repo" ]]; then
         echo "  Deleting ECR repository: $repo"
         aws ecr delete-repository --repository-name "$repo" --region "$REGION" --force 2>/dev/null || true
     fi
@@ -1553,6 +1561,42 @@ aws ecr describe-repository-creation-templates --region "$REGION" 2>/dev/null | 
         aws ecr delete-repository-creation-template --prefix "$prefix" --region "$REGION" 2>/dev/null || true
     fi
 done
+
+# 28d. Provision + empty the PERSISTENT ImageBuild push-target repository.
+# This repository is a persistent conformance prerequisite for the
+# codebuild-image-build fixture family: the fixture retains an immutable pin on
+# the predecessor manifest, which is precisely what leaves the repository holding
+# an image at teardown, and CloudControl refuses to delete a repository that
+# still contains images — so the fixture references this externally-owned
+# repository by name instead of managing it. We therefore CREATE it if absent and
+# EMPTY it here, but never DELETE it (28 skips it), the same treatment the
+# CloudTrail log bucket gets in 8b-ct. Every step is guarded so it never aborts
+# the cleanup script.
+echo "Provisioning + emptying persistent ImageBuild push-target repository..."
+if [[ -n "$imgbuild_repo" ]]; then
+    if ! aws ecr describe-repositories --repository-names "$imgbuild_repo" --region "$REGION" >/dev/null 2>&1; then
+        echo "  Creating ECR repository: $imgbuild_repo"
+        aws ecr create-repository --repository-name "$imgbuild_repo" --region "$REGION" >/dev/null 2>&1 || true
+    fi
+    # Delete every image the repository holds, tagged and untagged alike, without
+    # deleting the repository — clearing the pins and images prior runs retained.
+    # batch-delete-image takes at most 100 ids, so page until the repository is
+    # empty. The pass count is bounded because batch-delete-image exits 0 even
+    # when individual ids land in its failures[], which would otherwise re-list
+    # the same images forever; a repository this script cannot empty in 20 passes
+    # is a problem to surface, not to spin on.
+    echo "  Emptying ECR repository: $imgbuild_repo"
+    for _ in $(seq 1 20); do
+        img_ids=$(aws ecr list-images --repository-name "$imgbuild_repo" --region "$REGION" \
+            --max-items 100 --query 'imageIds[*]' --output json 2>/dev/null || echo '[]')
+        img_count=$(echo "$img_ids" | jq 'length' 2>/dev/null || echo 0)
+        if [[ -z "$img_count" || "$img_count" == "0" ]]; then
+            break
+        fi
+        aws ecr batch-delete-image --repository-name "$imgbuild_repo" --region "$REGION" \
+            --image-ids "$img_ids" >/dev/null 2>&1 || break
+    done
+fi
 
 # ============================================================================
 # ECS Resources (regional)
