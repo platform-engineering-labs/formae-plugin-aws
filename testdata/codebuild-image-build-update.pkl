@@ -182,15 +182,18 @@ forma {
   // Build project the image build runs on (referenced as a resolvable below).
   testProject
 
-  // Resource under test — last, singleton, and a leaf. A tiny literal Dockerfile
-  // over a cheap public base keeps the build fast while still exercising a real
-  // privileged docker build + push + digest capture.
+  // Resource under test — the Dockerfile gains a layer, which forces an in-place
+  // rebuild under the same tag. The pin is redeclared unchanged, so it is carried
+  // over rather than newly declared: it stays on the first build's manifest, that
+  // manifest therefore still carries a tag, and the rebuild's predecessor prune
+  // leaves it alone. The marker file this build writes is what the replace variant
+  // uses to prove the pin did not move on to this manifest.
   new imagebuild.ImageBuild {
     label = "plugin-sdk-test-image-build"
     ecrRepositoryUri = repoUriValue
     imageTag = "sdk-test-\(testRunID)"
     additionalTags = new Listing { pinTagValue }
-    dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\n"
+    dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\nRUN touch /rebuilt\n"
     projectName = testProject.res.name
   }
 }

@@ -66,6 +66,10 @@ func TestValidateInputRejects(t *testing.T) {
 		"bad project name":   func(i *imageBuildInput) { i.ProjectName = "not a project name" },
 		"project with pipe":  func(i *imageBuildInput) { i.ProjectName = "left|right" },
 		"bad buildArg key":   func(i *imageBuildInput) { i.BuildArgs = map[string]string{"bad key": "v"} },
+		"bad pin":            func(i *imageBuildInput) { i.AdditionalTags = []string{"bad pin!"} },
+		"duplicate pin":      func(i *imageBuildInput) { i.AdditionalTags = []string{"release-1", "release-1"} },
+		"pin equal to tag":   func(i *imageBuildInput) { i.AdditionalTags = []string{validInput().ImageTag} },
+		"too many pins":      func(i *imageBuildInput) { i.AdditionalTags = manyPins(maxAdditionalTags + 1) },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -74,6 +78,70 @@ func TestValidateInputRejects(t *testing.T) {
 			assert.Error(t, validateInput(in))
 		})
 	}
+}
+
+// manyPins renders n distinct, well-formed pins.
+func manyPins(n int) []string {
+	pins := make([]string, 0, n)
+	for i := range n {
+		pins = append(pins, "release-"+strconv.Itoa(i))
+	}
+	return pins
+}
+
+func TestValidateInputAcceptsPins(t *testing.T) {
+	in := validInput()
+	in.AdditionalTags = manyPins(maxAdditionalTags)
+	require.NoError(t, validateInput(in))
+
+	// An absent and an empty listing are both "no pins".
+	in.AdditionalTags = nil
+	require.NoError(t, validateInput(in))
+	in.AdditionalTags = []string{}
+	require.NoError(t, validateInput(in))
+}
+
+// TestImageTagPatternExcludesEncodingSeparators asserts the tag pattern admits
+// neither separator a pin is joined on, so a pin can never split its own field in
+// the RequestID or the NativeID.
+func TestImageTagPatternExcludesEncodingSeparators(t *testing.T) {
+	for _, bad := range []string{"a,b", "a|b"} {
+		assert.False(t, imageTagPattern.MatchString(bad), "expected %q to be rejected", bad)
+	}
+}
+
+func TestNewPins(t *testing.T) {
+	prior := imageBuildInput{AdditionalTags: []string{"release-1", "release-2"}}
+
+	// Declared-minus-previously-declared, in declared order.
+	got := newPins(prior, imageBuildInput{AdditionalTags: []string{"release-2", "release-3", "release-1", "release-4"}})
+	assert.Equal(t, []string{"release-3", "release-4"}, got)
+
+	// Nothing new when the listing is carried over unchanged.
+	assert.Empty(t, newPins(prior, imageBuildInput{AdditionalTags: []string{"release-1", "release-2"}}))
+
+	// Dropping a pin declares nothing new — the plugin never deletes a pin.
+	assert.Empty(t, newPins(prior, imageBuildInput{AdditionalTags: []string{"release-1"}}))
+
+	// On a create there is no prior, so every declared pin is new.
+	assert.Equal(t, []string{"release-1"}, newPins(imageBuildInput{}, imageBuildInput{AdditionalTags: []string{"release-1"}}))
+
+	// A pin dropped and re-added in a later apply counts as new again.
+	dropped := imageBuildInput{AdditionalTags: []string{"release-1"}}
+	assert.Equal(t, []string{"release-2"}, newPins(dropped, imageBuildInput{AdditionalTags: []string{"release-1", "release-2"}}))
+
+	assert.Empty(t, newPins(imageBuildInput{}, imageBuildInput{}))
+}
+
+// TestBuildConfigHashIgnoresAdditionalTags asserts a pin is not a build-affecting
+// input: adding one must place a tag on the manifest that already exists, never
+// force a rebuild that would produce a different one.
+func TestBuildConfigHashIgnoresAdditionalTags(t *testing.T) {
+	project := &codebuildtypes.Project{Name: aws.String(testBuildProject)}
+	base := validInput()
+	pinned := validInput()
+	pinned.AdditionalTags = []string{"release-1", "release-2"}
+	assert.Equal(t, computeBuildConfigHash(base, project), computeBuildConfigHash(pinned, project))
 }
 
 func TestBuildArgsFileSortedAndCanonical(t *testing.T) {

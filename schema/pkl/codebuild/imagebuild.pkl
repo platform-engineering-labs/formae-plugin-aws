@@ -65,6 +65,47 @@ open class ImageBuild extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     imageTag: String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))
 
+    /// Immutable pins placed on the manifest this build pushes, alongside
+    /// `imageTag`. A pin names one manifest for its whole life, which is what
+    /// makes it usable as a rollback target: `imageTag` moves to the new digest
+    /// on every in-place rebuild, a pin does not.
+    ///
+    /// Pins are create-once. A pin declared for the first time is placed on the
+    /// manifest this build produced, but only if the tag does not already exist
+    /// — a newly declared pin whose tag is already present fails the apply,
+    /// naming the tag and the digest it currently resolves to, so a typo or a
+    /// reused release name cannot yield a green apply whose rollback pin names
+    /// an unrelated image. A pin carried over from the previous apply is left
+    /// exactly where it is. The plugin therefore never moves and never deletes
+    /// a pin, which is what retains the predecessor: it still carries a tag, so
+    /// the rebuild leaves its manifest alone.
+    ///
+    /// Deliberately not `createOnly`: adding a pin must not re-create the
+    /// resource, because the delete half of a replacement would destroy the
+    /// predecessor this field exists to keep.
+    ///
+    /// Two consequences worth declaring against. Removing a pin from this
+    /// listing is a no-op in the registry — it names a predecessor manifest,
+    /// and reaping that is exactly what pins prevent — so a placed pin is
+    /// removable only out of band or by a repository lifecycle policy.
+    ///
+    /// And a repository that accumulates pins cannot be emptied by tearing this
+    /// resource down: teardown removes only `imageTag`, while every pin is by
+    /// design a manifest meant to outlive the build that produced it. Its
+    /// lifecycle becomes the operator's to manage — a repository lifecycle
+    /// policy that ages pins out, or an out-of-band delete. Note that a
+    /// formae-managed `AWS::ECR::Repository` still holding images cannot be
+    /// destroyed, and that `emptyOnDelete` does not currently change this:
+    /// CloudControl's delete carries no resource model, so the repository's
+    /// delete handler never sees the property.
+    ///
+    /// Placement is a lookup followed by a write, so on a tag-mutable
+    /// repository an out-of-band writer creating the same tag in between can
+    /// still move it. The guarantee is what this resource does, not what can
+    /// happen to a registry.
+    @aws.FieldHint
+    additionalTags: Listing<String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))>?
+
     /// The full literal Dockerfile content to build. The image is built verbatim
     /// from this Dockerfile; the returned digest is the source of truth.
     @aws.FieldHint

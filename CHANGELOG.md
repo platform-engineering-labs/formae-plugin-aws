@@ -188,7 +188,45 @@ formae agent.
   same way as the private one, so each would need its own provisioner rather than
   coming for free with a schema.
 
+- `AWS::CodeBuild::ImageBuild` gains `additionalTags`: immutable pins placed on
+  the manifest a build pushes, alongside `imageTag`. `imageTag` moves to the new
+  digest on every in-place rebuild, so a consumer that pinned the previous
+  digest lost the image it pinned — the rebuild left that manifest untagged, and
+  an untagged predecessor is exactly what the resource prunes. A pin gives the
+  predecessor a name of its own, so it is not untagged, so it survives: a
+  rollback target that outlives the next build.
+
+  Pins are **create-once**. A pin declared for the first time is placed on the
+  manifest that build produced, but only if the tag does not already exist — a
+  newly declared pin whose tag is taken fails the apply, naming the tag and the
+  digest it currently resolves to, so a reused release name cannot yield a green
+  apply whose rollback pin names an unrelated image. A pin carried over from the
+  previous apply is left exactly where it is. The plugin never moves and never
+  deletes a pin. Placement re-registers the identical manifest bytes and media
+  type, so the pin resolves to the same digest by construction, and adding one
+  does not force a rebuild — the build that produced the image is not re-run to
+  give it a second name.
+
+  Two consequences to declare against. Removing a pin from the listing is a
+  no-op in the registry, so a placed pin is removable only out of band or by a
+  lifecycle policy. And a repository that accumulates pins cannot be emptied by
+  tearing the `ImageBuild` down: teardown removes only `imageTag`, while every
+  pin is by design a manifest meant to outlive the build that produced it. Its
+  lifecycle becomes yours to manage — a repository lifecycle policy that ages
+  pins out, or an out-of-band delete. A formae-managed `AWS::ECR::Repository`
+  that still holds images cannot be destroyed, and `emptyOnDelete` does not
+  currently change that: CloudControl's delete carries no resource model, so the
+  repository's delete handler never sees the property.
+
 ### Changed
+
+- `AWS::CodeBuild::ImageBuild` prunes the predecessor manifest after an in-place
+  rebuild — behaviour present since the resource landed and not previously
+  written down. A rebuild moves `imageTag` to the new digest and leaves the
+  prior manifest untagged; the prune deletes it, so a co-managed repository
+  stays empty enough to tear down. It only ever deletes a manifest that carries
+  no tag at all, which is what lets the new `additionalTags` retain a
+  predecessor without changing the prune.
 
 - **Breaking.** `AWS::CodeBuild::ImageBuild` is now a pure build-and-push
   action: it creates no IAM role, no CodeBuild project and no log group.
