@@ -16,9 +16,16 @@ import "@aws/codebuild/project.pkl"
 import "@aws/codebuild/imagebuild.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local accountID = read("env:FORMAE_TEST_ACCOUNT_ID")
 local stackName = "plugin-sdk-test-codebuild-image-build-\(testRunID)"
 local logGroupNameValue = "/formae/plugin-sdk-test/codebuild-image-build/\(testRunID)"
+
+// The repository URI is assembled literally rather than taken from the
+// repository's resolvable, because this fixture interpolates it into the middle
+// of a Dockerfile string, where a resolvable cannot go.
+local regionValue = "us-east-1"
 local repoNameValue = "formae-plugin-sdk-test-imgbuild-\(testRunID)"
+local repoUriValue = "\(accountID).dkr.ecr.\(regionValue).amazonaws.com/\(repoNameValue)"
 
 // The immutable pin. It is placed on the first build's manifest and never moved,
 // so it stays a pullable reference to that image after the rebuild moves the
@@ -160,7 +167,7 @@ forma {
   new formae.Target {
     label = "aws-target"
     config = new aws.Config {
-      region = "us-east-1"
+      region = regionValue
     }
   }
 
@@ -176,15 +183,25 @@ forma {
   // Build project the image build runs on (referenced as a resolvable below).
   testProject
 
-  // Resource under test — last, singleton, and a leaf. A tiny literal Dockerfile
-  // over a cheap public base keeps the build fast while still exercising a real
-  // privileged docker build + push + digest capture.
+  // Resource under test — the tag is createOnly, so renaming it forces a replace.
+  // The build is the assertion, and it makes two of them against the registry
+  // itself rather than against anything the plugin records:
+  //
+  //   FROM <repo>:<pin>   cannot resolve unless the pinned manifest survived the
+  //                       rebuild that moved the mutable tag off it.
+  //   RUN test ! -f /rebuilt
+  //                       fails if the pin was moved on to the rebuilt manifest,
+  //                       since only that build wrote the marker.
+  //
+  // No pin is declared here. A replace is a create, where every declared pin is
+  // new by definition, so redeclaring the existing one would collide with itself
+  // and — correctly — fail the apply. The absent listing is also the path every
+  // existing consumer takes.
   new imagebuild.ImageBuild {
     label = "plugin-sdk-test-image-build"
     ecrRepositoryUri = testRepo.res.repositoryUri
-    imageTag = "sdk-test-\(testRunID)"
-    additionalTags = new Listing { pinTagValue }
-    dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN true\n"
+    imageTag = "sdk-test-replaced-\(testRunID)"
+    dockerfile = "FROM \(repoUriValue):\(pinTagValue)\nRUN test ! -f /rebuilt\n"
     projectName = testProject.res.name
   }
 }
