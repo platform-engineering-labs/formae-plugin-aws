@@ -418,6 +418,9 @@ func updateProps(t *testing.T, in imageBuildInput) json.RawMessage {
 	if len(in.BuildArgs) > 0 {
 		props["BuildArgs"] = in.BuildArgs
 	}
+	if len(in.AdditionalTags) > 0 {
+		props["AdditionalTags"] = in.AdditionalTags
+	}
 	js, err := json.Marshal(props)
 	require.NoError(t, err)
 	return js
@@ -1033,6 +1036,451 @@ func TestListReturnsEmpty(t *testing.T) {
 	res, err := p.List(context.Background(), &resource.ListRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, res.NativeIDs)
+}
+
+// ── pin placement ───────────────────────────────────────────────
+
+const (
+	testPinnedDigest   = "sha256:pinned"
+	testDockerManifest = `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}`
+)
+
+// expectManifestLookup stubs the read of the manifest a pin is placed on.
+func expectManifestLookup(ecr *mockECRClient, digest, manifest, mediaType string) {
+	ecr.On("BatchGetImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.BatchGetImageInput) bool {
+		return len(in.ImageIds) == 1 && aws.ToString(in.ImageIds[0].ImageDigest) == digest
+	})).Return(&ecrsdk.BatchGetImageOutput{
+		Images: []ecrtypes.Image{{
+			ImageId:                &ecrtypes.ImageIdentifier{ImageDigest: aws.String(digest)},
+			ImageManifest:          aws.String(manifest),
+			ImageManifestMediaType: aws.String(mediaType),
+		}},
+	}, nil).Once()
+}
+
+// expectTagLookup stubs the existence check of the pins themselves. present maps a
+// pin to the digest it already resolves to; a pin absent from the map does not exist.
+func expectTagLookup(ecr *mockECRClient, present map[string]string) {
+	images := make([]ecrtypes.Image, 0, len(present))
+	for tag, digest := range present {
+		images = append(images, ecrtypes.Image{
+			ImageId: &ecrtypes.ImageIdentifier{ImageTag: aws.String(tag), ImageDigest: aws.String(digest)},
+		})
+	}
+	ecr.On("BatchGetImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.BatchGetImageInput) bool {
+		return len(in.ImageIds) > 0 && in.ImageIds[0].ImageTag != nil
+	})).Return(&ecrsdk.BatchGetImageOutput{Images: images}, nil).Once()
+}
+
+func testEcrRef(t *testing.T) ecrRepositoryRef {
+	t.Helper()
+	ref, err := parseEcrRepositoryURI(testRepoURI)
+	require.NoError(t, err)
+	return ref
+}
+
+// TestPlacePinsPutsTheSameManifestUnderEachPin asserts a pin is placed by
+// re-registering the exact manifest bytes and media type the build produced, so the
+// pin resolves to that identical digest rather than to a rebuilt image.
+func TestPlacePinsPutsTheSameManifestUnderEachPin(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.Anything).Return(&ecrsdk.PutImageOutput{}, nil).Twice()
+
+	require.NoError(t, p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, []string{"release-1", "release-2"}))
+
+	for _, pin := range []string{"release-1", "release-2"} {
+		ecr.AssertCalled(t, "PutImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.PutImageInput) bool {
+			return aws.ToString(in.ImageTag) == pin &&
+				aws.ToString(in.ImageManifest) == testDockerManifest &&
+				aws.ToString(in.ImageManifestMediaType) == "application/vnd.docker.distribution.manifest.v2+json" &&
+				aws.ToString(in.RepositoryName) == "formae-agent" &&
+				aws.ToString(in.RegistryId) == "123456789012"
+		}))
+	}
+}
+
+// TestPlacePinsPreservesAnOCIIndexMediaType asserts the media type is carried
+// through verbatim: re-registering a multi-architecture index under a different
+// media type would change the digest, so the pin would not name the built image.
+func TestPlacePinsPreservesAnOCIIndexMediaType(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	const ociIndex = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json"}`
+	expectManifestLookup(ecr, testPinnedDigest, ociIndex, "application/vnd.oci.image.index.v1+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.PutImageInput) bool {
+		return aws.ToString(in.ImageManifest) == ociIndex &&
+			aws.ToString(in.ImageManifestMediaType) == "application/vnd.oci.image.index.v1+json"
+	})).Return(&ecrsdk.PutImageOutput{}, nil).Once()
+
+	require.NoError(t, p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, []string{"release-1"}))
+	ecr.AssertExpectations(t)
+}
+
+// TestPlacePinsRejectsAPinAlreadyOnAnotherDigest asserts a newly declared pin whose
+// tag already names a different image fails the apply instead of being moved. The
+// pin is create-once, so silently repointing it would destroy the rollback target
+// the operator believes that name still holds.
+func TestPlacePinsRejectsAPinAlreadyOnAnotherDigest(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, map[string]string{"release-1": "sha256:somethingelse"})
+
+	err := p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, []string{"release-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release-1")
+	assert.Contains(t, err.Error(), "sha256:somethingelse")
+	ecr.AssertNotCalled(t, "PutImage", mock.Anything, mock.Anything)
+}
+
+// TestPlacePinsAcceptsAPinAlreadyOnTheSameDigest asserts placement is idempotent:
+// a pin that already names this exact manifest is where it belongs, so it is left
+// alone rather than re-registered or rejected.
+func TestPlacePinsAcceptsAPinAlreadyOnTheSameDigest(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, map[string]string{"release-1": testPinnedDigest})
+
+	require.NoError(t, p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, []string{"release-1"}))
+	ecr.AssertNotCalled(t, "PutImage", mock.Anything, mock.Anything)
+}
+
+// TestPlacePinsToleratesAConcurrentIdenticalPush asserts the narrow race where
+// another writer registered the same tag on the same manifest between the lookup
+// and the write is success, not a failed apply.
+func TestPlacePinsToleratesAConcurrentIdenticalPush(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.Anything).
+		Return(&ecrsdk.PutImageOutput{}, &ecrtypes.ImageAlreadyExistsException{}).Once()
+
+	require.NoError(t, p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, []string{"release-1"}))
+}
+
+// TestPlacePinsSurfacesAnInconclusiveTagLookup asserts a per-image failure that is
+// not "no such tag" stops the placement. Reading an inconclusive lookup as "the tag
+// is free" would push the pin over a tag that already exists, which on a
+// tag-mutable repository moves it off the image it names.
+func TestPlacePinsSurfacesAnInconclusiveTagLookup(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	ecr.On("BatchGetImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.BatchGetImageInput) bool {
+		return len(in.ImageIds) > 0 && in.ImageIds[0].ImageTag != nil
+	})).Return(&ecrsdk.BatchGetImageOutput{
+		Failures: []ecrtypes.ImageFailure{{
+			ImageId:       &ecrtypes.ImageIdentifier{ImageTag: aws.String("release-1")},
+			FailureCode:   ecrtypes.ImageFailureCodeInvalidImageTag,
+			FailureReason: aws.String("invalid image tag"),
+		}},
+	}, nil).Once()
+
+	err := p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, []string{"release-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release-1")
+	ecr.AssertNotCalled(t, "PutImage", mock.Anything, mock.Anything)
+}
+
+// TestPlacePinsWithoutPinsTouchesECRNotAtAll asserts the whole feature is inert
+// when no pin is declared: an unpinned build behaves exactly as it did before.
+func TestPlacePinsWithoutPinsTouchesECRNotAtAll(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	require.NoError(t, p.placePins(context.Background(), testEcrRef(t), testPinnedDigest, nil))
+	ecr.AssertNotCalled(t, "BatchGetImage", mock.Anything, mock.Anything)
+	ecr.AssertNotCalled(t, "PutImage", mock.Anything, mock.Anything)
+}
+
+// TestStatusPlacesNewPinsAndEchoesTheDeclaredListing asserts a succeeded build
+// places its new pins and reports the full declared listing. The listing has to be
+// echoed because the caller's stored model of a list-valued property is rebuilt
+// from what the plugin returns; a build that placed a pin but stayed silent about
+// it would drop the pin from the model and re-place it on the next apply.
+func TestStatusPlacesNewPinsAndEchoesTheDeclaredListing(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	cb.On("BatchGetBuilds", mock.Anything, mock.Anything).Return(&codebuildsdk.BatchGetBuildsOutput{
+		Builds: []codebuildtypes.Build{{
+			Id:          aws.String("proj:build-1"),
+			BuildStatus: codebuildtypes.StatusTypeSucceeded,
+			ExportedEnvironmentVariables: []codebuildtypes.ExportedEnvironmentVariable{
+				{Name: aws.String(exportedDigestVar), Value: aws.String(testPinnedDigest)},
+			},
+		}},
+	}, nil)
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.Anything).Return(&ecrsdk.PutImageOutput{}, nil).Once()
+
+	state := testRequestState()
+	state.Pins = []string{"release-1", "release-2"}
+	state.NewPins = []string{"release-2"}
+	res, err := p.Status(context.Background(), &resource.StatusRequest{RequestID: encodeRequestID(state)})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+
+	ecr.AssertCalled(t, "PutImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.PutImageInput) bool {
+		return aws.ToString(in.ImageTag) == "release-2"
+	}))
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
+	assert.Equal(t, []string{"release-1", "release-2"}, out.AdditionalTags)
+}
+
+// TestStatusFailsAndSkipsThePruneWhenPlacementFails asserts a build whose pin could
+// not be placed is a failed apply, and that the predecessor is left alone. Pruning
+// after a failed placement would delete the rollback target while reporting that
+// the operator no longer has one.
+func TestStatusFailsAndSkipsThePruneWhenPlacementFails(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	cb.On("BatchGetBuilds", mock.Anything, mock.Anything).Return(&codebuildsdk.BatchGetBuildsOutput{
+		Builds: []codebuildtypes.Build{{
+			Id:          aws.String("proj:build-9"),
+			BuildStatus: codebuildtypes.StatusTypeSucceeded,
+			ExportedEnvironmentVariables: []codebuildtypes.ExportedEnvironmentVariable{
+				{Name: aws.String(exportedDigestVar), Value: aws.String("sha256:new")},
+			},
+		}},
+	}, nil)
+	expectManifestLookup(ecr, "sha256:new", testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, map[string]string{"release-1": "sha256:somethingelse"})
+
+	state := testRequestState()
+	state.Operation = string(resource.OperationUpdate)
+	state.BuildID = "proj:build-9"
+	state.PriorDigest = "sha256:old"
+	state.Pins = []string{"release-1"}
+	state.NewPins = []string{"release-1"}
+	res, err := p.Status(context.Background(), &resource.StatusRequest{RequestID: encodeRequestID(state)})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusFailure, res.ProgressResult.OperationStatus)
+	assert.Contains(t, res.ProgressResult.StatusMessage, "release-1")
+	ecr.AssertNotCalled(t, "BatchDeleteImage", mock.Anything, mock.Anything)
+}
+
+// TestUpdatePlacesANewPinWithoutRebuilding asserts adding a pin to an unchanged
+// build places it on the image already pushed. A rebuild would defeat the point:
+// the pin would name a newly built image rather than the deployed one.
+func TestUpdatePlacesANewPinWithoutRebuilding(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+	expectProjectLookup(cb, validProject())
+
+	desired := validInput()
+	desired.AdditionalTags = []string{"release-1"}
+	prior := validInput()
+	project := validProject()
+	hash := computeBuildConfigHash(prior, &project)
+
+	ecr.On("DescribeImages", mock.Anything, mock.MatchedBy(func(in *ecrsdk.DescribeImagesInput) bool {
+		return len(in.ImageIds) == 1 && aws.ToString(in.ImageIds[0].ImageTag) == desired.ImageTag
+	})).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String(testPinnedDigest)}},
+	}, nil).Once()
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.Anything).Return(&ecrsdk.PutImageOutput{}, nil).Once()
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(testRepoURI, desired.ImageTag, testBuildProject),
+		DesiredProperties: updateProps(t, desired),
+		PriorProperties:   priorProps(t, prior, imageBuildOutputs{ImageDigest: testPinnedDigest, BuildConfigHash: hash}),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
+
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
+	assert.Equal(t, []string{"release-1"}, out.AdditionalTags)
+}
+
+// TestUpdateDroppingAPinPlacesNothing asserts removing a pin from the listing is
+// inert in the registry. The plugin never deletes a pin — the manifest it names is
+// exactly the predecessor that pins exist to keep.
+func TestUpdateDroppingAPinPlacesNothing(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+	expectProjectLookup(cb, validProject())
+
+	desired := validInput()
+	prior := validInput()
+	prior.AdditionalTags = []string{"release-1"}
+	project := validProject()
+	hash := computeBuildConfigHash(prior, &project)
+
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String(testPinnedDigest)}},
+	}, nil).Once()
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(testRepoURI, desired.ImageTag, testBuildProject),
+		DesiredProperties: updateProps(t, desired),
+		PriorProperties:   priorProps(t, prior, imageBuildOutputs{ImageDigest: testPinnedDigest, BuildConfigHash: hash}),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
+	ecr.AssertNotCalled(t, "PutImage", mock.Anything, mock.Anything)
+	ecr.AssertNotCalled(t, "BatchDeleteImage", mock.Anything, mock.Anything)
+}
+
+// TestUpdateRebuildCarriesTheListingAndOnlyTheNewPins asserts a rebuild hands
+// Status both halves it needs: the whole declared listing to report, and only the
+// pins new to this apply to place.
+func TestUpdateRebuildCarriesTheListingAndOnlyTheNewPins(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+	expectProjectLookup(cb, validProject())
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-2"), TimeoutInMinutes: aws.Int32(30)},
+	}, nil)
+
+	desired := validInput()
+	desired.Dockerfile = "FROM public.ecr.aws/docker/library/alpine:3.20\nRUN touch /rebuilt\n"
+	desired.AdditionalTags = []string{"release-1", "release-2"}
+	prior := validInput()
+	prior.AdditionalTags = []string{"release-1"}
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(testRepoURI, desired.ImageTag, testBuildProject),
+		DesiredProperties: updateProps(t, desired),
+		PriorProperties:   priorProps(t, prior, imageBuildOutputs{ImageDigest: "sha256:old", BuildConfigHash: "v3:stale"}),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusInProgress, res.ProgressResult.OperationStatus)
+
+	state, err := decodeRequestID(res.ProgressResult.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"release-1", "release-2"}, state.Pins)
+	assert.Equal(t, []string{"release-2"}, state.NewPins)
+	assert.Equal(t, "sha256:old", state.PriorDigest)
+	_ = ecr
+}
+
+// TestCreateCarriesEveryDeclaredPinAsNew asserts a create has no prior listing, so
+// every pin it declares is placed.
+func TestCreateCarriesEveryDeclaredPinAsNew(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	p := newTestProvisioner(cb, nil)
+	expectProjectLookup(cb, validProject())
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-1"), TimeoutInMinutes: aws.Int32(30)},
+	}, nil)
+
+	in := validInput()
+	in.AdditionalTags = []string{"release-1"}
+	res, err := p.Create(context.Background(), &resource.CreateRequest{Properties: updateProps(t, in)})
+	require.NoError(t, err)
+
+	state, err := decodeRequestID(res.ProgressResult.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"release-1"}, state.Pins)
+	assert.Equal(t, []string{"release-1"}, state.NewPins)
+}
+
+// TestReadReportsTheDeclaredPinsThatStillExist asserts Read reports observed
+// registry state for the pins the caller's model declares: a pin deleted out of
+// band comes back missing, and surfaces as drift rather than being asserted to
+// still be there.
+func TestReadReportsTheDeclaredPinsThatStillExist(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil).Once()
+	expectTagLookup(ecr, map[string]string{"release-1": testPinnedDigest})
+
+	prior, err := json.Marshal(imageBuildInput{AdditionalTags: []string{"release-1", "release-gone"}})
+	require.NoError(t, err)
+
+	res, err := p.Read(context.Background(), &resource.ReadRequest{
+		NativeID:        encodeNativeID(testRepoURI, "0.1.0", testBuildProject),
+		ResourceType:    resourceType,
+		PriorProperties: prior,
+	})
+	require.NoError(t, err)
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out))
+	assert.Equal(t, []string{"release-1"}, out.AdditionalTags)
+}
+
+// TestReadWithoutAPriorListingReportsNoPins asserts Read stays a plain registry
+// lookup when the caller has no model to disambiguate against (discovery, or the
+// read-back of a create): the repository's other tags are not this resource's pins.
+func TestReadWithoutAPriorListingReportsNoPins(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil).Once()
+
+	res, err := p.Read(context.Background(), &resource.ReadRequest{
+		NativeID: encodeNativeID(testRepoURI, "0.1.0", testBuildProject), ResourceType: resourceType,
+	})
+	require.NoError(t, err)
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out))
+	assert.Empty(t, out.AdditionalTags)
+	ecr.AssertNotCalled(t, "BatchGetImage", mock.Anything, mock.Anything)
+}
+
+// TestRequestIDCarriesPinsAndDecodesAnOlderBuild asserts the pin fields round-trip
+// and that a build dispatched by the previous version — whose RequestID has no pin
+// fields at all — still decodes, so an upgrade mid-build does not strand it.
+func TestRequestIDCarriesPinsAndDecodesAnOlderBuild(t *testing.T) {
+	state := testRequestState()
+	state.PriorDigest = "sha256:old"
+	state.Pins = []string{"release-1", "release-2"}
+	state.NewPins = []string{"release-2"}
+
+	got, err := decodeRequestID(encodeRequestID(state))
+	require.NoError(t, err)
+	assert.Equal(t, state.Pins, got.Pins)
+	assert.Equal(t, state.NewPins, got.NewPins)
+	assert.Equal(t, state.PriorDigest, got.PriorDigest)
+
+	// An empty listing round-trips as no pins rather than as one empty pin.
+	bare := testRequestState()
+	got, err = decodeRequestID(encodeRequestID(bare))
+	require.NoError(t, err)
+	assert.Empty(t, got.Pins)
+	assert.Empty(t, got.NewPins)
+
+	// The eight-field form the previous version emitted.
+	legacy := strings.Join([]string{
+		string(resource.OperationUpdate), "proj:build-1", testRepoURI, "0.1.0", testBuildProject,
+		testNow.Format(time.RFC3339), "v3:hash", "sha256:old",
+	}, "|")
+	got, err = decodeRequestID(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:old", got.PriorDigest)
+	assert.Empty(t, got.Pins)
+	assert.Empty(t, got.NewPins)
 }
 
 // TestIsAssumeRolePropagationError asserts the classifier still recognises the

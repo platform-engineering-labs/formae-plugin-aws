@@ -36,6 +36,11 @@ const generatorVersion = "2"
 // being compared as though it were comparable.
 const buildConfigHashScheme = "v3"
 
+// maxAdditionalTags bounds the pins one build may place. Placement is a serial ECR
+// call per pin against a build that has already succeeded, so the bound keeps a
+// runaway listing from turning a finished build into a long tail of registry writes.
+const maxAdditionalTags = 20
+
 const (
 	dockerfileEnvVar       = "DOCKERFILE_B64"
 	buildArgsEnvVar        = "BUILD_ARGS_B64"
@@ -67,16 +72,21 @@ type imageBuildInput struct {
 	Dockerfile       string            `json:"Dockerfile"`
 	BuildArgs        map[string]string `json:"BuildArgs,omitempty"`
 	ProjectName      string            `json:"ProjectName"`
+	AdditionalTags   []string          `json:"AdditionalTags,omitempty"`
 }
 
 // imageBuildOutputs is the computed read-only state persisted in ResourceProperties
 // and surfaced as the resource's resolvable outputs.
+// AdditionalTags is echoed rather than computed: it is the declared listing, not an
+// output, and it rides here because the caller rebuilds its stored model of a
+// list-valued property from the properties the plugin returns.
 type imageBuildOutputs struct {
-	ImageRef        string `json:"ImageRef,omitempty"`
-	ImageDigest     string `json:"ImageDigest,omitempty"`
-	ImageURI        string `json:"ImageUri,omitempty"`
-	ImageTag        string `json:"ImageTag,omitempty"`
-	BuildConfigHash string `json:"BuildConfigHash,omitempty"`
+	ImageRef        string   `json:"ImageRef,omitempty"`
+	ImageDigest     string   `json:"ImageDigest,omitempty"`
+	ImageURI        string   `json:"ImageUri,omitempty"`
+	ImageTag        string   `json:"ImageTag,omitempty"`
+	BuildConfigHash string   `json:"BuildConfigHash,omitempty"`
+	AdditionalTags  []string `json:"AdditionalTags,omitempty"`
 }
 
 // ecrRepositoryRef is the parsed form of an ECR repository URI.
@@ -144,7 +154,43 @@ func validateInput(in imageBuildInput) error {
 			return fmt.Errorf("invalid buildArg key %q", k)
 		}
 	}
+	if len(in.AdditionalTags) > maxAdditionalTags {
+		return fmt.Errorf("at most %d additionalTags are allowed, got %d", maxAdditionalTags, len(in.AdditionalTags))
+	}
+	seen := make(map[string]struct{}, len(in.AdditionalTags))
+	for _, tag := range in.AdditionalTags {
+		if !imageTagPattern.MatchString(tag) {
+			return fmt.Errorf("invalid additionalTag %q", tag)
+		}
+		// A pin naming the mutable tag would be moved by the next rebuild, which is
+		// the one thing a pin exists not to be.
+		if tag == in.ImageTag {
+			return fmt.Errorf("invalid additionalTag %q: must not equal imageTag", tag)
+		}
+		if _, dup := seen[tag]; dup {
+			return fmt.Errorf("duplicate additionalTag %q", tag)
+		}
+		seen[tag] = struct{}{}
+	}
 	return nil
+}
+
+// newPins returns the pins this apply declares for the first time, in declared
+// order: those absent from the previously declared listing. A pin already declared
+// is carried over and left exactly where it is, so only these are ever placed.
+// Every pin is new on a create, where there is no prior.
+func newPins(prior, desired imageBuildInput) []string {
+	previously := make(map[string]struct{}, len(prior.AdditionalTags))
+	for _, tag := range prior.AdditionalTags {
+		previously[tag] = struct{}{}
+	}
+	var fresh []string
+	for _, tag := range desired.AdditionalTags {
+		if _, carried := previously[tag]; !carried {
+			fresh = append(fresh, tag)
+		}
+	}
+	return fresh
 }
 
 // buildArgsFile renders the build args as a newline-separated KEY=VALUE list,
@@ -226,6 +272,11 @@ func computeBuildConfigHash(in imageBuildInput, project *codebuildtypes.Project)
 // configuration always renders identically and two different configurations never
 // render alike — a Dockerfile or a build-arg value containing a newline would
 // otherwise render as extra lines of the body.
+//
+// additionalTags is deliberately absent: a pin names a manifest, it does not
+// change the one a build produces. Hashing it would make adding a pin force a
+// rebuild, and the rebuilt image is precisely not the image the pin was meant to
+// name.
 func buildConfigHashBody(in imageBuildInput, project *codebuildtypes.Project) string {
 	var b strings.Builder
 	b.WriteString("v=" + strconv.Quote(generatorVersion) + "\n")

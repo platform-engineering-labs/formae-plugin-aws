@@ -54,6 +54,20 @@ type codeBuildClientInterface interface {
 type ecrClientInterface interface {
 	DescribeImages(ctx context.Context, params *ecrsdk.DescribeImagesInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.DescribeImagesOutput, error)
 	BatchDeleteImage(ctx context.Context, params *ecrsdk.BatchDeleteImageInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.BatchDeleteImageOutput, error)
+	BatchGetImage(ctx context.Context, params *ecrsdk.BatchGetImageInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.BatchGetImageOutput, error)
+	PutImage(ctx context.Context, params *ecrsdk.PutImageInput, optFns ...func(*ecrsdk.Options)) (*ecrsdk.PutImageOutput, error)
+}
+
+// acceptedManifestMediaTypes are the manifest forms a pin may be placed on. ECR
+// converts a manifest it is asked for in an unlisted form, and a converted manifest
+// is a different digest — which would make the pin name an image the build never
+// produced. Listing every form the buildspec's docker push can produce means the
+// manifest always comes back verbatim.
+var acceptedManifestMediaTypes = []string{
+	"application/vnd.docker.distribution.manifest.v2+json",
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+	"application/vnd.oci.image.index.v1+json",
 }
 
 // ImageBuild is the synthetic build-during-apply provisioner that builds and
@@ -128,9 +142,18 @@ func parseNativeID(nativeID string) (repoURI, tag, projectName string, err error
 // build and reconstruct the outputs without any other persisted state. PriorDigest
 // is the digest this resource previously had under the same tag (empty on Create);
 // once the new build succeeds Status prunes it so an in-place rebuild does not leave
-// the old manifest behind as an untagged image. None of the fields can contain '|'
-// (a repository URI, a tag, a project name, an RFC3339 time, a hex hash, and a
-// sha256: digest).
+// the old manifest behind as an untagged image.
+//
+// The two pin fields are separate on purpose. NewPins are the pins to place on the
+// manifest this build produces — only those new to this apply, since a pin is never
+// moved once placed. Pins is the whole declared listing, which Status reports back:
+// the caller rebuilds its stored model of a list-valued property from what the
+// plugin returns, so a build that placed a pin but reported nothing would drop the
+// listing from that model and classify the same pin as new on the next apply.
+//
+// None of the fields can contain '|' (a repository URI, a tag, a project name, an
+// RFC3339 time, a hex hash, a sha256: digest, and two comma-joined tag lists whose
+// pattern admits neither separator).
 type requestState struct {
 	Operation       string
 	BuildID         string
@@ -140,6 +163,8 @@ type requestState struct {
 	Deadline        time.Time
 	BuildConfigHash string
 	PriorDigest     string
+	Pins            []string
+	NewPins         []string
 }
 
 func encodeRequestID(s requestState) string {
@@ -152,19 +177,24 @@ func encodeRequestID(s requestState) string {
 		s.Deadline.UTC().Format(time.RFC3339),
 		s.BuildConfigHash,
 		s.PriorDigest,
+		strings.Join(s.Pins, ","),
+		strings.Join(s.NewPins, ","),
 	}, "|")
 }
 
+// decodeRequestID accepts both the ten-field form and the eight-field form emitted
+// before pins existed, so a build dispatched by the previous version and still in
+// flight across a plugin upgrade is polled rather than stranded.
 func decodeRequestID(requestID string) (requestState, error) {
-	parts := strings.SplitN(requestID, "|", 8)
-	if len(parts) != 8 {
+	parts := strings.SplitN(requestID, "|", 10)
+	if len(parts) != 10 && len(parts) != 8 {
 		return requestState{}, fmt.Errorf("invalid RequestID %q", requestID)
 	}
 	deadline, err := time.Parse(time.RFC3339, parts[5])
 	if err != nil {
 		return requestState{}, fmt.Errorf("invalid deadline in RequestID: %w", err)
 	}
-	return requestState{
+	state := requestState{
 		Operation:       parts[0],
 		BuildID:         parts[1],
 		RepoURI:         parts[2],
@@ -173,7 +203,21 @@ func decodeRequestID(requestID string) (requestState, error) {
 		Deadline:        deadline,
 		BuildConfigHash: parts[6],
 		PriorDigest:     parts[7],
-	}, nil
+	}
+	if len(parts) == 10 {
+		state.Pins = splitPins(parts[8])
+		state.NewPins = splitPins(parts[9])
+	}
+	return state, nil
+}
+
+// splitPins decodes a comma-joined pin field, rendering an empty field as no pins
+// rather than as a single empty pin.
+func splitPins(field string) []string {
+	if field == "" {
+		return nil
+	}
+	return strings.Split(field, ",")
 }
 
 // ── Create ──────────────────────────────────────────────────────
@@ -190,7 +234,8 @@ func (a *ImageBuild) Create(ctx context.Context, request *resource.CreateRequest
 	if err != nil {
 		return nil, err
 	}
-	pr, err := a.startBuild(ctx, client, in, ref, project, resource.OperationCreate, "")
+	// A create has no prior listing, so every pin it declares is new.
+	pr, err := a.startBuild(ctx, client, in, ref, project, resource.OperationCreate, "", newPins(imageBuildInput{}, in))
 	if err != nil {
 		return nil, err
 	}
@@ -284,8 +329,9 @@ func artifactsType(artifacts *codebuildtypes.ProjectArtifacts) codebuildtypes.Ar
 // startBuild dispatches a build on the pre-flight-validated project and returns an
 // InProgress ProgressResult carrying the poll state. priorDigest is the digest
 // currently recorded under the tag (empty on Create); it is carried through so
-// Status can prune it once the new build succeeds.
-func (a *ImageBuild) startBuild(ctx context.Context, client codeBuildClientInterface, in imageBuildInput, ref ecrRepositoryRef, project *codebuildtypes.Project, op resource.Operation, priorDigest string) (*resource.ProgressResult, error) {
+// Status can prune it once the new build succeeds. freshPins are the pins new to
+// this apply, which Status places on the manifest the build produces.
+func (a *ImageBuild) startBuild(ctx context.Context, client codeBuildClientInterface, in imageBuildInput, ref ecrRepositoryRef, project *codebuildtypes.Project, op resource.Operation, priorDigest string, freshPins []string) (*resource.ProgressResult, error) {
 	projectName := aws.ToString(project.Name)
 
 	buildID, timeoutMinutes, err := a.dispatchBuild(ctx, client, projectName, ref, in.ImageTag, in.Dockerfile, in.BuildArgs)
@@ -305,6 +351,8 @@ func (a *ImageBuild) startBuild(ctx context.Context, client codeBuildClientInter
 		Deadline:        deadline,
 		BuildConfigHash: computeBuildConfigHash(in, project),
 		PriorDigest:     priorDigest,
+		Pins:            in.AdditionalTags,
+		NewPins:         freshPins,
 	}
 	return &resource.ProgressResult{
 		Operation:       op,
@@ -384,10 +432,29 @@ func (a *ImageBuild) Status(ctx context.Context, request *resource.StatusRequest
 			pr.StatusMessage = err.Error()
 			return &resource.StatusResult{ProgressResult: pr}, nil
 		}
+		ref, err := parseEcrRepositoryURI(state.RepoURI)
+		if err != nil {
+			return nil, fmt.Errorf("ImageBuild: %w", err)
+		}
+		// Place the pins new to this apply before anything is pruned. A pin is what
+		// keeps a predecessor manifest tagged, and the prune below deletes exactly
+		// the manifests that carry no tag, so placing first is what makes the two
+		// compatible. Placement failure is surfaced rather than logged: the operator
+		// asked for a rollback target, and a green apply that silently has none is
+		// the failure this resource exists to prevent. The prune is skipped, so the
+		// predecessor survives for the retry.
+		if err := a.placePins(ctx, ref, outputs.ImageDigest, state.NewPins); err != nil {
+			pr.OperationStatus = resource.OperationStatusFailure
+			pr.StatusMessage = err.Error()
+			return &resource.StatusResult{ProgressResult: pr}, nil
+		}
+		outputs.AdditionalTags = state.Pins
 		// An in-place rebuild moved the tag to a new digest and left the prior
 		// manifest untagged; prune it so a co-managed repository stays empty enough
-		// to tear down. Best-effort: the build already succeeded, so a prune failure
-		// is logged, not surfaced.
+		// to tear down. A predecessor carrying a pin is not untagged, so the prune
+		// skips it on its own — that is the retention this resource provides.
+		// Best-effort: the build already succeeded, so a prune failure is logged,
+		// not surfaced.
 		if state.PriorDigest != "" && state.PriorDigest != outputs.ImageDigest {
 			a.prunePriorDigest(ctx, state.RepoURI, state.PriorDigest)
 		}
@@ -471,17 +538,56 @@ func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*
 		return &resource.ReadResult{ResourceType: request.ResourceType, ErrorCode: resource.OperationErrorCodeNotFound}, nil
 	}
 	digest := aws.ToString(out.ImageDetails[0].ImageDigest)
+	pins, err := a.readDeclaredPins(ctx, client, ref, request.PriorProperties)
+	if err != nil {
+		return nil, err
+	}
 	outputs := imageBuildOutputs{
-		ImageRef:    ref.URI + "@" + digest,
-		ImageDigest: digest,
-		ImageURI:    imageURI(ref.URI, tag),
-		ImageTag:    tag,
+		ImageRef:       ref.URI + "@" + digest,
+		ImageDigest:    digest,
+		ImageURI:       imageURI(ref.URI, tag),
+		ImageTag:       tag,
+		AdditionalTags: pins,
 	}
 	js, err := json.Marshal(outputs)
 	if err != nil {
 		return nil, err
 	}
 	return &resource.ReadResult{ResourceType: request.ResourceType, Properties: string(js)}, nil
+}
+
+// readDeclaredPins reports which of the pins the caller's model declares are still
+// registered in the repository, in declared order.
+//
+// A pin cannot be recovered from the registry alone: it deliberately names a
+// predecessor manifest rather than the one the mutable tag points at, and nothing
+// distinguishes it from any other tag someone put in a shared repository. Which
+// tags are this resource's pins is knowable only from the caller's model, which is
+// what PriorProperties carries — the disambiguation that hint exists for. Existence
+// is still read from the registry, so a pin deleted out of band comes back missing
+// and surfaces as drift rather than being asserted to still be there.
+//
+// Empty PriorProperties (discovery, or the read-back of a create) means no model to
+// disambiguate against, and reports no pins.
+func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, priorProperties json.RawMessage) ([]string, error) {
+	if len(priorProperties) == 0 {
+		return nil, nil
+	}
+	var prior imageBuildInput
+	if err := json.Unmarshal(priorProperties, &prior); err != nil || len(prior.AdditionalTags) == 0 {
+		return nil, nil
+	}
+	held, err := a.digestsForTags(ctx, client, ref, prior.AdditionalTags)
+	if err != nil {
+		return nil, err
+	}
+	var present []string
+	for _, pin := range prior.AdditionalTags {
+		if _, exists := held[pin]; exists {
+			present = append(present, pin)
+		}
+	}
+	return present, nil
 }
 
 // ── Update ──────────────────────────────────────────────────────
@@ -538,11 +644,20 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 				plugin.LoggerFromContext(ctx).Info("ImageBuild: adopting build-config hash recorded under an earlier scheme; the pushed image is unchanged, so no build is run",
 					"imageUri", imageURI(ref.URI, desired.ImageTag), "imageDigest", prior.ImageDigest)
 			}
+			// The image is unchanged, so a pin declared for the first time belongs on
+			// the digest already pushed. Rebuilding to place it would defeat the
+			// point: the pin would name a newly built image rather than the deployed
+			// one. A pin dropped from the listing places nothing — the plugin never
+			// deletes a pin.
+			if err := a.placePins(ctx, ref, prior.ImageDigest, newPins(priorInputs, desired)); err != nil {
+				return nil, err
+			}
 			outputs := prior
 			outputs.ImageTag = desired.ImageTag
 			// Persist the current hash, so an adopted legacy hash is compared like
 			// with like from the next update on.
 			outputs.BuildConfigHash = newHash
+			outputs.AdditionalTags = desired.AdditionalTags
 			js, _ := json.Marshal(outputs)
 			return &resource.UpdateResult{ProgressResult: &resource.ProgressResult{
 				Operation:          resource.OperationUpdate,
@@ -553,7 +668,7 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 		}
 	}
 
-	pr, err := a.startBuild(ctx, client, desired, ref, project, resource.OperationUpdate, prior.ImageDigest)
+	pr, err := a.startBuild(ctx, client, desired, ref, project, resource.OperationUpdate, prior.ImageDigest, newPins(priorInputs, desired))
 	if err != nil {
 		return nil, err
 	}
@@ -677,6 +792,129 @@ func firstImageFailure(out *ecrsdk.BatchDeleteImageOutput) *ecrtypes.ImageFailur
 		}
 	}
 	return nil
+}
+
+// placePins registers the manifest at digest under each of pins, so that manifest
+// keeps a name of its own after the mutable tag moves off it. It re-registers the
+// exact manifest bytes and media type already in the repository, which is
+// digest-preserving by construction: the pin resolves to the identical image rather
+// than to a rebuilt one.
+//
+// Pins are create-once, so a pin whose tag already names a different manifest is an
+// error rather than something to move: the operator believes that name still holds
+// the image it was placed on, and repointing it would destroy exactly the rollback
+// target this resource exists to keep. A pin already on this manifest is where it
+// belongs and is left alone.
+func (a *ImageBuild) placePins(ctx context.Context, ref ecrRepositoryRef, digest string, pins []string) error {
+	if len(pins) == 0 {
+		return nil
+	}
+	client, err := a.ecrFactory(a.cfg)
+	if err != nil {
+		return err
+	}
+
+	manifest, mediaType, err := a.manifestForDigest(ctx, client, ref, digest)
+	if err != nil {
+		return err
+	}
+	existing, err := a.digestsForTags(ctx, client, ref, pins)
+	if err != nil {
+		return err
+	}
+
+	log := plugin.LoggerFromContext(ctx)
+	for _, pin := range pins {
+		if held, exists := existing[pin]; exists {
+			if held != digest {
+				return fmt.Errorf("ImageBuild: additionalTag %q already exists in %s and resolves to %s; a pin is never moved, so declare a tag that is not in use", pin, ref.URI, held)
+			}
+			continue
+		}
+		_, err := client.PutImage(ctx, &ecrsdk.PutImageInput{
+			RegistryId:             aws.String(ref.AccountID),
+			RepositoryName:         aws.String(ref.RepoName),
+			ImageManifest:          aws.String(manifest),
+			ImageManifestMediaType: aws.String(mediaType),
+			ImageTag:               aws.String(pin),
+		})
+		if err != nil {
+			// Another writer registered this exact tag on this exact manifest between
+			// the lookup and the write. The pin names the image it was meant to name,
+			// which is the whole of what was asked for.
+			var already *ecrtypes.ImageAlreadyExistsException
+			if errors.As(err, &already) {
+				continue
+			}
+			return fmt.Errorf("ImageBuild: placing additionalTag %q on %s: %w", pin, digest, err)
+		}
+		log.Info("ImageBuild: placed additional tag", "imageUri", imageURI(ref.URI, pin), "imageDigest", digest)
+	}
+	return nil
+}
+
+// manifestForDigest returns the manifest bytes and media type registered under a
+// digest, asked for in every form the build can produce so ECR returns it verbatim
+// rather than converting it into a different digest.
+func (a *ImageBuild) manifestForDigest(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, digest string) (string, string, error) {
+	out, err := client.BatchGetImage(ctx, &ecrsdk.BatchGetImageInput{
+		RegistryId:         aws.String(ref.AccountID),
+		RepositoryName:     aws.String(ref.RepoName),
+		ImageIds:           []ecrtypes.ImageIdentifier{{ImageDigest: aws.String(digest)}},
+		AcceptedMediaTypes: acceptedManifestMediaTypes,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("ImageBuild: reading manifest %s: %w", digest, err)
+	}
+	if len(out.Images) == 0 || aws.ToString(out.Images[0].ImageManifest) == "" {
+		return "", "", fmt.Errorf("ImageBuild: manifest %s not found in %s", digest, ref.URI)
+	}
+	return aws.ToString(out.Images[0].ImageManifest), aws.ToString(out.Images[0].ImageManifestMediaType), nil
+}
+
+// digestsForTags maps each of tags that currently exists in the repository to the
+// digest it resolves to. A tag that does not exist is simply absent: BatchGetImage
+// reports a missing image as a per-image failure rather than as a request error, so
+// one call answers for the whole set.
+func (a *ImageBuild) digestsForTags(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, tags []string) (map[string]string, error) {
+	ids := make([]ecrtypes.ImageIdentifier, 0, len(tags))
+	for _, tag := range tags {
+		ids = append(ids, ecrtypes.ImageIdentifier{ImageTag: aws.String(tag)})
+	}
+	out, err := client.BatchGetImage(ctx, &ecrsdk.BatchGetImageInput{
+		RegistryId:         aws.String(ref.AccountID),
+		RepositoryName:     aws.String(ref.RepoName),
+		ImageIds:           ids,
+		AcceptedMediaTypes: acceptedManifestMediaTypes,
+	})
+	if err != nil {
+		if isECRImageNotFound(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("ImageBuild: checking additional tags in %s: %w", ref.URI, err)
+	}
+	// A tag that is simply not there is the expected answer and is read as absent.
+	// Any other per-image failure means the lookup could not say, and reading "could
+	// not say" as "absent" would place a pin over a tag that already exists.
+	for i := range out.Failures {
+		if out.Failures[i].FailureCode == ecrtypes.ImageFailureCodeImageNotFound {
+			continue
+		}
+		var failedTag string
+		if id := out.Failures[i].ImageId; id != nil {
+			failedTag = aws.ToString(id.ImageTag)
+		}
+		return nil, fmt.Errorf("ImageBuild: checking additional tag %q in %s: %s (%s)",
+			failedTag, ref.URI, aws.ToString(out.Failures[i].FailureReason), out.Failures[i].FailureCode)
+	}
+	held := make(map[string]string, len(out.Images))
+	for _, img := range out.Images {
+		if img.ImageId == nil {
+			continue
+		}
+		held[aws.ToString(img.ImageId.ImageTag)] = aws.ToString(img.ImageId.ImageDigest)
+	}
+	return held, nil
 }
 
 // prunePriorDigest best-effort removes the manifest a prior build pushed under the
