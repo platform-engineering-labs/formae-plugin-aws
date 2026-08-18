@@ -13,7 +13,11 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
-TEST_PREFIX="plugin-sdk-test"
+# Fixture naming families. Every resource the conformance harness creates is
+# named with one of these, so a sweep must test all of them: naming only one
+# silently leaves the others behind. Use name_match below rather than spelling
+# out a disjunction per selector, which is how KMS keys and DynamoDB tables
+# ended up matched against a single family.
 FORMAE_PREFIX="formae-plugin-sdk-test"
 SDK_PREFIX="formae-sdk-test"
 # Legacy prefix for ecs-service-with-lb pre-2026-05-24, when the fixture
@@ -23,8 +27,16 @@ SDK_PREFIX="formae-sdk-test"
 # ENIs) still get cleaned up.
 LEGACY_LB_PREFIX="formae-sdk-svc-lb"
 
+# name_match emits the JMESPath predicate matching an expression against every
+# fixture naming family. Callers interpolate it into a --query, e.g.
+#   --query "Aliases[?$(name_match AliasName)].AliasName"
+name_match() {
+    local expr="$1"
+    echo "contains($expr, '$FORMAE_PREFIX') || contains($expr, '$SDK_PREFIX') || contains($expr, '$LEGACY_LB_PREFIX')"
+}
+
 echo "=== Cleaning AWS test resources in $REGION ==="
-echo "Looking for resources with '$TEST_PREFIX' in name or tags..."
+echo "Looking for resources with '$FORMAE_PREFIX' in name or tags..."
 echo ""
 
 # ============================================================================
@@ -33,7 +45,7 @@ echo ""
 
 # 1. Delete IAM instance profiles with test prefix (before roles)
 echo "Cleaning IAM test instance profiles..."
-aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, '$FORMAE_PREFIX') || contains(InstanceProfileName, '$SDK_PREFIX') || contains(InstanceProfileName, '$TEST_PREFIX')].InstanceProfileName" --output text 2>/dev/null | tr '\t' '\n' | while read -r profile; do
+aws iam list-instance-profiles --query "InstanceProfiles[?$(name_match InstanceProfileName)].InstanceProfileName" --output text 2>/dev/null | tr '\t' '\n' | while read -r profile; do
     if [[ -n "$profile" ]]; then
         echo "  Deleting IAM instance profile: $profile"
         # Remove all roles from instance profile
@@ -46,7 +58,7 @@ done
 
 # 2. Delete IAM roles with test prefix
 echo "Cleaning IAM test roles..."
-aws iam list-roles --query "Roles[?contains(RoleName, '$FORMAE_PREFIX') || contains(RoleName, '$SDK_PREFIX') || contains(RoleName, '$TEST_PREFIX')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read -r role; do
+aws iam list-roles --query "Roles[?$(name_match RoleName)].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read -r role; do
     if [[ -n "$role" ]]; then
         echo "  Deleting IAM role: $role"
         # Detach managed policies
@@ -70,7 +82,7 @@ done
 
 # 3. Delete IAM users with test prefix
 echo "Cleaning IAM test users..."
-aws iam list-users --query "Users[?contains(UserName, '$FORMAE_PREFIX') || contains(UserName, '$SDK_PREFIX') || contains(UserName, '$TEST_PREFIX')].UserName" --output text 2>/dev/null | tr '\t' '\n' | while read -r user; do
+aws iam list-users --query "Users[?$(name_match UserName)].UserName" --output text 2>/dev/null | tr '\t' '\n' | while read -r user; do
     if [[ -n "$user" ]]; then
         echo "  Deleting IAM user: $user"
         # Delete login profile
@@ -97,7 +109,7 @@ done
 
 # 4. Delete IAM groups with test prefix
 echo "Cleaning IAM test groups..."
-aws iam list-groups --query "Groups[?contains(GroupName, '$FORMAE_PREFIX') || contains(GroupName, '$SDK_PREFIX') || contains(GroupName, '$TEST_PREFIX')].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r group; do
+aws iam list-groups --query "Groups[?$(name_match GroupName)].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r group; do
     if [[ -n "$group" ]]; then
         echo "  Deleting IAM group: $group"
         # Remove users from group
@@ -118,7 +130,7 @@ done
 
 # 5. Delete IAM managed policies with test prefix
 echo "Cleaning IAM test managed policies..."
-aws iam list-policies --scope Local --query "Policies[?contains(PolicyName, '$FORMAE_PREFIX') || contains(PolicyName, '$TEST_PREFIX') || contains(PolicyName, '$SDK_PREFIX')].Arn" --output text 2>/dev/null | tr '\t' '\n' | while read -r arn; do
+aws iam list-policies --scope Local --query "Policies[?$(name_match PolicyName)].Arn" --output text 2>/dev/null | tr '\t' '\n' | while read -r arn; do
     if [[ -n "$arn" ]]; then
         echo "  Deleting IAM managed policy: $arn"
         # Detach from all entities
@@ -167,7 +179,7 @@ done
 # 8a. Delete S3 access points with test prefix
 echo "Cleaning S3 test access points..."
 aws s3control list-access-points --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" \
-    --query "AccessPointList[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
+    --query "AccessPointList[?$(name_match Name)].{Name:Name}" --output text 2>/dev/null | tr '\t' '\n' | while read -r ap; do
     if [[ -n "$ap" ]]; then
         echo "  Deleting S3 access point: $ap"
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -177,7 +189,7 @@ done
 
 # 8b. Delete S3 buckets with test prefix
 echo "Cleaning S3 test buckets..."
-aws s3api list-buckets --query "Buckets[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
+aws s3api list-buckets --query "Buckets[?$(name_match Name)].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r bucket; do
     if [[ -n "$bucket" ]]; then
         # The CloudTrail log bucket (formae-plugin-sdk-test-ct-logs-*) is a
         # PERSISTENT prerequisite provisioned + emptied in section 8b-ct below;
@@ -267,7 +279,7 @@ fi
 # 8c. Delete S3 Storage Lens Groups with test prefix
 echo "Cleaning S3 test Storage Lens Groups..."
 aws s3control list-storage-lens-groups --account-id "$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" --region "$REGION" 2>/dev/null | \
-    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
+    jq -r ".StorageLensGroupList[]? | select(.Name | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$FORMAE_PREFIX\")) | .Name" 2>/dev/null | while read -r slg; do
     if [[ -n "$slg" ]]; then
         echo "  Deleting S3 Storage Lens Group: $slg"
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -461,7 +473,7 @@ aws route53 list-health-checks --query "HealthChecks[].Id" --output text 2>/dev/
     if [[ -n "$hc_id" ]]; then
         tags=$(aws route53 list-tags-for-resource --resource-type healthcheck --resource-id "$hc_id" \
             --query "ResourceTagSet.Tags[?Key=='Name'].Value" --output text 2>/dev/null || true)
-        if [[ "$tags" == *"$FORMAE_PREFIX"* || "$tags" == *"$SDK_PREFIX"* || "$tags" == *"$TEST_PREFIX"* ]]; then
+        if [[ "$tags" == *"$FORMAE_PREFIX"* || "$tags" == *"$SDK_PREFIX"* || "$tags" == *"$FORMAE_PREFIX"* ]]; then
             echo "  Deleting Route53 health check: $hc_id"
             aws route53 delete-health-check --health-check-id "$hc_id" 2>/dev/null || true
         fi
@@ -492,7 +504,7 @@ done
 
 # 12. Schedule KMS keys with test alias for deletion
 echo "Scheduling KMS test keys for deletion..."
-aws kms list-aliases --query "Aliases[?contains(AliasName, '$TEST_PREFIX')].TargetKeyId" --output text 2>/dev/null | tr '\t' '\n' | while read -r key; do
+aws kms list-aliases --query "Aliases[?$(name_match AliasName)].TargetKeyId" --output text 2>/dev/null | tr '\t' '\n' | while read -r key; do
     if [[ -n "$key" ]]; then
         echo "  Scheduling KMS key for deletion: $key"
         aws kms schedule-key-deletion --key-id "$key" --pending-window-in-days 7 --region "$REGION" 2>/dev/null || true
@@ -506,7 +518,7 @@ done
 # 13. Delete EC2 key pairs with test prefix
 echo "Cleaning EC2 test key pairs..."
 aws ec2 describe-key-pairs --region "$REGION" \
-    --filters "Name=key-name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=key-name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "KeyPairs[].KeyPairId" --output text 2>/dev/null | tr '\t' '\n' | while read -r kp_id; do
     if [[ -n "$kp_id" ]]; then
         echo "  Deleting EC2 key pair: $kp_id"
@@ -517,7 +529,7 @@ done
 # 14. Release EC2 Elastic IPs with test prefix (by Name tag)
 echo "Cleaning EC2 test Elastic IPs..."
 aws ec2 describe-addresses --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "Addresses[].AllocationId" --output text 2>/dev/null | tr '\t' '\n' | while read -r alloc_id; do
     if [[ -n "$alloc_id" ]]; then
         echo "  Releasing EC2 EIP: $alloc_id"
@@ -532,7 +544,7 @@ done
 # 15. Delete EC2 launch templates with test prefix
 echo "Cleaning EC2 test launch templates..."
 aws ec2 describe-launch-templates --region "$REGION" \
-    --filters "Name=launch-template-name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=launch-template-name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "LaunchTemplates[].LaunchTemplateId" --output text 2>/dev/null | tr '\t' '\n' | while read -r lt_id; do
     if [[ -n "$lt_id" ]]; then
         echo "  Deleting EC2 launch template: $lt_id"
@@ -543,7 +555,7 @@ done
 # 16. Delete EC2 placement groups with test prefix (by Name tag)
 echo "Cleaning EC2 test placement groups..."
 aws ec2 describe-placement-groups --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "PlacementGroups[].GroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r pg; do
     if [[ -n "$pg" ]]; then
         echo "  Deleting EC2 placement group: $pg"
@@ -554,7 +566,7 @@ done
 # 17. Delete EC2 DHCP options with test prefix (by Name tag)
 echo "Cleaning EC2 test DHCP options..."
 aws ec2 describe-dhcp-options --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "DhcpOptions[].DhcpOptionsId" --output text 2>/dev/null | tr '\t' '\n' | while read -r dhcp_id; do
     if [[ -n "$dhcp_id" ]]; then
         echo "  Deleting EC2 DHCP options: $dhcp_id"
@@ -565,7 +577,7 @@ done
 # 18. Detach and delete EC2 internet gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test internet gateways..."
 aws ec2 describe-internet-gateways --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "InternetGateways[].{Id:InternetGatewayId, Attachments:Attachments}" --output json 2>/dev/null | \
     jq -c '.[]' 2>/dev/null | while read -r igw_json; do
     igw_id=$(echo "$igw_json" | jq -r '.Id')
@@ -606,13 +618,13 @@ done
 # 18c. Detach and delete internet gateways by formae identity tag.
 # Defense in depth: fixture IGWs have no Name tag, but formae stamps a
 # FormaeStackLabel tag on every resource it creates (the discovery identity
-# tag), and every conformance stack is named "$TEST_PREFIX-...". Matching on
+# tag), and every conformance stack is named "$FORMAE_PREFIX-...". Matching on
 # that tag reaps leaked test IGWs precisely by their formae identity — while
 # still attached (before their orphaned VPC is swept) as well as detached —
 # without touching any fixture. Detach from any VPC first, then delete.
 echo "Cleaning internet gateways by formae identity tag..."
 aws ec2 describe-internet-gateways --region "$REGION" \
-    --filters "Name=tag:FormaeStackLabel,Values=*$TEST_PREFIX*" \
+    --filters "Name=tag:FormaeStackLabel,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "InternetGateways[].{Id:InternetGatewayId, Attachments:Attachments}" --output json 2>/dev/null | \
     jq -c '.[]' 2>/dev/null | while read -r igw_json; do
     igw_id=$(echo "$igw_json" | jq -r '.Id')
@@ -628,7 +640,7 @@ done
 # 19. Detach and delete EC2 VPN gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test VPN gateways..."
 aws ec2 describe-vpn-gateways --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "VpnGateways[?State!='deleted'].{Id:VpnGatewayId, Attachments:VpcAttachments}" --output json 2>/dev/null | \
     jq -c '.[]' 2>/dev/null | while read -r vgw_json; do
     vgw_id=$(echo "$vgw_json" | jq -r '.Id')
@@ -645,7 +657,7 @@ done
 # 20. Delete EC2 customer gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test customer gateways..."
 aws ec2 describe-customer-gateways --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "CustomerGateways[?State!='deleted'].CustomerGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r cgw_id; do
     if [[ -n "$cgw_id" ]]; then
         echo "  Deleting EC2 customer gateway: $cgw_id"
@@ -656,7 +668,7 @@ done
 # 21a. Delete EC2 transit gateway route tables with test prefix (before TGWs)
 echo "Cleaning EC2 test transit gateway route tables..."
 aws ec2 describe-transit-gateways --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" "Name=state,Values=available,pending" \
     --query "TransitGateways[].TransitGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_id; do
     if [[ -n "$tgw_id" ]]; then
         aws ec2 describe-transit-gateway-route-tables --region "$REGION" \
@@ -673,7 +685,7 @@ done
 # 21b. Delete EC2 transit gateways with test prefix (by Name tag)
 echo "Cleaning EC2 test transit gateways..."
 aws ec2 describe-transit-gateways --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" "Name=state,Values=available,pending" \
     --query "TransitGateways[].TransitGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r tgw_id; do
     if [[ -n "$tgw_id" ]]; then
         echo "  Deleting EC2 transit gateway: $tgw_id"
@@ -684,7 +696,7 @@ done
 # 22. Delete EC2 IPAMs with test prefix (by Name tag)
 echo "Cleaning EC2 test IPAMs..."
 aws ec2 describe-ipams --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "Ipams[].IpamId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ipam_id; do
     if [[ -n "$ipam_id" ]]; then
         echo "  Deleting EC2 IPAM: $ipam_id"
@@ -701,7 +713,7 @@ done
 # --- EKS clusters (very slow to delete, start early, before VPC dependents)
 echo "Cleaning EKS test clusters..."
 aws eks list-clusters --region "$REGION" --query "clusters[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster; do
-    if [[ -n "$cluster" && ("$cluster" == *"$FORMAE_PREFIX"* || "$cluster" == *"$SDK_PREFIX"* || "$cluster" == *"$TEST_PREFIX"*) ]]; then
+    if [[ -n "$cluster" && ("$cluster" == *"$FORMAE_PREFIX"* || "$cluster" == *"$SDK_PREFIX"* || "$cluster" == *"$FORMAE_PREFIX"*) ]]; then
         echo "  Deleting EKS cluster: $cluster"
         # Delete nodegroups first
         aws eks list-nodegroups --cluster-name "$cluster" --region "$REGION" --query "nodegroups[]" --output text 2>/dev/null | tr '\t' '\n' | while read -r ng; do
@@ -714,7 +726,7 @@ done
 # --- RDS DB instances (slow, before DB subnet groups and VPCs)
 echo "Cleaning RDS test DB instances..."
 aws rds describe-db-instances --region "$REGION" \
-    --query "DBInstances[?contains(DBInstanceIdentifier, '$SDK_PREFIX') || contains(DBInstanceIdentifier, '$FORMAE_PREFIX') || contains(DBInstanceIdentifier, '$TEST_PREFIX')].DBInstanceIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r db; do
+    --query "DBInstances[?$(name_match DBInstanceIdentifier)].DBInstanceIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r db; do
     if [[ -n "$db" ]]; then
         echo "  Deleting RDS DB instance: $db"
         aws rds delete-db-instance --db-instance-identifier "$db" --skip-final-snapshot --delete-automated-backups --region "$REGION" 2>/dev/null || true
@@ -731,7 +743,7 @@ done
 # or its source instance id, since final-snapshot ids are auto-generated.
 echo "Cleaning RDS test manual DB snapshots..."
 aws rds describe-db-snapshots --snapshot-type manual --region "$REGION" \
-    --query "DBSnapshots[?contains(DBSnapshotIdentifier, '$SDK_PREFIX') || contains(DBSnapshotIdentifier, '$FORMAE_PREFIX') || contains(DBSnapshotIdentifier, '$TEST_PREFIX') || contains(DBInstanceIdentifier, '$SDK_PREFIX') || contains(DBInstanceIdentifier, '$FORMAE_PREFIX') || contains(DBInstanceIdentifier, '$TEST_PREFIX')].DBSnapshotIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r snap; do
+    --query "DBSnapshots[?$(name_match DBSnapshotIdentifier) || $(name_match DBInstanceIdentifier)].DBSnapshotIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r snap; do
     if [[ -n "$snap" ]]; then
         echo "  Deleting RDS manual snapshot: $snap"
         aws rds delete-db-snapshot --db-snapshot-identifier "$snap" --region "$REGION" 2>/dev/null || true
@@ -746,7 +758,7 @@ done
 # live CI runs, so anything unmatched is left alone.
 echo "Cleaning RDS test DB clusters..."
 aws rds describe-db-clusters --region "$REGION" \
-    --query "DBClusters[?contains(DBClusterIdentifier, '$SDK_PREFIX') || contains(DBClusterIdentifier, '$FORMAE_PREFIX') || contains(DBClusterIdentifier, '$TEST_PREFIX')].DBClusterIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster; do
+    --query "DBClusters[?$(name_match DBClusterIdentifier)].DBClusterIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r cluster; do
     if [[ -n "$cluster" ]]; then
         echo "  Deleting RDS DB cluster: $cluster"
         aws rds describe-db-clusters --db-cluster-identifier "$cluster" --region "$REGION" \
@@ -780,7 +792,7 @@ done
 # --- RDS DB subnet groups (after DB instances, before VPCs)
 echo "Cleaning RDS test DB subnet groups..."
 aws rds describe-db-subnet-groups --region "$REGION" \
-    --query "DBSubnetGroups[?contains(DBSubnetGroupName, '$SDK_PREFIX') || contains(DBSubnetGroupName, '$FORMAE_PREFIX') || contains(DBSubnetGroupName, '$TEST_PREFIX')].DBSubnetGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg; do
+    --query "DBSubnetGroups[?$(name_match DBSubnetGroupName)].DBSubnetGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg; do
     if [[ -n "$sg" ]]; then
         echo "  Deleting RDS DB subnet group: $sg"
         aws rds delete-db-subnet-group --db-subnet-group-name "$sg" --region "$REGION" 2>/dev/null || true
@@ -795,7 +807,7 @@ done
 # so existing account orphans get cleaned up.
 echo "Cleaning ELBv2 test load balancers..."
 aws elbv2 describe-load-balancers --region "$REGION" \
-    --query "LoadBalancers[?contains(LoadBalancerName, '$FORMAE_PREFIX') || contains(LoadBalancerName, '$SDK_PREFIX') || contains(LoadBalancerName, '$TEST_PREFIX') || contains(LoadBalancerName, 'formae-sdk-alb')].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
+    --query "LoadBalancers[?$(name_match LoadBalancerName) || contains(LoadBalancerName, 'formae-sdk-alb')].LoadBalancerArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r lb_arn; do
     if [[ -n "$lb_arn" ]]; then
         echo "  Deleting ELBv2 load balancer: $lb_arn"
         # Delete listeners first
@@ -810,7 +822,7 @@ done
 # --- ELBv2 target groups (after load balancers)
 echo "Cleaning ELBv2 test target groups..."
 aws elbv2 describe-target-groups --region "$REGION" \
-    --query "TargetGroups[?contains(TargetGroupName, '$FORMAE_PREFIX') || contains(TargetGroupName, '$SDK_PREFIX') || contains(TargetGroupName, '$TEST_PREFIX') || contains(TargetGroupName, 'formae-sdk-tg')].TargetGroupArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r tg_arn; do
+    --query "TargetGroups[?$(name_match TargetGroupName) || contains(TargetGroupName, 'formae-sdk-tg')].TargetGroupArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r tg_arn; do
     if [[ -n "$tg_arn" ]]; then
         echo "  Deleting ELBv2 target group: $tg_arn"
         aws elbv2 delete-target-group --target-group-arn "$tg_arn" --region "$REGION" 2>/dev/null || true
@@ -822,7 +834,7 @@ done
 # attached to any listener deletes cleanly; test fixtures never attach one.
 echo "Cleaning ELBv2 test trust stores..."
 aws elbv2 describe-trust-stores --region "$REGION" \
-    --query "TrustStores[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].TrustStoreArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r ts_arn; do
+    --query "TrustStores[?$(name_match Name)].TrustStoreArn" --output text 2>/dev/null | tr '\t' '\n' | while read -r ts_arn; do
     if [[ -n "$ts_arn" ]]; then
         echo "  Deleting ELBv2 trust store: $ts_arn"
         aws elbv2 delete-trust-store --trust-store-arn "$ts_arn" --region "$REGION" 2>/dev/null || true
@@ -832,7 +844,7 @@ done
 # --- EC2 NAT gateways (before subnets/VPCs, slow to delete)
 echo "Cleaning EC2 test NAT gateways..."
 aws ec2 describe-nat-gateways --region "$REGION" \
-    --filter "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=state,Values=available,pending,failed" \
+    --filter "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" "Name=state,Values=available,pending,failed" \
     --query "NatGateways[].NatGatewayId" --output text 2>/dev/null | tr '\t' '\n' | while read -r nat_id; do
     if [[ -n "$nat_id" ]]; then
         echo "  Deleting EC2 NAT gateway: $nat_id"
@@ -843,7 +855,7 @@ done
 # --- EC2 VPC endpoints (before VPCs)
 echo "Cleaning EC2 test VPC endpoints..."
 aws ec2 describe-vpc-endpoints --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "VpcEndpoints[?State!='deleted'].VpcEndpointId" --output text 2>/dev/null | tr '\t' '\n' | while read -r ep_id; do
     if [[ -n "$ep_id" ]]; then
         echo "  Deleting EC2 VPC endpoint: $ep_id"
@@ -925,7 +937,7 @@ fi
 # --- EC2 network interfaces (before subnets/security groups)
 echo "Cleaning EC2 test network interfaces..."
 aws ec2 describe-network-interfaces --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "NetworkInterfaces[].{Id:NetworkInterfaceId, Attachment:Attachment}" --output json 2>/dev/null | \
     jq -c '.[]' 2>/dev/null | while read -r eni_json; do
     eni_id=$(echo "$eni_json" | jq -r '.Id')
@@ -942,7 +954,7 @@ done
 # --- EC2 subnets (before route tables, VPCs)
 echo "Cleaning EC2 test subnets..."
 aws ec2 describe-subnets --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "Subnets[].SubnetId" --output text 2>/dev/null | tr '\t' '\n' | while read -r subnet_id; do
     if [[ -n "$subnet_id" ]]; then
         echo "  Deleting EC2 subnet: $subnet_id"
@@ -953,7 +965,7 @@ done
 # --- EC2 route tables (non-main, before VPCs)
 echo "Cleaning EC2 test route tables..."
 aws ec2 describe-route-tables --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text 2>/dev/null | tr '\t' '\n' | while read -r rt_id; do
     if [[ -n "$rt_id" ]]; then
         echo "  Deleting EC2 route table: $rt_id"
@@ -969,7 +981,7 @@ done
 # --- EC2 security groups (non-default, before VPCs)
 echo "Cleaning EC2 test security groups..."
 aws ec2 describe-security-groups --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | tr '\t' '\n' | while read -r sg_id; do
     if [[ -n "$sg_id" ]]; then
         echo "  Deleting EC2 security group: $sg_id"
@@ -980,7 +992,7 @@ done
 # --- EC2 network ACLs (non-default, before VPCs)
 echo "Cleaning EC2 test network ACLs..."
 aws ec2 describe-network-acls --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "NetworkAcls[?!IsDefault].NetworkAclId" --output text 2>/dev/null | tr '\t' '\n' | while read -r nacl_id; do
     if [[ -n "$nacl_id" ]]; then
         echo "  Deleting EC2 network ACL: $nacl_id"
@@ -991,7 +1003,7 @@ done
 # --- EC2 volumes (detached, with test prefix)
 echo "Cleaning EC2 test volumes..."
 aws ec2 describe-volumes --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" "Name=status,Values=available" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" "Name=status,Values=available" \
     --query "Volumes[].VolumeId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vol_id; do
     if [[ -n "$vol_id" ]]; then
         echo "  Deleting EC2 volume: $vol_id"
@@ -1002,7 +1014,7 @@ done
 # --- EFS access points (before file systems)
 echo "Cleaning EFS test access points..."
 aws efs describe-access-points --region "$REGION" 2>/dev/null | \
-    jq -r ".AccessPoints[]? | select(.Name // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .AccessPointId" 2>/dev/null | while read -r ap_id; do
+    jq -r ".AccessPoints[]? | select(.Name // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$FORMAE_PREFIX\")) | .AccessPointId" 2>/dev/null | while read -r ap_id; do
     if [[ -n "$ap_id" ]]; then
         echo "  Deleting EFS access point: $ap_id"
         aws efs delete-access-point --access-point-id "$ap_id" --region "$REGION" 2>/dev/null || true
@@ -1034,7 +1046,7 @@ nfw_is_test() {
     [[ "$name" == nfw* \
         || "$name" == *"$FORMAE_PREFIX"* \
         || "$name" == *"$SDK_PREFIX"* \
-        || "$name" == *"$TEST_PREFIX"* ]]
+        || "$name" == *"$FORMAE_PREFIX"* ]]
 }
 
 echo "Cleaning Network Firewall test firewalls..."
@@ -1094,7 +1106,7 @@ done
 
 # Delete the firewall's CloudWatch log group. The logging fixture names it
 # `/formae/nfw/plugin-sdk-test-*`; the generic log-group sweep further below
-# matches $TEST_PREFIX (plugin-sdk-test) as a prefix and so misses anything
+# matches $FORMAE_PREFIX (plugin-sdk-test) as a prefix and so misses anything
 # under the `/formae/nfw/` namespace. Sweep both `/formae/nfw/` and the legacy
 # `/formae/test/nfw-` prefix here.
 echo "Cleaning Network Firewall test log groups..."
@@ -1126,7 +1138,7 @@ done < <(aws events list-event-buses --region "$REGION" --query "EventBuses[].Na
 # Delete archives first (an archive pins its source event bus).
 echo "Cleaning EventBridge test archives..."
 aws events list-archives --region "$REGION" \
-    --query "Archives[?contains(ArchiveName, '$FORMAE_PREFIX')].ArchiveName" --output text 2>/dev/null | tr '\t' '\n' | while read -r arch; do
+    --query "Archives[?$(name_match ArchiveName)].ArchiveName" --output text 2>/dev/null | tr '\t' '\n' | while read -r arch; do
     if [[ -n "$arch" ]]; then
         echo "  Deleting EventBridge archive: $arch"
         aws events delete-archive --archive-name "$arch" --region "$REGION" 2>/dev/null || true
@@ -1138,7 +1150,7 @@ done
 echo "Cleaning EventBridge test rules..."
 for bus_name in "${EVENTS_TEST_BUSES[@]}" default; do
     aws events list-rules --event-bus-name "$bus_name" --region "$REGION" \
-        --query "Rules[?contains(Name, '$FORMAE_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r rule_name; do
+        --query "Rules[?$(name_match Name)].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r rule_name; do
         if [[ -n "$rule_name" ]]; then
             echo "  Deleting EventBridge rule: $rule_name (bus: $bus_name)"
             target_ids=$(aws events list-targets-by-rule --rule "$rule_name" --event-bus-name "$bus_name" --region "$REGION" --query "Targets[].Id" --output text 2>/dev/null | tr '\t' ' ')
@@ -1158,7 +1170,7 @@ done
 # 23a. Delete EC2 flow logs with test prefix (before VPCs)
 echo "Cleaning EC2 test flow logs..."
 aws ec2 describe-flow-logs --region "$REGION" \
-    --filter "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filter "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "FlowLogs[].FlowLogId" --output text 2>/dev/null | tr '\t' '\n' | while read -r fl_id; do
     if [[ -n "$fl_id" ]]; then
         echo "  Deleting EC2 flow log: $fl_id"
@@ -1170,7 +1182,7 @@ done
 echo "Cleaning EC2 test VPCs..."
 # Delete VPCs matching the test prefix name tag
 aws ec2 describe-vpcs --region "$REGION" \
-    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*" \
+    --filters "Name=tag:Name,Values=*$FORMAE_PREFIX*,*$SDK_PREFIX*,*$LEGACY_LB_PREFIX*" \
     --query "Vpcs[].VpcId" --output text 2>/dev/null | tr '\t' '\n' | while read -r vpc_id; do
     if [[ -n "$vpc_id" ]]; then
         echo "  Deleting EC2 VPC: $vpc_id"
@@ -1183,7 +1195,7 @@ done
 echo "Cleaning orphaned untagged VPCs..."
 DEFAULT_VPC=$(aws ec2 describe-vpcs --region "$REGION" --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text 2>/dev/null)
 
-# clean_orphan_vpc: delete all dependencies of a single untagged VPC, then
+# clean_orphan_vpc: delete all dependencies of a single orphaned VPC, then
 # delete the VPC itself. Called via xargs -P so multiple VPCs are processed
 # concurrently. All variables it needs (REGION, DEFAULT_VPC) must be exported
 # by the caller — see the export block below.
@@ -1438,8 +1450,24 @@ export REGION DEFAULT_VPC
 # serially meant 8-10 orphans took 50+ minutes. With -P 8 that collapses
 # to roughly one VPC's worth of wait time. Output from concurrent VPCs will
 # interleave, but each VPC logs its own ID so the output remains readable.
+#
+# Selection is tag-based, and deliberately does not sweep every non-default
+# VPC: the account can hold VPCs that belong to nobody's test run, and a
+# future parallel matrix needs a sweep that can be narrowed to the resources
+# a run owns rather than one that empties the region. A VPC qualifies when
+# it carries no Name tag at all (its tagging failed, so nothing else will
+# ever identify it) or when its Name tag matches a fixture prefix.
+#
+# The prefix arm is what stops transit-gateway fixture VPCs accumulating.
+# Their Name tag is set, so the untagged arm alone skipped them on every
+# run, while their own teardown routinely loses the race against transit
+# gateway attachment deletion and leaves the VPC behind. Eighteen of them
+# had banked up against a quota of twenty by 2026-08-17, which is why
+# fixtures that create their own VPC (the Cloud Map ones especially) began
+# failing on VPC quota rather than on anything they had done wrong.
 aws ec2 describe-vpcs --region "$REGION" \
-    --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | \
+    --query "Vpcs[?!(Tags[?Key=='Name']) || Tags[?Key=='Name' && ($(name_match Value))]].VpcId" \
+    --output text 2>/dev/null | tr '\t' '\n' | \
     grep -v "^$DEFAULT_VPC$" | grep -v "^$" | \
     xargs -P 8 -I {} bash -c 'clean_orphan_vpc "$@"' _ {} || true
 
@@ -1456,7 +1484,7 @@ echo "  Non-default VPCs remaining in $REGION: $remaining_vpcs"
 # 24. Delete CloudWatch Log Groups with test prefix
 echo "Cleaning CloudWatch test log groups..."
 aws logs describe-log-groups --region "$REGION" \
-    --query "logGroups[?contains(logGroupName, '$TEST_PREFIX')].logGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r lg; do
+    --query "logGroups[?$(name_match logGroupName)].logGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r lg; do
     if [[ -n "$lg" ]]; then
         echo "  Deleting log group: $lg"
         aws logs delete-log-group --log-group-name "$lg" --region "$REGION" 2>/dev/null || true
@@ -1470,7 +1498,7 @@ done
 # 25. Delete Secrets Manager secrets with test prefix
 echo "Cleaning Secrets Manager test secrets..."
 aws secretsmanager list-secrets --region "$REGION" \
-    --query "SecretList[?contains(Name, '$TEST_PREFIX')].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r secret; do
+    --query "SecretList[?$(name_match Name)].Name" --output text 2>/dev/null | tr '\t' '\n' | while read -r secret; do
     if [[ -n "$secret" ]]; then
         echo "  Deleting secret: $secret"
         aws secretsmanager delete-secret --secret-id "$secret" --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
@@ -1488,7 +1516,7 @@ done
 # those queues leaked. Match with contains() across all three prefixes, as the
 # Lambda/API Gateway sweeps already do.
 echo "Cleaning SQS test queues..."
-aws sqs list-queues --region "$REGION" --query "QueueUrls[?contains(@, '$FORMAE_PREFIX') || contains(@, '$SDK_PREFIX') || contains(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r queue; do
+aws sqs list-queues --region "$REGION" --query "QueueUrls[?$(name_match @)]" --output text 2>/dev/null | tr '\t' '\n' | while read -r queue; do
     if [[ -n "$queue" ]]; then
         echo "  Deleting SQS queue: $queue"
         aws sqs delete-queue --queue-url "$queue" --region "$REGION" 2>/dev/null || true
@@ -1501,7 +1529,7 @@ done
 
 # 27. Delete DynamoDB tables with test prefix
 echo "Cleaning DynamoDB test tables..."
-aws dynamodb list-tables --region "$REGION" --query "TableNames[?contains(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r table; do
+aws dynamodb list-tables --region "$REGION" --query "TableNames[?$(name_match @)]" --output text 2>/dev/null | tr '\t' '\n' | while read -r table; do
     if [[ -n "$table" ]]; then
         echo "  Deleting DynamoDB table: $table"
         aws dynamodb delete-table --table-name "$table" --region "$REGION" 2>/dev/null || true
@@ -1523,7 +1551,7 @@ fi
 # 28. Delete ECR repositories with test prefix
 echo "Cleaning ECR test repositories..."
 aws ecr describe-repositories --region "$REGION" \
-    --query "repositories[?contains(repositoryName, '$TEST_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
+    --query "repositories[?$(name_match repositoryName)].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
     if [[ -n "$repo" && "$repo" != "$imgbuild_repo" ]]; then
         echo "  Deleting ECR repository: $repo"
         aws ecr delete-repository --repository-name "$repo" --region "$REGION" --force 2>/dev/null || true
@@ -1533,7 +1561,7 @@ done
 # 28a. Delete ECR public repositories with test prefix
 echo "Cleaning ECR test public repositories..."
 aws ecr-public describe-repositories --region us-east-1 \
-    --query "repositories[?contains(repositoryName, '$TEST_PREFIX') || contains(repositoryName, '$SDK_PREFIX') || contains(repositoryName, '$FORMAE_PREFIX')].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
+    --query "repositories[?$(name_match repositoryName)].repositoryName" --output text 2>/dev/null | tr '\t' '\n' | while read -r repo; do
     if [[ -n "$repo" ]]; then
         echo "  Deleting ECR public repository: $repo"
         aws ecr-public delete-repository --repository-name "$repo" --region us-east-1 --force 2>/dev/null || true
@@ -1543,7 +1571,7 @@ done
 # 28b. Delete ECR pull-through cache rules with test prefix
 echo "Cleaning ECR test pull-through cache rules..."
 aws ecr describe-pull-through-cache-rules --region "$REGION" \
-    --query "pullThroughCacheRules[?contains(ecrRepositoryPrefix, '$FORMAE_PREFIX') || contains(ecrRepositoryPrefix, 'formae-sdk-test')].ecrRepositoryPrefix" --output text 2>/dev/null | tr '\t' '\n' | while read -r prefix; do
+    --query "pullThroughCacheRules[?$(name_match ecrRepositoryPrefix) || contains(ecrRepositoryPrefix, 'formae-sdk-test')].ecrRepositoryPrefix" --output text 2>/dev/null | tr '\t' '\n' | while read -r prefix; do
     if [[ -n "$prefix" ]]; then
         echo "  Deleting ECR pull-through cache rule: $prefix"
         aws ecr delete-pull-through-cache-rule --ecr-repository-prefix "$prefix" --region "$REGION" 2>/dev/null || true
@@ -1555,7 +1583,7 @@ echo "Cleaning ECR test repository creation templates..."
 aws ecr describe-repository-creation-templates --region "$REGION" \
     --query "registryId" --output text 2>/dev/null > /dev/null  # Just check if accessible
 aws ecr describe-repository-creation-templates --region "$REGION" 2>/dev/null | \
-    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .prefix" 2>/dev/null | while read -r prefix; do
+    jq -r ".repositoryCreationTemplates[]? | select(.prefix | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$FORMAE_PREFIX\")) | .prefix" 2>/dev/null | while read -r prefix; do
     if [[ -n "$prefix" ]]; then
         echo "  Deleting ECR repository creation template: $prefix"
         aws ecr delete-repository-creation-template --prefix "$prefix" --region "$REGION" 2>/dev/null || true
@@ -1653,7 +1681,7 @@ aws efs describe-file-systems --region "$REGION" \
       .[] |
       select(
         (.Tags // []) as $tags |
-        ($tags | any(.Key == "Name" and ((.Value | test("'"$FORMAE_PREFIX"'")) or (.Value | test("'"$TEST_PREFIX"'")))))
+        ($tags | any(.Key == "Name" and ((.Value | test("'"$FORMAE_PREFIX"'")) or (.Value | test("'"$FORMAE_PREFIX"'")))))
         or
         ((.Tags == null or .Tags == []) and .MountTargets == 0)
       ) | .Id
@@ -1678,7 +1706,7 @@ done
 # 32. Delete Elastic Beanstalk applications with test prefix
 echo "Cleaning Elastic Beanstalk test applications..."
 aws elasticbeanstalk describe-applications --region "$REGION" \
-    --query "Applications[?contains(ApplicationName, '$SDK_PREFIX')].ApplicationName" --output text 2>/dev/null | tr '\t' '\n' | while read -r app; do
+    --query "Applications[?$(name_match ApplicationName)].ApplicationName" --output text 2>/dev/null | tr '\t' '\n' | while read -r app; do
     if [[ -n "$app" ]]; then
         echo "  Deleting Elastic Beanstalk application: $app"
         aws elasticbeanstalk delete-application --application-name "$app" --terminate-env-by-force --region "$REGION" 2>/dev/null || true
@@ -1692,7 +1720,7 @@ done
 # 33. Delete RDS DB parameter groups with test prefix
 echo "Cleaning RDS test DB parameter groups..."
 aws rds describe-db-parameter-groups --region "$REGION" \
-    --query "DBParameterGroups[?contains(DBParameterGroupName, '$SDK_PREFIX')].DBParameterGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r pg; do
+    --query "DBParameterGroups[?$(name_match DBParameterGroupName)].DBParameterGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r pg; do
     if [[ -n "$pg" ]]; then
         echo "  Deleting RDS DB parameter group: $pg"
         aws rds delete-db-parameter-group --db-parameter-group-name "$pg" --region "$REGION" 2>/dev/null || true
@@ -1702,7 +1730,7 @@ done
 # 34. Delete RDS DB cluster parameter groups with test prefix
 echo "Cleaning RDS test DB cluster parameter groups..."
 aws rds describe-db-cluster-parameter-groups --region "$REGION" \
-    --query "DBClusterParameterGroups[?contains(DBClusterParameterGroupName, '$SDK_PREFIX')].DBClusterParameterGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r cpg; do
+    --query "DBClusterParameterGroups[?$(name_match DBClusterParameterGroupName)].DBClusterParameterGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r cpg; do
     if [[ -n "$cpg" ]]; then
         echo "  Deleting RDS DB cluster parameter group: $cpg"
         aws rds delete-db-cluster-parameter-group --db-cluster-parameter-group-name "$cpg" --region "$REGION" 2>/dev/null || true
@@ -1712,7 +1740,7 @@ done
 # 35. Delete RDS global clusters with test prefix
 echo "Cleaning RDS test global clusters..."
 aws rds describe-global-clusters --region "$REGION" \
-    --query "GlobalClusters[?contains(GlobalClusterIdentifier, '$SDK_PREFIX') || contains(GlobalClusterIdentifier, '$FORMAE_PREFIX')].GlobalClusterIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r gc; do
+    --query "GlobalClusters[?$(name_match GlobalClusterIdentifier)].GlobalClusterIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r gc; do
     if [[ -n "$gc" ]]; then
         echo "  Deleting RDS global cluster: $gc"
         # Disable deletion protection first
@@ -1724,7 +1752,7 @@ done
 # 36. Delete RDS option groups with test prefix
 echo "Cleaning RDS test option groups..."
 aws rds describe-option-groups --region "$REGION" \
-    --query "OptionGroupsList[?contains(OptionGroupName, '$SDK_PREFIX') || contains(OptionGroupName, '$FORMAE_PREFIX')].OptionGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r og; do
+    --query "OptionGroupsList[?$(name_match OptionGroupName)].OptionGroupName" --output text 2>/dev/null | tr '\t' '\n' | while read -r og; do
     if [[ -n "$og" ]]; then
         echo "  Deleting RDS option group: $og"
         aws rds delete-option-group --option-group-name "$og" --region "$REGION" 2>/dev/null || true
@@ -1734,7 +1762,7 @@ done
 # --- Lambda event source mappings (before functions and queues)
 echo "Cleaning Lambda test event source mappings..."
 aws lambda list-event-source-mappings --region "$REGION" --query "EventSourceMappings[]" --output json 2>/dev/null | \
-    jq -r '.[] | select(.FunctionArn // "" | test("'"$SDK_PREFIX"'|'"$FORMAE_PREFIX"'|'"$TEST_PREFIX"'")) | .UUID' 2>/dev/null | while read -r uuid; do
+    jq -r '.[] | select(.FunctionArn // "" | test("'"$SDK_PREFIX"'|'"$FORMAE_PREFIX"'|'"$FORMAE_PREFIX"'")) | .UUID' 2>/dev/null | while read -r uuid; do
     if [[ -n "$uuid" ]]; then
         echo "  Deleting Lambda event source mapping: $uuid"
         aws lambda delete-event-source-mapping --uuid "$uuid" --region "$REGION" 2>/dev/null || true
@@ -1743,7 +1771,7 @@ done
 
 # --- Lambda functions with test prefix
 echo "Cleaning Lambda test functions..."
-aws lambda list-functions --region "$REGION" --query "Functions[?contains(FunctionName, '$SDK_PREFIX') || contains(FunctionName, '$FORMAE_PREFIX') || contains(FunctionName, '$TEST_PREFIX')].FunctionName" --output text 2>/dev/null | tr '\t' '\n' | while read -r fn; do
+aws lambda list-functions --region "$REGION" --query "Functions[?$(name_match FunctionName)].FunctionName" --output text 2>/dev/null | tr '\t' '\n' | while read -r fn; do
     if [[ -n "$fn" ]]; then
         echo "  Deleting Lambda function: $fn"
         # Delete aliases first
@@ -1760,7 +1788,7 @@ done
 
 # --- API Gateway REST APIs with test prefix
 echo "Cleaning API Gateway test REST APIs..."
-aws apigateway get-rest-apis --region "$REGION" --query "items[?contains(name, '$FORMAE_PREFIX') || contains(name, '$SDK_PREFIX') || contains(name, '$TEST_PREFIX')].id" --output text 2>/dev/null | tr '\t' '\n' | while read -r api_id; do
+aws apigateway get-rest-apis --region "$REGION" --query "items[?$(name_match name)].id" --output text 2>/dev/null | tr '\t' '\n' | while read -r api_id; do
     if [[ -n "$api_id" ]]; then
         echo "  Deleting API Gateway REST API: $api_id"
         aws apigateway delete-rest-api --rest-api-id "$api_id" --region "$REGION" 2>/dev/null || true
@@ -1769,7 +1797,7 @@ done
 
 # --- API Gateway API keys with test prefix
 echo "Cleaning API Gateway test API keys..."
-aws apigateway get-api-keys --region "$REGION" --query "items[?contains(name, '$FORMAE_PREFIX') || contains(name, '$SDK_PREFIX') || contains(name, '$TEST_PREFIX')].id" --output text 2>/dev/null | tr '\t' '\n' | while read -r key_id; do
+aws apigateway get-api-keys --region "$REGION" --query "items[?$(name_match name)].id" --output text 2>/dev/null | tr '\t' '\n' | while read -r key_id; do
     if [[ -n "$key_id" ]]; then
         echo "  Deleting API Gateway API key: $key_id"
         aws apigateway delete-api-key --api-key "$key_id" --region "$REGION" 2>/dev/null || true
@@ -1778,7 +1806,7 @@ done
 
 # --- API Gateway usage plans with test prefix
 echo "Cleaning API Gateway test usage plans..."
-aws apigateway get-usage-plans --region "$REGION" --query "items[?contains(name, '$FORMAE_PREFIX') || contains(name, '$SDK_PREFIX') || contains(name, '$TEST_PREFIX')].id" --output text 2>/dev/null | tr '\t' '\n' | while read -r plan_id; do
+aws apigateway get-usage-plans --region "$REGION" --query "items[?$(name_match name)].id" --output text 2>/dev/null | tr '\t' '\n' | while read -r plan_id; do
     if [[ -n "$plan_id" ]]; then
         echo "  Deleting API Gateway usage plan: $plan_id"
         aws apigateway delete-usage-plan --usage-plan-id "$plan_id" --region "$REGION" 2>/dev/null || true
@@ -1788,7 +1816,7 @@ done
 # 37. Delete Lambda code signing configs with test prefix
 echo "Cleaning Lambda test code signing configs..."
 aws lambda list-code-signing-configs --region "$REGION" --max-items 100 2>/dev/null | \
-    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$TEST_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
+    jq -r ".CodeSigningConfigs[]? | select(.Description // \"\" | test(\"$FORMAE_PREFIX|$SDK_PREFIX|$FORMAE_PREFIX\")) | .CodeSigningConfigArn" 2>/dev/null | while read -r csc_arn; do
     if [[ -n "$csc_arn" ]]; then
         echo "  Deleting Lambda code signing config: $csc_arn"
         aws lambda delete-code-signing-config --code-signing-config-arn "$csc_arn" --region "$REGION" 2>/dev/null || true
@@ -1799,7 +1827,7 @@ done
 # Match both FORMAE_PREFIX and the SES-specific 'formae-conformance' prefix used
 # by the SES conformance fixtures.
 echo "Cleaning SES test email identities..."
-aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$SDK_PREFIX') || starts_with(IdentityName, '$TEST_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
+aws sesv2 list-email-identities --region "$REGION" --query "EmailIdentities[?starts_with(IdentityName, 'formae-conformance') || starts_with(IdentityName, '$FORMAE_PREFIX') || starts_with(IdentityName, '$SDK_PREFIX') || starts_with(IdentityName, '$FORMAE_PREFIX')].IdentityName" --output text 2>/dev/null | tr '\t' '\n' | while read -r ident; do
     if [[ -n "$ident" ]]; then
         echo "  Deleting SES email identity: $ident"
         aws sesv2 delete-email-identity --email-identity "$ident" --region "$REGION" 2>/dev/null || true
@@ -1808,7 +1836,7 @@ done
 
 # --- SES configuration sets (also implicitly removes their event destinations)
 echo "Cleaning SES test configuration sets..."
-aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$SDK_PREFIX') || starts_with(@, '$TEST_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
+aws sesv2 list-configuration-sets --region "$REGION" --query "ConfigurationSets[?starts_with(@, '$FORMAE_PREFIX') || starts_with(@, '$SDK_PREFIX') || starts_with(@, '$FORMAE_PREFIX')]" --output text 2>/dev/null | tr '\t' '\n' | while read -r cs; do
     if [[ -n "$cs" ]]; then
         echo "  Deleting SES configuration set: $cs"
         aws sesv2 delete-configuration-set --configuration-set-name "$cs" --region "$REGION" 2>/dev/null || true
@@ -1929,7 +1957,7 @@ done
 # prefix, so match on the suffix.
 echo "Cleaning KMS test aliases..."
 aws kms list-aliases --region "$REGION" \
-    --query "Aliases[?contains(AliasName, '$FORMAE_PREFIX') || contains(AliasName, '$SDK_PREFIX') || contains(AliasName, '$TEST_PREFIX')].AliasName" \
+    --query "Aliases[?$(name_match AliasName)].AliasName" \
     --output text 2>/dev/null | tr '\t' '\n' | while read -r alias_name; do
     if [[ -n "$alias_name" ]]; then
         echo "  Deleting KMS alias: $alias_name"
@@ -1943,7 +1971,7 @@ done
 # version, so it needs no separate sweep.
 echo "Cleaning Lambda test layers..."
 aws lambda list-layers --region "$REGION" \
-    --query "Layers[?contains(LayerName, '$FORMAE_PREFIX') || contains(LayerName, '$SDK_PREFIX') || contains(LayerName, '$TEST_PREFIX')].LayerName" \
+    --query "Layers[?$(name_match LayerName)].LayerName" \
     --output text 2>/dev/null | tr '\t' '\n' | while read -r layer_name; do
     if [[ -n "$layer_name" ]]; then
         aws lambda list-layer-versions --layer-name "$layer_name" --region "$REGION" \
@@ -1960,7 +1988,7 @@ done
 # above: deleting a rule group still referenced by a policy fails.
 echo "Cleaning NetworkFirewall test rule groups..."
 aws network-firewall list-rule-groups --region "$REGION" \
-    --query "RuleGroups[?contains(Name, '$FORMAE_PREFIX') || contains(Name, '$SDK_PREFIX') || contains(Name, '$TEST_PREFIX')].Name" \
+    --query "RuleGroups[?$(name_match Name)].Name" \
     --output text 2>/dev/null | tr '\t' '\n' | while read -r rg_name; do
     if [[ -n "$rg_name" ]]; then
         echo "  Deleting NetworkFirewall rule group: $rg_name"
@@ -1993,7 +2021,7 @@ done
 # the conformance fixtures is never touched.
 echo "Cleaning CodeBuild test projects..."
 aws codebuild list-projects --region "$REGION" \
-    --query "projects[?contains(@, '$FORMAE_PREFIX') || contains(@, '$SDK_PREFIX') || contains(@, '$TEST_PREFIX')]" \
+    --query "projects[?$(name_match @)]" \
     --output text 2>/dev/null | tr '\t' '\n' | while read -r cb_project; do
     if [[ -n "$cb_project" ]]; then
         echo "  Deleting CodeBuild project: $cb_project"
@@ -2004,12 +2032,12 @@ done
 # CodeBuild default log groups. A project whose build logs are not pointed at a
 # declared log group writes to `/aws/codebuild/<project-name>`, a group created
 # by the build rather than by the fixture, which outlives the project it belongs
-# to. The generic CloudWatch sweep above matches only "$TEST_PREFIX", so a group
+# to. The generic CloudWatch sweep above matches only "$FORMAE_PREFIX", so a group
 # under a project named with one of the other two prefixes survives it; match all
 # three here, restricted to the CodeBuild path.
 echo "Cleaning CodeBuild test log groups..."
 aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "/aws/codebuild/" \
-    --query "logGroups[?contains(logGroupName, '$FORMAE_PREFIX') || contains(logGroupName, '$SDK_PREFIX') || contains(logGroupName, '$TEST_PREFIX')].logGroupName" \
+    --query "logGroups[?$(name_match logGroupName)].logGroupName" \
     --output text 2>/dev/null | tr '\t' '\n' | while read -r cb_log_group; do
     if [[ -n "$cb_log_group" ]]; then
         echo "  Deleting CodeBuild log group: $cb_log_group"
