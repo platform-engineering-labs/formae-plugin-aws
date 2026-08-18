@@ -1183,7 +1183,7 @@ done
 echo "Cleaning orphaned untagged VPCs..."
 DEFAULT_VPC=$(aws ec2 describe-vpcs --region "$REGION" --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text 2>/dev/null)
 
-# clean_orphan_vpc: delete all dependencies of a single untagged VPC, then
+# clean_orphan_vpc: delete all dependencies of a single orphaned VPC, then
 # delete the VPC itself. Called via xargs -P so multiple VPCs are processed
 # concurrently. All variables it needs (REGION, DEFAULT_VPC) must be exported
 # by the caller — see the export block below.
@@ -1438,8 +1438,24 @@ export REGION DEFAULT_VPC
 # serially meant 8-10 orphans took 50+ minutes. With -P 8 that collapses
 # to roughly one VPC's worth of wait time. Output from concurrent VPCs will
 # interleave, but each VPC logs its own ID so the output remains readable.
+#
+# Selection is tag-based, and deliberately does not sweep every non-default
+# VPC: the account can hold VPCs that belong to nobody's test run, and a
+# future parallel matrix needs a sweep that can be narrowed to the resources
+# a run owns rather than one that empties the region. A VPC qualifies when
+# it carries no Name tag at all (its tagging failed, so nothing else will
+# ever identify it) or when its Name tag matches a fixture prefix.
+#
+# The prefix arm is what stops transit-gateway fixture VPCs accumulating.
+# Their Name tag is set, so the untagged arm alone skipped them on every
+# run, while their own teardown routinely loses the race against transit
+# gateway attachment deletion and leaves the VPC behind. Eighteen of them
+# had banked up against a quota of twenty by 2026-08-17, which is why
+# fixtures that create their own VPC (the Cloud Map ones especially) began
+# failing on VPC quota rather than on anything they had done wrong.
 aws ec2 describe-vpcs --region "$REGION" \
-    --query "Vpcs[?!(Tags[?Key=='Name'])].VpcId" --output text 2>/dev/null | tr '\t' '\n' | \
+    --query "Vpcs[?!(Tags[?Key=='Name']) || Tags[?Key=='Name' && (contains(Value, '$TEST_PREFIX') || contains(Value, '$SDK_PREFIX') || contains(Value, '$LEGACY_LB_PREFIX'))]].VpcId" \
+    --output text 2>/dev/null | tr '\t' '\n' | \
     grep -v "^$DEFAULT_VPC$" | grep -v "^$" | \
     xargs -P 8 -I {} bash -c 'clean_orphan_vpc "$@"' _ {} || true
 
