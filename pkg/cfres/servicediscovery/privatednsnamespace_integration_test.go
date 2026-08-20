@@ -82,10 +82,10 @@ const (
 // and still reaches its cleanups, rather than being killed mid-test with a live
 // Fargate task and a VPC left in the account.
 //
-// The step ceilings below are sized to fit inside it: 2+4+2+2+2 = 12 minutes of
+// The step ceilings below are sized to fit inside it: 2+4+2+4+2 = 14 minutes of
 // assertions, and a teardown of at most the drain ceiling plus seven cleanup
-// ceilings (2m + 7×45s ≈ 7m15s), for a worst case of about 19m15s.
-const itestBudget = 20 * time.Minute
+// ceilings (4m + 7×45s ≈ 9m15s), for a worst case of about 23m15s.
+const itestBudget = 25 * time.Minute
 
 // The ceilings the individual waits run against. Each is generous against what
 // the operation takes in practice — a namespace settles in well under a minute,
@@ -93,10 +93,21 @@ const itestBudget = 20 * time.Minute
 // stopping — and every one of them fails the test when it runs out, so a
 // contract that never holds is a failure rather than a pass that waited.
 const (
-	itestNamespaceTimeout      = 2 * time.Minute
-	itestTaskRunningTimeout    = 4 * time.Minute
-	itestRegistrationTimeout   = 2 * time.Minute
-	itestServiceDrainTimeout   = 2 * time.Minute
+	itestNamespaceTimeout    = 2 * time.Minute
+	itestTaskRunningTimeout  = 4 * time.Minute
+	itestRegistrationTimeout = 2 * time.Minute
+
+	// Deleting the ECS service is the slowest wait here, and the bulk of it is
+	// not the task stopping: measured against a quiet account, the task goes
+	// from RUNNING to stopped in about 67s and the service only reports
+	// INACTIVE at about 108s. A two-minute ceiling leaves ten seconds of margin
+	// over that, which is not enough for a wait whose duration ECS decides, so
+	// this is sized at roughly twice the observed time. A generous ceiling
+	// costs nothing on a healthy run — the wait returns as soon as the service
+	// goes INACTIVE — and only lengthens how long a genuinely stuck delete
+	// takes to report.
+	itestServiceDrainTimeout = 4 * time.Minute
+
 	itestDeregistrationTimeout = 2 * time.Minute
 	itestCleanupTimeout        = 45 * time.Second
 	itestPollInterval          = 5 * time.Second
@@ -707,7 +718,10 @@ func deleteECSService(ctx context.Context, client *ecs.Client, cluster, service 
 	}); err != nil {
 		return fmt.Errorf("DeleteService %s: %w", service, err)
 	}
-	return waitFor(ctx, itestServiceDrainTimeout, itestPollInterval, func(ctx context.Context) (bool, error) {
+	// The state of the last poll, so a wait that runs out says how far the
+	// delete had got rather than only that it ran out.
+	lastState := "never described"
+	err := waitFor(ctx, itestServiceDrainTimeout, itestPollInterval, func(ctx context.Context) (bool, error) {
 		out, err := client.DescribeServices(ctx, &ecs.DescribeServicesInput{
 			Cluster:  aws.String(cluster),
 			Services: []string{service},
@@ -719,10 +733,16 @@ func deleteECSService(ctx context.Context, client *ecs.Client, cluster, service 
 			return true, nil
 		}
 		described := out.Services[0]
+		lastState = fmt.Sprintf("status %s, %d running, %d pending",
+			aws.ToString(described.Status), described.RunningCount, described.PendingCount)
 		return aws.ToString(described.Status) == "INACTIVE" &&
 			described.RunningCount == 0 &&
 			described.PendingCount == 0, nil
 	})
+	if err != nil {
+		return fmt.Errorf("%w (last observed: %s)", err, lastState)
+	}
+	return nil
 }
 
 // deleteWithRetry runs a delete until it succeeds or the teardown ceiling runs
