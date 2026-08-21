@@ -87,7 +87,15 @@ open class Config {
   hidden fixed type: String = "AWS"
 
   /// Deprecated: legacy spelling of the default credential chain.
+  ///
+  /// Mutable for the same reason `auth` is: the profile is an auth concern,
+  /// and how the agent authenticates is not where the resources live.
+  /// Marking it mutable makes this deprecation's own migration (flat
+  /// `profile` to an `auth` block) a target update rather than a target
+  /// replace, which would otherwise destroy and recreate every resource on
+  /// the target.
   @Deprecated { message = "set auth = new DefaultChainAuth { profile = ... } instead" }
+  @formae.ConfigFieldHint { createOnly = false }
   hidden profile: String?
 
   hidden region: Region
