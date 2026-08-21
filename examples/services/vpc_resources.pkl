@@ -65,7 +65,7 @@ class VpcResources {
         label = "\(team)-public-route"
         routeTableId = routeTable.res.id
         destinationCidrBlock = "0.0.0.0/0"
-        gatewayId = igw.res.id
+        gatewayId = attachIgw.res.internetGatewayId
     }
 
     hidden subnetAssoc1: subnetroutetableassociation.SubnetRouteTableAssociation = new {
