@@ -228,6 +228,14 @@ formae agent.
 
 ### Changed
 
+- `AWS::S3::Object` is no longer discoverable. A bucket's object count is
+  unbounded, and objects are data rather than infrastructure, so a discovery
+  scan enumerated every key in every bucket in the account — slow enough to
+  stall the scan on a real account, and it filled the inventory with rows
+  nobody had declared. Objects formae manages are created, read, updated and
+  destroyed exactly as before; they are simply no longer found by discovery, so
+  an existing object now has to be declared to be brought under management.
+
 - `AWS::CodeBuild::ImageBuild` prunes the predecessor manifest after an in-place
   rebuild — behaviour present since the resource landed and not previously
   written down. A rebuild moves `imageTag` to the new digest and leaves the
