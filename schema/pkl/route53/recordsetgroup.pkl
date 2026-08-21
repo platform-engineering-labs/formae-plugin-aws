@@ -78,7 +78,7 @@ open class RecordSet extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Grouping construct with no cloud-side object; the underlying record sets are discovered individually
 }
 open class RecordSetGroup extends formae.Resource {
 

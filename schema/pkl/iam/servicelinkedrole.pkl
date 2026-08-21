@@ -14,7 +14,7 @@ const type = "AWS::IAM::ServiceLinkedRole"
 @aws.ResourceHint {
     type = module.type
     identifier = "RoleName"
-    discoverable = false
+    discoverable = false // No CloudControl list handler; a control-plane list would surface every AWS-created service-linked role in the account
 }
 open class ServiceLinkedRole extends formae.Resource {
 

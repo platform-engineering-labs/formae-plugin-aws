@@ -16,7 +16,7 @@ const type = "AWS::Lambda::LayerVersionPermission"
     identifier = "Id"
     parent = "AWS::Lambda::LayerVersion"
     listParam = new formae.ListProperty { parentProperty = "LayerVersionArn" listParameter = "LayerVersionArn" }
-    discoverable = false
+    discoverable = false // Scoped per layer version, which is not discoverable yet
 }
 open class LayerVersionPermission extends formae.Resource {
 

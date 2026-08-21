@@ -54,7 +54,7 @@ open class DatabaseResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "$.DatabaseName"
-    discoverable = false
+    discoverable = false // Enumerating objects inside a cluster needs admin credentials that discovery cannot supply
     parent = "AWS::RDS::DBCluster"
     parentRefs = new formae.ParentRef {
         parentProperty = "DBClusterArn"

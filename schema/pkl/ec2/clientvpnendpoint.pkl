@@ -64,7 +64,7 @@ open class TagSpecification extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Not supported by CloudControl; discovery needs a control-plane list
 }
 open class ClientVpnEndpoint extends formae.Resource {
 

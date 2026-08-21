@@ -19,7 +19,7 @@ open class Certificate extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Not supported by CloudControl; discovery needs a control-plane list scoped per listener
 }
 open class ListenerCertificate extends formae.Resource {
 

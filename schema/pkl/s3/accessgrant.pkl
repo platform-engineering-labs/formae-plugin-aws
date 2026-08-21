@@ -29,7 +29,7 @@ open class AccessGrantGrantee extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "AccessGrantId"
-    discoverable = false
+    discoverable = false // Listing fails outright in accounts without an Access Grants instance; needs tolerant error handling before discovery can be enabled
 }
 open class AccessGrant extends formae.Resource {
 
