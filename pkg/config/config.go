@@ -53,7 +53,7 @@ type OidcDeps struct {
 	// caches holds one *aws.CredentialsCache per distinct Oidc auth block,
 	// built lazily. Populated starting with the credential composition
 	// work; declared now so the shape is settled.
-	caches sync.Map
+	caches sync.Map //nolint:unused // populated by the follow-up credential-composition task
 
 	// stsFactory builds the STS client used for AssumeRoleWithWebIdentity.
 	// A seam for tests; production wiring is sts.NewFromConfig.
