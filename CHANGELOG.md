@@ -239,6 +239,11 @@ Requires formae >= 0.89.0.
   that still holds images cannot be destroyed, and `emptyOnDelete` does not
   currently change that: CloudControl's delete carries no resource model, so the
   repository's delete handler never sees the property.
+- Secrets Manager secrets adopt formae's first-class secret types. A secret's
+  value can now be referenced with `secret.res.secretValue`, and
+  `secret.res.secretValue.json("path")` reaches into a JSON payload. The
+  existing `res.secretString`, `res.arn`, `res.id` and `res.name` accessors
+  keep working unchanged.
 
 ### Changed
 
@@ -361,6 +366,25 @@ Requires formae >= 0.89.0.
   declaration-only: ACM stores the same certificate either way, so the
   declaration converges against the existing certificate with no cloud change.
   Simulate before applying to confirm the plan is empty.
+
+- Resources are no longer reported as failed while AWS is still rate-limiting a
+  request that would have succeeded. When CloudControl throttled a call, the
+  plugin absorbed the retries inside a single request to the agent, which could
+  take around three minutes and left the agent with no sign of progress; the
+  agent's check for an unresponsive plugin fired after 40 seconds and failed the
+  resource, cascading to everything that depended on it. Applying many resources
+  at once made this most likely, and subnet creation was the usual casualty. The
+  plugin now bounds how long any one request may spend retrying and reports the
+  work as still in progress instead, so the agent sees continuous progress while
+  the retries continue. Requires formae 0.89.0 or later for the matching change
+  on the agent side.
+
+- A Secrets Manager resource policy is now replaced as a whole document when it
+  changes. Individual statements were compared as a set, so a patch-mode update
+  that edited a statement added the new one without removing the old, leaving
+  the live policy holding both. This was previously masked by a separate defect
+  that recreated the policy on every update; with that fixed in formae 0.89.0,
+  policy updates apply in place and need this hint to be correct.
 
 ## [0.1.16]
 
