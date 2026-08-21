@@ -31,9 +31,8 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/google/uuid v1.6.0
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.26
-	// SDK pinned at the credential-broker branch head. Re-pin to a real tag
-	// before merge (release-path work).
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821192428-ecbf54051536
+	// Re-pin to the next official pkg/plugin tag when one is cut.
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821224650-dc5149d5a102
 	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630
 	github.com/stretchr/testify v1.11.1
 )
@@ -75,10 +74,8 @@ require (
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df // indirect
 	github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 // indirect
-	// pkg/plugin's own require for this is a zero-value placeholder (its
-	// replace directive is repo-local and ignored by consumers), so it must
-	// be pinned explicitly here. Re-pin to a real tag before merge (release-path work).
-	github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821192428-ecbf54051536 // indirect
+	// Re-pin to the next official pkg/credential tag when one is cut.
+	github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821213704-ba68bacf6dd6 // indirect
 	github.com/platform-engineering-labs/orbital v0.1.36 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
@@ -124,8 +121,8 @@ require (
 )
 
 // Matches the ergo fork revision required by the pinned pkg/plugin and
-// pkg/credential (both need -pel.6). Re-pin to a real tag before merge
-// (release-path work).
+// pkg/credential (both need -pel.6). A replace directive is not transitive,
+// so it has to be repeated here.
 replace ergo.services/ergo => github.com/JeroenSoeters/ergo v1.999.320-pel.6
 
 replace ergo.services/actor/statemachine => github.com/JeroenSoeters/actor/statemachine v0.0.0-20260205190926-8b1b2eaf30f4

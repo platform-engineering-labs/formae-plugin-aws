@@ -144,12 +144,12 @@ github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df h1:1xWk/De6cs3h2r
 github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df/go.mod h1:sTJHuiEPB0WNdPYPOP9M6FQU4YTHemXgDLIQqkbBdDI=
 github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 h1:ZMTgKwSomy2cVcl/+NivSqopbWeHbmYeQ+BxoYq8bVY=
 github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1/go.mod h1:0ncHFCsGA6b0w1kBm6m+QwJ823qAY2vL47GvoR0BTyU=
-github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821192428-ecbf54051536 h1:qGMZwMrbmsyiuYOh2tQ3p0s1jECs5Ld4K09wbtvEjQo=
-github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821192428-ecbf54051536/go.mod h1:VS9hO24cYUcGYao9nfPb41HBfE2hF4WMrIS2fZwRwzM=
+github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821213704-ba68bacf6dd6 h1:3F9pGvQDm4HHvPfVhohzjeCJZHvrVy3KCvPb1px7tLU=
+github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821213704-ba68bacf6dd6/go.mod h1:VS9hO24cYUcGYao9nfPb41HBfE2hF4WMrIS2fZwRwzM=
 github.com/platform-engineering-labs/formae/pkg/model v0.1.26 h1:80p843bmz9sLTtUFveMGWYeGcpRjvceyVxUgPvlApqs=
 github.com/platform-engineering-labs/formae/pkg/model v0.1.26/go.mod h1:1dmsFwoaJZkHevBsAIZr068CWzG7de1VNz7PFWvM3Z8=
-github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821192428-ecbf54051536 h1:wVEUYO/8GN2cPvZgJC8DrWqRL/Egec40eG4fWbvj+bs=
-github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821192428-ecbf54051536/go.mod h1:2XJE4ZFchjdr+IDJz39PC9D41ziYe5lp1kAxpBWUD7w=
+github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821224650-dc5149d5a102 h1:/heBYUEoIef2G50AmXZtXbDaDENoblspX2FFdy59zeo=
+github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821224650-dc5149d5a102/go.mod h1:VXdXrX5hBF3xXK0GIUowIhTBUaog0BmjU8TOXF2yUfA=
 github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630 h1:ZyGSai5xPIi+vxAS04JlVr04Fecw3K9Zj2bsR4OBkdE=
 github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630/go.mod h1:gq591ZeRZ4jAHpdSvCyrOvi8qyALxcXQQhd0B6GRMAo=
 github.com/platform-engineering-labs/orbital v0.1.36 h1:nPMLxDbwDrjlhJoMQXAE86HtVhQHC2A6BJlWYmNM75c=
