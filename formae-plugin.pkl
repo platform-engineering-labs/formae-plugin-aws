@@ -11,6 +11,10 @@ summary = "AWS resource plugin (CloudControl-based)"
 description = "AWS CloudControl resource plugin for Formae"
 category = "cloud"
 license = "FSL-1.1-ALv2"
+// The dev line at planning time is 0.89.0-dev.2 (last stable 0.88.1), so
+// 0.89.0 is the release expected to carry the oidc-credential broker this
+// plugin's OidcAuth depends on. Confirm the real release number before
+// publishing and correct this if that work lands in a later release instead.
 minFormaeVersion = "0.89.0"
 
 output {

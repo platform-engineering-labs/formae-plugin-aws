@@ -26,6 +26,29 @@ Requires formae >= 0.89.0.
   a defect worth recording, or AWS-managed flooding without a filterable
   signal.
 
+- Polymorphic `auth` on the target config: `DefaultChainAuth` (the existing
+  default credential provider chain — env vars, shared config, IMDS/IRSA —
+  optionally pinned to a shared-config `profile`) or `OidcAuth` (federated
+  identity: an OIDC identity token from the paired oidc-credential broker,
+  exchanged for credentials by assuming a role you name in the target
+  account). `auth` and the legacy flat `profile` field are mutually
+  exclusive; setting both is rejected at eval.
+
+  `OidcAuth` requires a formae agent with oidc-credential broker support
+  (`minFormaeVersion = "0.89.0"` in `formae-plugin.pkl`). Paired with an
+  older agent, or an agent with no broker paired, credential resolution
+  fails closed with an explicit error rather than ever falling back to
+  ambient credentials.
+
+  **One-time bookkeeping, not drift.** Existing targets carry no `auth`
+  block, and adding the field to the schema is a change formae records
+  against every target's stored metadata regardless of whether the target's
+  declared configuration actually changed. Expect a single, resource-inert
+  target-metadata update on the first reconcile after upgrading to this
+  version — no cloud resource is read, created, updated or destroyed by it.
+  If a stack shows exactly one such update per target immediately after the
+  upgrade, this is why; it is not drift and does not recur.
+
 - `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` support. A PostgreSQL
   database inside an Aurora cluster, and its owning login role, are now
   first-class declared resources. CloudControl models a cluster and its
@@ -337,6 +360,16 @@ Requires formae >= 0.89.0.
   resource from formae's state and delete its pushed image out of band before
   declaring the new five-resource forma. A later release will accept the older
   two-part identifier so this is unnecessary.
+
+### Deprecated
+
+- The flat `profile` field on the target config is deprecated in favor of
+  `auth = new DefaultChainAuth { profile = ... }`. It continues to work
+  unchanged — a target set this way still authenticates via the default
+  credential chain pinned to that profile — and logs one deprecation warning
+  per plugin process rather than on every call. There is no removal in this
+  release; flat `profile` will be removed at a future major version, posted
+  ahead of time.
 
 ### Fixed
 
