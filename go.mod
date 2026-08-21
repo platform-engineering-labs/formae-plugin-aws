@@ -33,7 +33,7 @@ require (
 	github.com/platform-engineering-labs/formae/pkg/model v0.1.26
 	// SDK pinned at the credential-broker branch head. Re-pin to a real tag
 	// before merge (release-path work).
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821030446-6aa3db2765ec
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821192428-ecbf54051536
 	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630
 	github.com/stretchr/testify v1.11.1
 )
@@ -78,7 +78,7 @@ require (
 	// pkg/plugin's own require for this is a zero-value placeholder (its
 	// replace directive is repo-local and ignored by consumers), so it must
 	// be pinned explicitly here. Re-pin to a real tag before merge (release-path work).
-	github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821030437-d18cdc5fa355 // indirect
+	github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821192428-ecbf54051536 // indirect
 	github.com/platform-engineering-labs/orbital v0.1.36 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
