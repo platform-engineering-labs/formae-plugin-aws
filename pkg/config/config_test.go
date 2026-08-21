@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,10 +28,10 @@ func (h countingHandler) Handle(context.Context, slog.Record) error { *h.count++
 func (h countingHandler) WithAttrs([]slog.Attr) slog.Handler        { return h }
 func (h countingHandler) WithGroup(string) slog.Handler             { return h }
 
-// stubTokenSource is a plugin.OidcTokenSource that never actually gets
-// called in these tests: it exists so a Config can carry non-nil OidcDeps
-// with a non-nil Source, exercising the "wired but not yet implemented"
-// path distinct from the "nothing wired at all" fail-closed path.
+// stubTokenSource is a plugin.OidcTokenSource that always mints the same
+// token, so a Config can carry non-nil OidcDeps with a non-nil Source and
+// exercise the wired path rather than the "nothing wired at all" fail-closed
+// path.
 type stubTokenSource struct{}
 
 func (stubTokenSource) IdentityToken(context.Context, string) (string, error) {
@@ -170,16 +171,22 @@ func TestToAwsConfig_OidcWithDepsButNilSourceFailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "OIDC token source")
 }
 
-func TestToAwsConfig_OidcWithDepsWiredButNotYetImplemented(t *testing.T) {
+func TestAwsConfigOptions_OidcAppliesACredentialsCache(t *testing.T) {
 	c := (&Config{
 		Region: "us-east-1",
 		Auth:   json.RawMessage(`{"Type":"Oidc","RoleArn":"arn:aws:iam::123456789012:role/formae-agent"}`),
 	}).WithOidcDeps(NewOidcDeps(stubTokenSource{}))
 
-	_, err := c.ToAwsConfig(context.Background())
+	optFns, err := c.awsConfigOptions()
+	require.NoError(t, err)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet implemented")
+	var lo awsconfig.LoadOptions
+	for _, fn := range optFns {
+		require.NoError(t, fn(&lo))
+	}
+
+	assert.Equal(t, "us-east-1", lo.Region)
+	assert.IsType(t, &aws.CredentialsCache{}, lo.Credentials)
 }
 
 func TestAwsConfigOptions_FlatProfileAppliesSharedConfigProfile(t *testing.T) {
@@ -189,7 +196,7 @@ func TestAwsConfigOptions_FlatProfileAppliesSharedConfigProfile(t *testing.T) {
 	// owns exclusively for the life of the test binary.
 	c := (&Config{Region: "us-east-1", Profile: "legacy-profile"}).WithOidcDeps(NewOidcDeps(nil))
 
-	optFns, err := c.awsConfigOptions(context.Background())
+	optFns, err := c.awsConfigOptions()
 	require.NoError(t, err)
 
 	var lo awsconfig.LoadOptions
@@ -204,7 +211,7 @@ func TestAwsConfigOptions_FlatProfileAppliesSharedConfigProfile(t *testing.T) {
 func TestAwsConfigOptions_NoProfileLeavesSharedConfigProfileUnset(t *testing.T) {
 	c := &Config{Region: "us-east-1"}
 
-	optFns, err := c.awsConfigOptions(context.Background())
+	optFns, err := c.awsConfigOptions()
 	require.NoError(t, err)
 
 	var lo awsconfig.LoadOptions
@@ -222,7 +229,7 @@ func TestAwsConfigOptions_ExplicitDefaultChainAppliesItsProfile(t *testing.T) {
 		Auth:   json.RawMessage(`{"Type":"DefaultChain","Profile":"chain-profile"}`),
 	}
 
-	optFns, err := c.awsConfigOptions(context.Background())
+	optFns, err := c.awsConfigOptions()
 	require.NoError(t, err)
 
 	var lo awsconfig.LoadOptions
@@ -254,9 +261,9 @@ func TestDeprecationWarning_FiresOncePerOidcDeps(t *testing.T) {
 	c1 := (&Config{Region: "us-east-1", Profile: "legacy-profile"}).WithOidcDeps(deps)
 	c2 := (&Config{Region: "us-east-1", Profile: "legacy-profile"}).WithOidcDeps(deps)
 
-	_, err := c1.awsConfigOptions(context.Background())
+	_, err := c1.awsConfigOptions()
 	require.NoError(t, err)
-	_, err = c2.awsConfigOptions(context.Background())
+	_, err = c2.awsConfigOptions()
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, *count)
@@ -271,7 +278,7 @@ func TestDeprecationWarning_DoesNotFireForExplicitDefaultChainProfile(t *testing
 		Auth:   json.RawMessage(`{"Type":"DefaultChain","Profile":"chain-profile"}`),
 	}).WithOidcDeps(deps)
 
-	_, err := c.awsConfigOptions(context.Background())
+	_, err := c.awsConfigOptions()
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, *count)
@@ -283,7 +290,7 @@ func TestDeprecationWarning_DoesNotFireWhenNoProfileIsSet(t *testing.T) {
 	deps := NewOidcDeps(nil)
 	c := (&Config{Region: "us-east-1"}).WithOidcDeps(deps)
 
-	_, err := c.awsConfigOptions(context.Background())
+	_, err := c.awsConfigOptions()
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, *count)
@@ -295,9 +302,9 @@ func TestDeprecationWarning_FallsBackToProcessOnceWhenDepsAreNil(t *testing.T) {
 	c1 := &Config{Region: "us-east-1", Profile: "legacy-profile"}
 	c2 := &Config{Region: "us-east-1", Profile: "legacy-profile"}
 
-	_, err := c1.awsConfigOptions(context.Background())
+	_, err := c1.awsConfigOptions()
 	require.NoError(t, err)
-	_, err = c2.awsConfigOptions(context.Background())
+	_, err = c2.awsConfigOptions()
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, *count)

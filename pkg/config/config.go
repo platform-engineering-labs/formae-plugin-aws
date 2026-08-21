@@ -51,9 +51,8 @@ type OidcDeps struct {
 	Source plugin.OidcTokenSource
 
 	// caches holds one *aws.CredentialsCache per distinct Oidc auth block,
-	// built lazily. Populated starting with the credential composition
-	// work; declared now so the shape is settled.
-	caches sync.Map //nolint:unused // populated by the follow-up credential-composition task
+	// built lazily by credentialsCacheFor.
+	caches sync.Map
 
 	// stsFactory builds the STS client used for AssumeRoleWithWebIdentity.
 	// A seam for tests; production wiring is sts.NewFromConfig.
@@ -73,15 +72,6 @@ func NewOidcDeps(src plugin.OidcTokenSource) *OidcDeps {
 			return sts.NewFromConfig(cfg)
 		},
 	}
-}
-
-// oidcCredentials mints AWS credentials for roleArn via the OIDC token
-// source and AssumeRoleWithWebIdentity. The actual composition (identity
-// token retrieval, STS exchange, per-role caching) is not wired yet; this
-// returns a clear error rather than ever falling back to ambient
-// credentials.
-func (d *OidcDeps) oidcCredentials(_ context.Context, _ string, roleArn string) (aws.CredentialsProvider, error) {
-	return nil, fmt.Errorf("config: Oidc auth credential minting for role %q is not yet implemented", roleArn)
 }
 
 type Config struct {
@@ -157,7 +147,7 @@ func (c *Config) effectiveAuth() (string, json.RawMessage, error) {
 // Split out from ToAwsConfig so tests can inspect the resolved options (e.g.
 // the profile threaded through) without exercising real credential/config-
 // file resolution.
-func (c *Config) awsConfigOptions(ctx context.Context) ([]func(*awsconfig.LoadOptions) error, error) {
+func (c *Config) awsConfigOptions() ([]func(*awsconfig.LoadOptions) error, error) {
 	synthesized := isAuthAbsent(c.Auth)
 
 	authType, rawAuth, err := c.effectiveAuth()
@@ -196,11 +186,9 @@ func (c *Config) awsConfigOptions(ctx context.Context) ([]func(*awsconfig.LoadOp
 			return nil, errors.New("config: Oidc auth requires an OIDC token source, but this plugin instance has none wired (failing closed rather than falling back to ambient credentials)")
 		}
 
-		creds, err := c.deps.oidcCredentials(ctx, c.Region, oidc.RoleArn)
-		if err != nil {
-			return nil, fmt.Errorf("config: resolving Oidc credentials: %w", err)
-		}
-		opts = append(opts, awsconfig.WithCredentialsProvider(creds))
+		opts = append(opts, awsconfig.WithCredentialsProvider(
+			c.deps.oidcCredentials(c.Region, oidc.RoleArn, rawAuth),
+		))
 
 	default:
 		return nil, fmt.Errorf("config: unknown Auth type %q", authType)
@@ -221,7 +209,7 @@ func (c *Config) warnDeprecatedFlatProfile() {
 }
 
 func (c *Config) ToAwsConfig(ctx context.Context) (aws.Config, error) {
-	opts, err := c.awsConfigOptions(ctx)
+	opts, err := c.awsConfigOptions()
 	if err != nil {
 		return aws.Config{}, err
 	}
