@@ -177,7 +177,7 @@ open class ProjectResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Name"
-    discoverable = false
+    discoverable = false // The modelled property surface is narrower than the CodeBuild API's, so an externally created project must not be adopted
 }
 open class Project extends formae.Resource {
 

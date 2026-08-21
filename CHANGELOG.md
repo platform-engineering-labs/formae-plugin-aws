@@ -12,6 +12,18 @@ formae agent.
 
 ### Added
 
+- Discovery for four more resource types: `AWS::IAM::ManagedPolicy`,
+  `AWS::KMS::Alias`, `AWS::EC2::PrefixList`, and `AWS::EC2::Route` (scoped per
+  route table). AWS-managed inventory is kept out of discovery: AWS-managed
+  policies (`arn:aws:iam::aws:policy/*`) and reserved aliases (`alias/aws/*`)
+  are skipped at list time before the per-resource read, AWS-owned prefix
+  lists are excluded by owner, and the implicit local route every route table
+  carries is excluded by gateway.
+- Every resource type that keeps `discoverable = false` now carries an inline
+  comment recording why: no listable inventory, no CloudControl list support,
+  a defect worth recording, or AWS-managed flooding without a filterable
+  signal.
+
 - `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` support. A PostgreSQL
   database inside an Aurora cluster, and its owning login role, are now
   first-class declared resources. CloudControl models a cluster and its

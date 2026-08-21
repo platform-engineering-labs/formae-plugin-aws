@@ -14,7 +14,7 @@ const type = "AWS::EC2::ClientVpnTargetNetworkAssociation"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Not supported by CloudControl; discovery needs a control-plane list scoped per Client VPN endpoint
 }
 open class ClientVpnTargetNetworkAssociation extends formae.Resource {
 

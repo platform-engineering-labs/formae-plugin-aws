@@ -15,7 +15,7 @@ const type = "AWS::IAM::UserPolicy"
     type = module.type
     identifier = "PolicyName"
     parent = "AWS::IAM::User"
-    discoverable = false
+    discoverable = false // No CloudControl list handler; discovery needs a control-plane list scoped per user
 }
 open class UserPolicy extends formae.Resource {
 

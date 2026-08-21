@@ -50,7 +50,7 @@ open class ImageBuildResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "ImageRef"
-    discoverable = false
+    discoverable = false // A build has no listable inventory to discover
 }
 open class ImageBuild extends formae.Resource {
 
