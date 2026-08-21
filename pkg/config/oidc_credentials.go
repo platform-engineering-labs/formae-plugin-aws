@@ -100,6 +100,11 @@ func redactToken(err error, token string) error {
 // policy) yields a distinct cache rather than silently reusing credentials
 // minted under the old settings. The NUL separators keep a boundary shift
 // between the role and the region from colliding.
+//
+// The key deliberately omits the token source's identity: the SDK installs
+// exactly one OidcTokenSource per plugin process (via OidcAware at startup),
+// so within one OidcDeps every cache entry is already scoped to that single
+// broker pairing and there is nothing for the key to distinguish.
 func oidcCacheKey(roleArn, region string, rawAuth json.RawMessage) string {
 	sum := sha256.Sum256(rawAuth)
 

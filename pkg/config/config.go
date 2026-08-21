@@ -46,6 +46,11 @@ var warnFlatFallback sync.Once
 // would outlive individual plugin instances and make tests order-dependent.
 // A Config with nil deps behaves flat-only: Oidc auth fails closed, and the
 // deprecation warning falls back to warnFlatFallback.
+//
+// Build one with NewOidcDeps, never a bare &OidcDeps{...} literal outside
+// this package: a literal leaves stsFactory nil, and oidcCredentials calls it
+// unconditionally once Source is non-nil, so a literal with a Source set
+// panics on first use. NewOidcDeps always wires the production factory.
 type OidcDeps struct {
 	// Source mints the OIDC identity tokens exchanged for AWS credentials.
 	Source plugin.OidcTokenSource

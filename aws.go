@@ -29,10 +29,29 @@ import (
 // The SDK automatically provides identity methods (Name, Version, Namespace)
 // and schema methods (SupportedResources, SchemaForResourceType) by reading
 // formae-plugin.pkl and schema/pkl/ at startup.
-type Plugin struct{}
+type Plugin struct {
+	// oidc carries the token source the SDK installs via SetOidcTokenSource,
+	// plus the plugin-lifetime credentials cache it backs. Nil until the SDK
+	// calls SetOidcTokenSource (or on an agent too old to pair a broker), in
+	// which case every target config threads nil deps and Oidc auth fails
+	// closed rather than falling back to ambient credentials.
+	oidc *config.OidcDeps
+}
 
 // Compile-time check: Plugin must satisfy ResourcePlugin interface.
 var _ plugin.ResourcePlugin = &Plugin{}
+
+// Compile-time check: Plugin must satisfy OidcAware, so the SDK hands it an
+// OidcTokenSource at startup.
+var _ plugin.OidcAware = &Plugin{}
+
+// SetOidcTokenSource receives the token source the SDK mints OIDC identity
+// tokens through. Called once at startup; every FromTargetConfig call below
+// threads the resulting deps onto the parsed Config so Oidc auth blocks can
+// exchange a token for AWS credentials.
+func (p *Plugin) SetOidcTokenSource(src plugin.OidcTokenSource) {
+	p.oidc = config.NewOidcDeps(src)
+}
 
 // EKSAutomodeResourceTypes lists AWS CloudFormation resource types that EKS Automode manages.
 // These resources are tagged with "kubernetes.io/cluster/<cluster-name>" = "owned".
@@ -157,7 +176,7 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 }
 
 func (p *Plugin) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig)
+	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationCreate) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationCreate, targetConfig)
 		return provisioner.Create(ctx, request)
@@ -172,12 +191,13 @@ func (p *Plugin) Create(ctx context.Context, request *resource.CreateRequest) (*
 }
 
 func (p *Plugin) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationUpdate) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationUpdate, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationUpdate, targetConfig)
 		return provisioner.Update(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -186,14 +206,15 @@ func (p *Plugin) Update(ctx context.Context, request *resource.UpdateRequest) (*
 }
 
 func (p *Plugin) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
+	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
 	if request.ResourceType != "" {
 		if registry.HasProvisioner(request.ResourceType, resource.OperationCheckStatus) {
-			provisioner := registry.Get(request.ResourceType, resource.OperationCheckStatus, config.FromTargetConfig(request.TargetConfig))
+			provisioner := registry.Get(request.ResourceType, resource.OperationCheckStatus, targetConfig)
 			return provisioner.Status(ctx, request)
 		}
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -202,12 +223,13 @@ func (p *Plugin) Status(ctx context.Context, request *resource.StatusRequest) (*
 }
 
 func (p *Plugin) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
+	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationDelete) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationDelete, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationDelete, targetConfig)
 		return provisioner.Delete(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -216,12 +238,13 @@ func (p *Plugin) Delete(ctx context.Context, request *resource.DeleteRequest) (*
 }
 
 func (p *Plugin) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationRead) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationRead, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationRead, targetConfig)
 		return provisioner.Read(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -230,12 +253,13 @@ func (p *Plugin) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 }
 
 func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
+	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationList) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationList, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationList, targetConfig)
 		return provisioner.List(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
