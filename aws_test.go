@@ -60,4 +60,22 @@ func TestMatchesFilter(t *testing.T) {
 		filter := map[string]string{}
 		assert.True(t, matchesFilter(properties, filter))
 	})
+
+	t.Run("matches when the property echoes the filtered name in ARN form", func(t *testing.T) {
+		properties := `{"FunctionName":"arn:aws:lambda:us-east-1:111122223333:function:my-function","Id":"sid-1"}`
+		filter := map[string]string{"FunctionName": "my-function"}
+		assert.True(t, matchesFilter(properties, filter))
+	})
+
+	t.Run("matches when the filter value is an ARN and the property echoes the short name", func(t *testing.T) {
+		properties := `{"FunctionName":"my-function","Id":"sid-1"}`
+		filter := map[string]string{"FunctionName": "arn:aws:lambda:us-east-1:111122223333:function:my-function"}
+		assert.True(t, matchesFilter(properties, filter))
+	})
+
+	t.Run("does not match when the ARN-form property names a different resource", func(t *testing.T) {
+		properties := `{"FunctionName":"arn:aws:lambda:us-east-1:111122223333:function:other-function","Id":"sid-1"}`
+		filter := map[string]string{"FunctionName": "my-function"}
+		assert.False(t, matchesFilter(properties, filter))
+	})
 }

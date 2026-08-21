@@ -181,7 +181,6 @@ open class ListenerRuleResolvable extends formae.Resolvable {
     identifier = "RuleArn"
     parent = "AWS::ElasticLoadBalancingV2::Listener"
     listParam = new formae.ListProperty { parentProperty = "ListenerArn" listParameter = "ListenerArn" }
-    discoverable = false
 }
 open class ListenerRule extends formae.Resource {
 

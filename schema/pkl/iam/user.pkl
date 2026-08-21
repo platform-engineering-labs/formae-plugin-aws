@@ -39,7 +39,6 @@ open class UserResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "UserName"
-    discoverable = false
     extractable = false
 }
 open class User extends formae.Resource {
