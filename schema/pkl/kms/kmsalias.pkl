@@ -30,7 +30,6 @@ open class AliasResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    discoverable = false
     extractable = true
 }
 open class Alias extends formae.Resource {

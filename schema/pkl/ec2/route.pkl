@@ -14,7 +14,8 @@ const type = "AWS::EC2::Route"
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    discoverable = false
+    parent = "AWS::EC2::RouteTable"
+    listParam = new formae.ListProperty { parentProperty = "RouteTableId" listParameter = "RouteTableId" }
 }
 open class Route extends formae.Resource {
 

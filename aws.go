@@ -79,7 +79,47 @@ func (p *Plugin) DiscoveryFilters() []pkgmodel.MatchFilter {
 				},
 			},
 		},
+		{
+			// Filter out AWS-owned managed prefix lists (com.amazonaws.*). They
+			// exist in every account, cannot be modified or deleted, and their
+			// prefix-list id carries no ownership signal, so the owner is only
+			// visible after the read.
+			ResourceTypes: []string{"AWS::EC2::PrefixList"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  "$.OwnerId",
+					PropertyValue: "AWS",
+				},
+			},
+		},
+		{
+			// Filter out the implicit local route every route table carries for
+			// its VPC CIDR. It is created and deleted with the route table and
+			// cannot be managed on its own.
+			ResourceTypes: []string{"AWS::EC2::Route"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  "$.GatewayId",
+					PropertyValue: "local",
+				},
+			},
+		},
 	}
+}
+
+// discoveryListExclusions skips resources whose native id alone identifies
+// them as AWS-managed, before the per-resource read that discovery performs
+// on every listed id. DiscoveryFilters run agent-side only after that read,
+// so types with large AWS-managed populations (IAM ships ~1400 managed
+// policies) would spend the whole rate-limit budget reading resources that
+// are then discarded.
+var discoveryListExclusions = map[string]func(nativeID string) bool{
+	"AWS::IAM::ManagedPolicy": func(id string) bool {
+		return strings.HasPrefix(id, "arn:aws:iam::aws:policy/")
+	},
+	"AWS::KMS::Alias": func(id string) bool {
+		return strings.HasPrefix(id, "alias/aws/")
+	},
 }
 
 // LabelConfig returns the label extraction configuration for discovered AWS resources.
@@ -222,6 +262,7 @@ func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*reso
 		}
 		return nil, err
 	}
+	excluded := discoveryListExclusions[request.ResourceType]
 	for _, r := range result.ResourceDescriptions {
 		// CloudControl does not reliably filter by ResourceModel for all resource types.
 		// Post-filter results to ensure each resource's properties match the requested filter.
@@ -229,6 +270,9 @@ func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*reso
 			if !matchesFilter(*r.Properties, request.AdditionalProperties) {
 				continue
 			}
+		}
+		if excluded != nil && excluded(*r.Identifier) {
+			continue
 		}
 		nativeIDs = append(nativeIDs, *r.Identifier)
 	}

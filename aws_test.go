@@ -79,3 +79,23 @@ func TestMatchesFilter(t *testing.T) {
 		assert.False(t, matchesFilter(properties, filter))
 	})
 }
+
+func TestDiscoveryListExclusions(t *testing.T) {
+	t.Run("excludes AWS-managed IAM policies and keeps customer policies", func(t *testing.T) {
+		excluded := discoveryListExclusions["AWS::IAM::ManagedPolicy"]
+		assert.True(t, excluded("arn:aws:iam::aws:policy/AdministratorAccess"))
+		assert.True(t, excluded("arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"))
+		assert.False(t, excluded("arn:aws:iam::111122223333:policy/my-policy"))
+	})
+
+	t.Run("excludes AWS-managed KMS aliases and keeps customer aliases", func(t *testing.T) {
+		excluded := discoveryListExclusions["AWS::KMS::Alias"]
+		assert.True(t, excluded("alias/aws/s3"))
+		assert.False(t, excluded("alias/my-key"))
+		assert.False(t, excluded("alias/awsome-key"))
+	})
+
+	t.Run("has no exclusion for other types", func(t *testing.T) {
+		assert.Nil(t, discoveryListExclusions["AWS::S3::Bucket"])
+	})
+}
