@@ -40,6 +40,15 @@ Requires formae >= 0.89.0.
   fails closed with an explicit error rather than ever falling back to
   ambient credentials.
 
+  **Known limitation: the STS exchange uses a default-configured client.**
+  The `AssumeRoleWithWebIdentity` call that turns the identity token into
+  credentials is made with a region-only STS client, so
+  `AWS_USE_FIPS_ENDPOINT`, `AWS_ENDPOINT_URL_STS` and a custom CA bundle are
+  not honoured on that one exchange. Proxy settings are honoured, because
+  they come from the HTTP transport rather than from SDK configuration.
+  Every other AWS call the plugin makes uses the fully configured client and
+  is unaffected.
+
   **One-time bookkeeping, not drift.** Existing targets carry no `auth`
   block, and adding the field to the schema is a change formae records
   against every target's stored metadata regardless of whether the target's
@@ -370,6 +379,17 @@ Requires formae >= 0.89.0.
   per plugin process rather than on every call. There is no removal in this
   release; flat `profile` will be removed at a future major version, posted
   ahead of time.
+
+  **Migrating is a normal target update.** Both `profile` and `auth` are
+  declared mutable, so rewriting a target from the flat `profile` to an
+  `auth` block changes the target's configuration in place and touches no
+  cloud resource.
+
+  This holds only on an agent at or above the release that carries these
+  hints. An **older** agent does not see them, classifies the dropped
+  top-level `Profile` key as an immutable change, and plans a target
+  replace, which destroys and recreates every resource on that target.
+  Upgrade the agent first, then migrate.
 
 ### Fixed
 
