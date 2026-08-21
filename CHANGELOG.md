@@ -10,6 +10,8 @@ formae agent.
 
 ## [Unreleased]
 
+Requires formae >= 0.89.0.
+
 ### Added
 
 - Discovery for four more resource types: `AWS::IAM::ManagedPolicy`,
