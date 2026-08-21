@@ -43,6 +43,7 @@ type fakeSTS struct {
 	calls       int
 	token       string
 	roleArn     string
+	sessionName string
 	ctxErr      error
 	hadDeadline bool
 	remaining   time.Duration
@@ -63,6 +64,7 @@ func (f *fakeSTS) AssumeRoleWithWebIdentity(
 	f.calls++
 	f.token = aws.ToString(in.WebIdentityToken)
 	f.roleArn = aws.ToString(in.RoleArn)
+	f.sessionName = aws.ToString(in.RoleSessionName)
 	f.ctxErr = ctx.Err()
 	if deadline, ok := ctx.Deadline(); ok {
 		f.hadDeadline = true
@@ -126,6 +128,7 @@ func TestRetrieve_ExchangesTheSourceTokenForCredentials(t *testing.T) {
 	assert.Equal(t, 1, fake.callCount())
 	assert.Equal(t, "stub-token", fake.token)
 	assert.Equal(t, testRoleArn, fake.roleArn)
+	assert.Equal(t, "formae-aws-plugin", fake.sessionName)
 	assert.Equal(t, "AKIAEXAMPLE", creds.AccessKeyID)
 	assert.Equal(t, "example-secret", creds.SecretAccessKey)
 	assert.Equal(t, "example-session", creds.SessionToken)

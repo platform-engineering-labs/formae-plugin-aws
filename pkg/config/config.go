@@ -48,9 +48,9 @@ var warnFlatFallback sync.Once
 // deprecation warning falls back to warnFlatFallback.
 //
 // Build one with NewOidcDeps, never a bare &OidcDeps{...} literal outside
-// this package: a literal leaves stsFactory nil, and oidcCredentials calls it
-// unconditionally once Source is non-nil, so a literal with a Source set
-// panics on first use. NewOidcDeps always wires the production factory.
+// this package: NewOidcDeps wires the production STS factory. A literal
+// leaves stsFactory nil and oidcCredentials falls back to the same factory,
+// so it still works, but the seam is then invisible at the construction site.
 type OidcDeps struct {
 	// Source mints the OIDC identity tokens exchanged for AWS credentials.
 	Source plugin.OidcTokenSource
@@ -68,14 +68,18 @@ type OidcDeps struct {
 	warnFlat sync.Once
 }
 
+// defaultSTSFactory is the production STS client factory: the client needs no
+// credentials of its own, because AssumeRoleWithWebIdentity is unsigned.
+func defaultSTSFactory(cfg aws.Config) stscreds.AssumeRoleWithWebIdentityAPIClient {
+	return sts.NewFromConfig(cfg)
+}
+
 // NewOidcDeps builds the OidcDeps a Plugin instance owns, wired to mint AWS
 // credentials against real STS.
 func NewOidcDeps(src plugin.OidcTokenSource) *OidcDeps {
 	return &OidcDeps{
-		Source: src,
-		stsFactory: func(cfg aws.Config) stscreds.AssumeRoleWithWebIdentityAPIClient {
-			return sts.NewFromConfig(cfg)
-		},
+		Source:     src,
+		stsFactory: defaultSTSFactory,
 	}
 }
 

@@ -32,6 +32,12 @@ const oidcAudience = "sts.amazonaws.com"
 // indefinitely.
 const oidcRefreshTimeout = 30 * time.Second
 
+// oidcRoleSessionName names every web-identity session this plugin opens.
+// Without it the SDK generates a random name, so CloudTrail shows an
+// unattributable assumed-role principal; a fixed name makes the caller
+// legible in the customer's audit trail.
+const oidcRoleSessionName = "formae-aws-plugin"
+
 // oneShotRetriever hands the stock, context-free IdentityTokenRetriever a
 // token that was already minted for exactly one Retrieve call. Tokens are
 // short-lived and single-use by design, so a retriever is never reused.
@@ -63,7 +69,10 @@ func (p *oidcCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials
 		return aws.Credentials{}, fmt.Errorf("config: minting an identity token for role %q: %w", p.roleArn, err)
 	}
 
-	exchange := stscreds.NewWebIdentityRoleProvider(p.stsClient, p.roleArn, oneShotRetriever{token: []byte(token)})
+	exchange := stscreds.NewWebIdentityRoleProvider(
+		p.stsClient, p.roleArn, oneShotRetriever{token: []byte(token)},
+		func(o *stscreds.WebIdentityRoleOptions) { o.RoleSessionName = oidcRoleSessionName },
+	)
 
 	creds, err := exchange.Retrieve(refreshCtx)
 	if err != nil {
@@ -137,11 +146,20 @@ func (d *OidcDeps) credentialsCacheFor(key string, build func() *aws.Credentials
 // client is built from a region-only base config: it needs no credentials of
 // its own, because AssumeRoleWithWebIdentity is an unsigned call.
 func (d *OidcDeps) oidcCredentials(region, roleArn string, rawAuth json.RawMessage) *aws.CredentialsCache {
+	// Read the factory into a local rather than filling the field in: an
+	// OidcDeps built as a bare literal leaves it nil, and defaulting here
+	// keeps that recoverable without a write that would race a concurrent
+	// operation reading the same struct.
+	factory := d.stsFactory
+	if factory == nil {
+		factory = defaultSTSFactory
+	}
+
 	return d.credentialsCacheFor(oidcCacheKey(roleArn, region, rawAuth), func() *aws.CredentialsCache {
 		return aws.NewCredentialsCache(&oidcCredentialsProvider{
 			source:    d.Source,
 			roleArn:   roleArn,
-			stsClient: d.stsFactory(aws.Config{Region: region}),
+			stsClient: factory(aws.Config{Region: region}),
 		})
 	})
 }
