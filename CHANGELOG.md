@@ -398,6 +398,14 @@ Requires formae >= 0.89.0.
 
 ### Fixed
 
+- `AWS::Lambda::Permission` discovery now finds permissions attached to a
+  published version or an alias, not only those on the bare function. Lambda
+  keeps a separate resource policy per qualifier and the CloudControl list
+  only returns the unqualified one, so a permission granted against a
+  version's or alias's ARN (the shape API Gateway and Lambda@Edge wiring
+  uses) was invisible to discovery. The plugin now walks every policy scope
+  through the Lambda control plane.
+
 - An `AWS::CertificateManager::Certificate` with `subjectAlternativeNames` no
   longer plans a destructive replace on every reconcile. ACM injects the
   certificate's primary `domainName` into the subject alternative names it

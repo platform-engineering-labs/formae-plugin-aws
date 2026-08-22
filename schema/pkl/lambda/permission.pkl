@@ -17,6 +17,9 @@ typealias FunctionUrlAuthType = "AWS_IAM"|"NONE"
     type = module.type
     identifier = "Id"
     parent = "AWS::Lambda::Function"
+    // Discovery goes through a custom List provisioner that walks every
+    // policy scope (function, published versions, aliases); the CloudControl
+    // list handler only returns the unqualified function policy.
     listParam = new formae.ListProperty { parentProperty = "FunctionName" listParameter = "FunctionName" }
 }
 open class Permission extends formae.Resource {
