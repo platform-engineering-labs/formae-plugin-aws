@@ -166,6 +166,12 @@ func TestDiscoveryListExclusions(t *testing.T) {
 		assert.False(t, excluded("alias/awsome-key"))
 	})
 
+	t.Run("excludes the $LATEST pseudo-version and keeps published versions", func(t *testing.T) {
+		excluded := discoveryListExclusions["AWS::Lambda::Version"]
+		assert.True(t, excluded("arn:aws:lambda:us-east-1:111122223333:function:my-function:$LATEST"))
+		assert.False(t, excluded("arn:aws:lambda:us-east-1:111122223333:function:my-function:3"))
+	})
+
 	t.Run("has no exclusion for other types", func(t *testing.T) {
 		assert.Nil(t, discoveryListExclusions["AWS::S3::Bucket"])
 	})

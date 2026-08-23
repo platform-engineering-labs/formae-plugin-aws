@@ -134,14 +134,14 @@ Requires formae >= 0.89.0.
   operation, so it retries them instead of failing the resource. Faults that
   will not clear — access denied, an unusable secret, a rejected statement —
   stay terminal, keep their diagnosis, and never start a wait.
-- Discovery for eight more resource types whose CloudControl list support was
+- Discovery for seven more resource types whose CloudControl list support was
   verified against the type registry and a live account: `AWS::IAM::User`,
   `AWS::IAM::VirtualMFADevice`, `AWS::ECS::CapacityProvider`,
   `AWS::RDS::CustomDBEngineVersion`, `AWS::S3::AccessGrantsInstance`,
-  `AWS::SecretsManager::SecretTargetAttachment`, `AWS::Lambda::Permission`
-  (scoped per function), and `AWS::ElasticLoadBalancingV2::ListenerRule`
-  (scoped per listener). Live resources of these types now appear in
-  inventory and can be brought under management.
+  `AWS::Lambda::Permission` (scoped per function), and
+  `AWS::ElasticLoadBalancingV2::ListenerRule` (scoped per listener). Live
+  resources of these types now appear in inventory and can be brought under
+  management.
 - Discovery for `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, and
   `AWS::CloudFront::Distribution`, and extract for
   `AWS::CloudFront::Distribution`. Live API Gateway resources and methods and
@@ -397,6 +397,11 @@ Requires formae >= 0.89.0.
   Upgrade the agent first, then migrate.
 
 ### Fixed
+
+- `AWS::Lambda::Version` discovery now surfaces published versions. The list
+  post-filter compared the parent function's name against the ARN form
+  CloudControl echoes back, dropping every listed version, so version
+  discovery silently found nothing.
 
 - `AWS::Lambda::Permission` discovery now finds permissions attached to a
   published version or an alias, not only those on the bare function. Lambda
