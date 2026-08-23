@@ -139,6 +139,11 @@ var discoveryListExclusions = map[string]func(nativeID string) bool{
 	"AWS::KMS::Alias": func(id string) bool {
 		return strings.HasPrefix(id, "alias/aws/")
 	},
+	// CloudControl's version list includes the $LATEST pseudo-version, which
+	// is not a published version and whose read always fails.
+	"AWS::Lambda::Version": func(id string) bool {
+		return strings.HasSuffix(id, ":$LATEST")
+	},
 }
 
 // LabelConfig returns the label extraction configuration for discovered AWS resources.

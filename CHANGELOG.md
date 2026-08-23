@@ -398,6 +398,16 @@ Requires formae >= 0.89.0.
 
 ### Fixed
 
+- `AWS::SecretsManager::SecretTargetAttachment` is no longer discoverable.
+  CloudControl's list handler returns every secret in the account rather than
+  actual attachments, so in any account with secrets, discovery produced a
+  stream of failing reads on ids that are not attachments. The type remains
+  fully declarable and manageable.
+- `AWS::Lambda::Version` discovery no longer surfaces the `$LATEST`
+  pseudo-version. CloudControl's version list includes it, but it is not a
+  published version and reading it always fails, which failed a sync cycle
+  for every function once version listing started working.
+
 - `AWS::Lambda::Permission` discovery now finds permissions attached to a
   published version or an alias, not only those on the bare function. Lambda
   keeps a separate resource policy per qualifier and the CloudControl list
