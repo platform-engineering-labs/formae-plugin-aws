@@ -308,6 +308,14 @@ Requires formae >= 0.89.0.
   resolvables. A forma that declared `certificateDetails` now fails at eval;
   delete the block, the field never accepted a user value.
 
+- Every `hasProviderDefault` schema annotation now carries a recorded
+  disposition in `schema/provider-default-dispositions.json`, enforced by a
+  unit test: new annotations fail CI until classified, and rows for removed
+  fields fail as stale. Fields confirmed as provider-default-once are marked
+  `keep` with a pin; fields a co-actor legitimately writes (such as
+  `AWS::RDS::DBInstance.engineVersion`, which RDS moves under auto minor
+  version upgrades) are marked `co-owned` while their handling is designed.
+
 - `AWS::S3::Object` is no longer discoverable. A bucket's object count is
   unbounded, and objects are data rather than infrastructure, so a discovery
   scan enumerated every key in every bucket in the account — slow enough to
