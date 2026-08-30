@@ -298,6 +298,16 @@ Requires formae >= 0.89.0.
 
 ### Changed
 
+- `AWS::RDS::DBInstance` no longer models `certificateDetails` as a schema
+  property. The field is read-only on AWS's side and its contents move on
+  their own: RDS rotates the server certificate automatically around its
+  half-life, so treating the details as a declarable property with a provider
+  default made an unchanged forma reject reconciles after every rotation. The
+  values are still stored with the resource and still referenceable through
+  the `certificateDetailsCAIdentifier` and `certificateDetailsValidTill`
+  resolvables. A forma that declared `certificateDetails` now fails at eval;
+  delete the block, the field never accepted a user value.
+
 - `AWS::S3::Object` is no longer discoverable. A bucket's object count is
   unbounded, and objects are data rather than infrastructure, so a discovery
   scan enumerated every key in every bucket in the account — slow enough to
