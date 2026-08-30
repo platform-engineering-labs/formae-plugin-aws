@@ -79,7 +79,10 @@ jobs:
         id: discover
         run: |
           # Find all *.pkl files in testdata/, exclude -update.pkl and -replace.pkl variants,
-          # and extract the base test case name
+          # and extract the base test case name. The glob is deliberately
+          # non-recursive: fixtures that are not full CRUD cases (config-only
+          # fixtures driven by unit tests) live in testdata/config/ so they
+          # stay out of this matrix.
           TEST_CASES=$(ls testdata/*.pkl 2>/dev/null \
             | xargs -n1 basename \
             | grep -v '\-update\.pkl$' \

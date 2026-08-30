@@ -82,14 +82,14 @@ func TestAuthSchema(t *testing.T) {
 	}
 
 	t.Run("flat profile with no auth block renders Profile and omits Auth", func(t *testing.T) {
-		target, _, err := runEval(t, binary, "testdata/aws-config-auth-flat.pkl")
+		target, _, err := runEval(t, binary, "testdata/config/aws-config-auth-flat.pkl")
 		require.NoError(t, err)
 
 		assert.JSONEq(t, `{"Type":"AWS","Profile":"legacy-profile","Region":"us-east-1"}`, string(target.Config))
 	})
 
 	t.Run("both auth spellings are hinted mutable so migrating between them updates the target", func(t *testing.T) {
-		target, _, err := runEval(t, binary, "testdata/aws-config-auth-flat.pkl")
+		target, _, err := runEval(t, binary, "testdata/config/aws-config-auth-flat.pkl")
 		require.NoError(t, err)
 
 		profile, ok := target.ConfigSchema.Hints["Profile"]
@@ -103,7 +103,7 @@ func TestAuthSchema(t *testing.T) {
 	})
 
 	t.Run("auth = DefaultChainAuth renders a nested Auth object", func(t *testing.T) {
-		target, _, err := runEval(t, binary, "testdata/aws-config-auth-defaultchain.pkl")
+		target, _, err := runEval(t, binary, "testdata/config/aws-config-auth-defaultchain.pkl")
 		require.NoError(t, err)
 
 		assert.JSONEq(t, `{
@@ -114,7 +114,7 @@ func TestAuthSchema(t *testing.T) {
 	})
 
 	t.Run("auth = OidcAuth renders a nested Auth object", func(t *testing.T) {
-		target, _, err := runEval(t, binary, "testdata/aws-config-auth-oidc.pkl")
+		target, _, err := runEval(t, binary, "testdata/config/aws-config-auth-oidc.pkl")
 		require.NoError(t, err)
 
 		assert.JSONEq(t, `{
@@ -125,7 +125,7 @@ func TestAuthSchema(t *testing.T) {
 	})
 
 	t.Run("setting both profile and auth is rejected at eval", func(t *testing.T) {
-		_, stderr, err := runEval(t, binary, "testdata/aws-config-auth-both-set-rejected.pkl")
+		_, stderr, err := runEval(t, binary, "testdata/config/aws-config-auth-both-set-rejected.pkl")
 		require.Error(t, err)
 		assert.Contains(t, string(stderr), "Type constraint")
 		assert.Contains(t, string(stderr), "this == null || profile == null")
