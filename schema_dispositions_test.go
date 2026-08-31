@@ -49,6 +49,10 @@ type dispositionManifest struct {
 var (
 	classRe = regexp.MustCompile(`^(?:open\s+|abstract\s+)*class\s+(\w+)`)
 	fieldRe = regexp.MustCompile("^\\s+`?(\\w+)`?\\s*:")
+	// Whitespace-tolerant: an exact-substring match silently misses
+	// hasProviderDefault=true and hasProviderDefault  =  true, leaving the
+	// annotation unclassified with nothing to signal it.
+	providerDefaultRe = regexp.MustCompile(`hasProviderDefault\s*=\s*true`)
 )
 
 // collectProviderDefaultAnnotations walks schema/pkl and returns the key
@@ -80,6 +84,12 @@ func collectProviderDefaultAnnotations(t *testing.T, schemaDir string) []string 
 				currentClass = m[1]
 				continue
 			}
+			// A doc comment naming the annotation is prose, not a declaration:
+			// treating it as one demands a manifest row for a field that does
+			// not exist.
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
 			if !strings.Contains(line, "@") || !strings.Contains(line, "FieldHint") {
 				continue
 			}
@@ -89,7 +99,7 @@ func collectProviderDefaultAnnotations(t *testing.T, schemaDir string) []string 
 				i++
 				block += " " + strings.TrimSpace(lines[i])
 			}
-			if !strings.Contains(block, "hasProviderDefault = true") {
+			if !providerDefaultRe.MatchString(block) {
 				continue
 			}
 			// The next non-blank, non-annotation, non-comment line is the field.
