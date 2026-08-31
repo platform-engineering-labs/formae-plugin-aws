@@ -262,7 +262,20 @@ jobs:
           # ListResources throttling in the shared account.
           FORMAE_TEST_DISCOVERY_TIMEOUT: 5
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          FORMAE_TEST_PROVIDER_DEFAULT_OBSERVATIONS: /tmp/provider-default-observations.json
         run: make conformance-test-crud-run conformance-test-discovery-run TEST=${{ matrix.test-case }} PARALLEL=1 TIMEOUT=120
+
+      # The omit-and-observe records for hasProviderDefault fields. Uploaded even
+      # when the case fails: a field the provider populates that the schema does
+      # not annotate is reported as a comparison failure, so a red case carries
+      # exactly the observation worth reading.
+      - name: Upload provider-default observations
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: provider-default-observations-${{ matrix.test-case }}
+          path: /tmp/provider-default-observations.json
+          if-no-files-found: ignore
 
       - name: Dump formae client log on failure
         if: failure()
