@@ -435,6 +435,17 @@ Requires formae >= 0.89.0.
 
 ### Fixed
 
+- `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` no longer fail when the
+  cluster's admin credential is momentarily refused. RDS rotates an RDS-managed
+  master-user secret on its own schedule, starting within a minute of the
+  cluster being created, and while a rotation settles the Data API rejects some
+  statements authenticated with that secret while sibling statements carrying
+  the same secret succeed a second either side. That authentication failure was
+  classified as an invalid request, which the agent does not retry, so a
+  create landed on a coin flip. It is now reported as not-yet-stabilized: the
+  readiness probe parks the create and polls, and a rotation that lands
+  mid-statement is retried.
+
 - `AWS::CloudFront::Distribution` `Origin.originCustomHeaders[].headerValue` is
   now opaque. A custom origin header is the documented way to stop callers
   reaching an origin directly: CloudFront sends the header and the origin rejects
