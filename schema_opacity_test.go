@@ -139,6 +139,16 @@ opacity: Mapping<String, Boolean> = new {
 	require.NoError(t, os.WriteFile(probe, []byte(src), 0o644))
 	t.Cleanup(func() { _ = os.Remove(probe) })
 
+	// PklProject.deps.json is gitignored, so a fresh checkout has no resolved
+	// lock and evaluation cannot load the formae dependency. Resolve first;
+	// it is a no-op against a warm cache. Skipping rather than failing when
+	// this cannot run keeps an offline checkout usable, and CI resolves fine.
+	resolve := exec.Command("pkl", "project", "resolve")
+	resolve.Dir = dir
+	if out, err := resolve.CombinedOutput(); err != nil {
+		t.Skipf("cannot resolve the pkl project, so the rendered hints are unavailable: %v\n%s", err, out)
+	}
+
 	cmd := exec.Command("pkl", "eval", "-f", "json", "_opacity_probe.pkl")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
