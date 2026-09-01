@@ -417,6 +417,14 @@ Requires formae >= 0.89.0.
 
 ### Fixed
 
+- `AWS::CloudFront::Distribution` `Origin.originCustomHeaders[].headerValue` is
+  now opaque. A custom origin header is the documented way to stop callers
+  reaching an origin directly: CloudFront sends the header and the origin rejects
+  requests without it, which makes the value a shared credential, but it was
+  typed as a plain `String` and so was stored in cleartext. `headerName` is
+  deliberately left non-opaque, because it is the identity half of the pair and
+  is used to match a header across a diff.
+
 - `AWS::ApiGateway::ApiKey` `value` is now opaque, so an author-supplied API key
   is hashed at rest instead of being stored in cleartext. The field carries the
   credential clients present in the `x-api-key` header, but it was typed as a
