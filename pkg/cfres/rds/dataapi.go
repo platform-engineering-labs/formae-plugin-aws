@@ -342,6 +342,18 @@ func recognizeDataAPIFault(err error) (resource.OperationErrorCode, bool) {
 		if isDuplicateObjectError(err) {
 			return resource.OperationErrorCodeAlreadyExists, true
 		}
+		// RDS rotates a cluster's RDS-managed master-user secret on its own
+		// schedule and begins within a minute of the cluster being created.
+		// While a rotation settles, the Data API rejects statements
+		// authenticated with that secret. It is per call rather than per
+		// window: sibling statements carrying the same secret succeed a second
+		// either side. The admin credential is handed to the plugin and cannot
+		// stop being the right one on its own, so this names a rotation that
+		// has not settled rather than a credential to fix, and like a cluster
+		// that is not serving it clears without intervention.
+		if isInvalidPasswordError(err) {
+			return resource.OperationErrorCodeNotStabilized, true
+		}
 		return resource.OperationErrorCodeInvalidRequest, true
 	}
 
@@ -377,6 +389,7 @@ const (
 	sqlStateDependentObjectsExist = "2BP01"
 	sqlStateUndefinedObject       = "42704"
 	sqlStateInvalidCatalogName    = "3D000"
+	sqlStateInvalidPassword       = "28P01"
 )
 
 // sqlStatePattern matches the SQLSTATE the Data API appends to an engine error.
@@ -410,6 +423,14 @@ func isDuplicateObjectError(err error) bool {
 	return matchesEngineError(err,
 		[]string{sqlStateDuplicateDatabase, sqlStateDuplicateObject},
 		[]string{"already exists"})
+}
+
+// isInvalidPasswordError reports whether the engine refused the connection
+// because it did not accept the password it was given.
+func isInvalidPasswordError(err error) bool {
+	return matchesEngineError(err,
+		[]string{sqlStateInvalidPassword},
+		[]string{"password authentication failed"})
 }
 
 // isInUseError reports whether the engine refused because the database has open

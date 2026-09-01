@@ -222,3 +222,106 @@ func TestDatabaseRoleCreateSucceedsUnchangedWhenTheClusterIsServing(t *testing.T
 	assert.Empty(t, result.ProgressResult.ErrorCode)
 	assert.True(t, strings.HasPrefix(client.statements[2], `CREATE ROLE "appuser" LOGIN PASSWORD '`))
 }
+
+// RDS rotates a cluster's RDS-managed master-user secret on its own schedule and
+// starts within a minute of creating the cluster. While a rotation settles, the
+// Data API rejects some statements authenticated with that secret while sibling
+// statements using the same secret, a second either side, succeed. The admin
+// credential the plugin was handed cannot stop being the right one on its own,
+// so an authentication failure against it means the rotation has not settled
+// yet — a condition that clears without intervention, like a cluster that is
+// not serving.
+func TestClassifyReportsAnAdminAuthenticationFailureAsRecoverable(t *testing.T) {
+	code, recoverable := classifyDataAPIError(&rdsdatatypes.DatabaseErrorException{
+		Message: strPtr(`ERROR: password authentication failed for user "formaeadmin"; SQLState: 28P01`),
+	})
+
+	assert.Equal(t, resource.OperationErrorCodeNotStabilized, code)
+	assert.True(t, recoverable)
+	assert.True(t, resource.IsRecoverable(code), "the agent must be willing to retry this")
+}
+
+// The control for the case above: an engine error that is not an authentication
+// failure keeps being reported as an invalid request the agent must not retry,
+// so the widening is confined to the one SQLSTATE.
+func TestClassifyReportsOtherEngineErrorsAsNonRecoverable(t *testing.T) {
+	code, recoverable := classifyDataAPIError(&rdsdatatypes.DatabaseErrorException{
+		Message: strPtr(`ERROR: syntax error at or near "SELCT"; SQLState: 42601`),
+	})
+
+	assert.Equal(t, resource.OperationErrorCodeInvalidRequest, code)
+	assert.False(t, recoverable)
+}
+
+// A duplicate object is still reported as such rather than being swallowed by
+// the authentication branch, so the create paths that key on AlreadyExists keep
+// working.
+func TestClassifyStillReportsADuplicateObject(t *testing.T) {
+	code, _ := classifyDataAPIError(&rdsdatatypes.DatabaseErrorException{
+		Message: strPtr(`ERROR: role "formae_owner" already exists; SQLState: 42710`),
+	})
+
+	assert.Equal(t, resource.OperationErrorCodeAlreadyExists, code)
+}
+
+// rotationUnsettled is the Data API's answer while an RDS-managed master-user
+// secret rotation has yet to settle: the admin credential the plugin was handed
+// is refused by the engine, and refused for some calls while sibling calls
+// carrying the same secret are served.
+func rotationUnsettled() error {
+	return &rdsdatatypes.DatabaseErrorException{
+		Message: strPtr(`ERROR: password authentication failed for user "formaeadmin"; SQLState: 28P01`),
+	}
+}
+
+// The readiness probe is served, so the rotation lands mid-DDL. The agent must
+// receive a code it will retry rather than a terminal failure that abandons the
+// role.
+func TestDatabaseRoleCreateReportsAnUnsettledRotationAsRecoverable(t *testing.T) {
+	client := &mockDataAPIClient{}
+	servingProbe(client)
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(emptyRoleCatalog(t), nil).Once()
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(nil, rotationUnsettled()).Once()
+
+	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
+		&resource.CreateRequest{Properties: roleProps(t, nil)})
+
+	require.NoError(t, err, "a fault that clears on its own must reach the agent as a code, not as an error")
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusFailure, result.ProgressResult.OperationStatus)
+	assert.Equal(t, resource.OperationErrorCodeNotStabilized, result.ProgressResult.ErrorCode)
+	assert.True(t, resource.IsRecoverable(result.ProgressResult.ErrorCode))
+}
+
+// The rotation is already unsettled when the readiness probe runs, so the probe
+// itself is refused. The create is parked and polled rather than failed, which
+// is the same answer the probe already gives for a cluster that is not serving.
+func TestDatabaseRoleCreateDefersWhenTheReadinessProbeMeetsAnUnsettledRotation(t *testing.T) {
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(nil, rotationUnsettled()).Once()
+
+	result, err := testRole().createWithClient(context.Background(), client, aurora(t),
+		&resource.CreateRequest{Properties: roleProps(t, nil)})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+}
+
+// The Database resource authenticates with the same admin secret and so meets
+// the same fault; it must park and poll rather than fail.
+func TestDatabaseCreateReportsAnUnsettledRotationAsRecoverable(t *testing.T) {
+	client := &mockDataAPIClient{}
+	client.On("ExecuteStatement", mock.Anything, mock.Anything).
+		Return(nil, rotationUnsettled()).Once()
+
+	result, err := testDatabase().createWithClient(context.Background(), client, aurora(t),
+		&resource.CreateRequest{Properties: databaseProps(t, nil)})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, resource.OperationStatusInProgress, result.ProgressResult.OperationStatus)
+}
