@@ -62,8 +62,15 @@ open class ApiKey extends formae.Resource {
     }
     tags: Listing<aws.Tag>?
 
+    // The API key's own credential value, the string clients present in the
+    // `x-api-key` header. Naming `formae.SecretValue` is what marks the field
+    // opaque, so an author-supplied key is hashed at rest instead of persisting
+    // in cleartext. `formae.GeneratorOutput` is deliberately absent: the field
+    // is createOnly, so a drawn value could only land by replacing the API key,
+    // and whether a generator may bind to a createOnly destination at all is
+    // still an open decision. Widening later is additive; narrowing is not.
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
-    value: String?
+    value: (String|formae.Value|formae.SecretValue)?
 
     local parent = this
 
