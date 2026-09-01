@@ -428,11 +428,13 @@ Requires formae >= 0.89.0.
 - `AWS::ApiGateway::ApiKey` `value` is now opaque, so an author-supplied API key
   is hashed at rest instead of being stored in cleartext. The field carries the
   credential clients present in the `x-api-key` header, but it was typed as a
-  plain `String`, and a field is marked opaque from its type: without
+  plain `String`, and a field is marked opaque from its type: without a
   `formae.SecretValue` in the union the agent had nothing telling it to hash the
-  value, so a declared key persisted in the clear. It still accepts a literal
-  string, and AWS still generates the key when none is declared, so a forma that
-  does not set `value` is unaffected.
+  value, so a declared key persisted in the clear. It now names
+  `formae.ValueSource` like every other credential field here, so it also
+  accepts a generator binding. It still accepts a literal string, and AWS still
+  generates the key when none is declared, so a forma that does not set `value`
+  is unaffected.
 
 - `AWS::Lambda::Version` discovery now surfaces published versions. The list
   post-filter compared the parent function's name against the ARN form

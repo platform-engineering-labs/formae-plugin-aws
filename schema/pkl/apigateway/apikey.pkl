@@ -63,14 +63,20 @@ open class ApiKey extends formae.Resource {
     tags: Listing<aws.Tag>?
 
     // The API key's own credential value, the string clients present in the
-    // `x-api-key` header. Naming `formae.SecretValue` is what marks the field
-    // opaque, so an author-supplied key is hashed at rest instead of persisting
-    // in cleartext. `formae.GeneratorOutput` is deliberately absent: the field
-    // is createOnly, so a drawn value could only land by replacing the API key,
-    // and whether a generator may bind to a createOnly destination at all is
-    // still an open decision. Widening later is additive; narrowing is not.
+    // `x-api-key` header. Naming the alias is what marks the field opaque, via
+    // its `SecretValue` member, so an author-supplied key is hashed at rest
+    // instead of persisting in cleartext.
+    //
+    // The alias includes `GeneratorOutput`, so the field accepts a generator
+    // binding, the same as every other credential field here. The field is
+    // createOnly, which bounds what such a binding can do rather than making it
+    // meaningless: a generator with no rotation cadence draws once at create,
+    // which is the case that replaces a PKL-eval-time `random.password` seed.
+    // Whether a *rotating* generator may target a createOnly destination is an
+    // admission-time question for the agent to answer, not one for a plugin
+    // schema to pre-empt by refusing to parse the binding.
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
-    value: (String|formae.Value|formae.SecretValue)?
+    value: (String|formae.ValueSource)?
 
     local parent = this
 
