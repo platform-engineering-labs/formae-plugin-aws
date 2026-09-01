@@ -75,14 +75,17 @@ func TestPluginConfigure(t *testing.T) {
 	})
 }
 
-func TestPluginConfigure_OidcOnlyRejectsAmbientCredentialsBeforeLoading(t *testing.T) {
+func TestPluginConfigure_OidcOnlyRejectsTargetJSONPolicyOverrideBeforeLoading(t *testing.T) {
 	p := &Plugin{}
 	require.NoError(t, p.Configure(json.RawMessage(`{"allowedAuthMethods":["Oidc"]}`)))
 
 	request := &resource.ReadRequest{
 		ResourceType: "AWS::Formae::NoSuchProvisioneredType",
 		NativeID:     "irrelevant-for-this-test",
-		TargetConfig: json.RawMessage(`{"Region":"us-east-1"}`),
+		// allowedAuthMethods belongs to operator-controlled plugin config, not
+		// target config. An injected target field must be ignored rather than
+		// weakening the plugin-lifetime OIDC-only policy.
+		TargetConfig: json.RawMessage(`{"Region":"us-east-1","allowedAuthMethods":[]}`),
 	}
 
 	_, err := p.Read(context.Background(), request)
