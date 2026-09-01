@@ -295,6 +295,9 @@ open class Ulimit extends formae.SubResource {
 
 @aws.SubResourceHint
 open class Volume extends formae.SubResource {
+    /// ECS sets this on every volume it stores, whether or not the forma
+    /// declared it, so an omitted value comes back false rather than absent.
+    @aws.FieldHint { hasProviderDefault = true }
     configuredAtLaunch: Boolean?
     dockerVolumeConfiguration: DockerVolumeConfiguration?
     eFSVolumeConfiguration: EFSVolumeConfiguration?

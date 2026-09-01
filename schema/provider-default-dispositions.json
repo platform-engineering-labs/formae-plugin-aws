@@ -758,6 +758,11 @@
       "disposition": "pending"
     },
     {
+      "key": "ecs/taskdefinition.pkl#Volume.configuredAtLaunch",
+      "disposition": "keep",
+      "pin": "documentation"
+    },
+    {
       "key": "ecs/taskset.pkl#AWSVpcConfiguration.securityGroups",
       "disposition": "pending"
     },
