@@ -93,12 +93,23 @@ type Config struct {
 	// and the warn-once state. Never serialized; nil deps means flat-only
 	// behavior.
 	deps *OidcDeps
+
+	// authPolicy is the plugin instance's immutable authentication-method
+	// allowlist. Its zero value is unrestricted.
+	authPolicy AuthPolicy
 }
 
 // WithOidcDeps threads the plugin instance's OidcDeps onto Config without
 // changing FromTargetConfig's signature or call sites.
 func (c *Config) WithOidcDeps(d *OidcDeps) *Config {
 	c.deps = d
+	return c
+}
+
+// WithAuthPolicy threads the plugin instance's authentication policy onto a
+// parsed target configuration.
+func (c *Config) WithAuthPolicy(policy AuthPolicy) *Config {
+	c.authPolicy = policy
 	return c
 }
 
@@ -132,23 +143,34 @@ func synthesizeDefaultChain(profile string) json.RawMessage {
 // callers that bypass the schema (tests, an older formae binary) still get
 // the rule enforced in Go.
 func (c *Config) effectiveAuth() (string, json.RawMessage, error) {
+	var authType string
+	var rawAuth json.RawMessage
+
 	if isAuthAbsent(c.Auth) {
-		return AuthTypeDefaultChain, synthesizeDefaultChain(c.Profile), nil
+		authType = AuthTypeDefaultChain
+		rawAuth = synthesizeDefaultChain(c.Profile)
+	} else {
+		if c.Profile != "" {
+			return "", nil, errors.New("config: Auth and Profile are mutually exclusive; set one")
+		}
+
+		var disc authDiscriminator
+		if err := json.Unmarshal(c.Auth, &disc); err != nil {
+			return "", nil, fmt.Errorf("config: malformed Auth block: %w", err)
+		}
+		if disc.Type == "" {
+			return "", nil, errors.New("config: Auth block is missing its Type discriminator")
+		}
+
+		authType = disc.Type
+		rawAuth = c.Auth
 	}
 
-	if c.Profile != "" {
-		return "", nil, errors.New("config: Auth and Profile are mutually exclusive; set one")
+	if err := c.authPolicy.Validate(authType); err != nil {
+		return "", nil, err
 	}
 
-	var disc authDiscriminator
-	if err := json.Unmarshal(c.Auth, &disc); err != nil {
-		return "", nil, fmt.Errorf("config: malformed Auth block: %w", err)
-	}
-	if disc.Type == "" {
-		return "", nil, errors.New("config: Auth block is missing its Type discriminator")
-	}
-
-	return disc.Type, c.Auth, nil
+	return authType, rawAuth, nil
 }
 
 // awsConfigOptions resolves this Config's effective auth into the
