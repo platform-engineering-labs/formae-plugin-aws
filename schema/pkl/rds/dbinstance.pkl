@@ -262,7 +262,7 @@ open class DBInstance extends formae.Resource {
     manageMasterUserPassword: Boolean?
 
     @aws.FieldHint{writeOnly = true}
-    masterUserPassword: (String|formae.Resolvable|formae.Value|formae.SecretValue)?
+    masterUserPassword: (String|formae.ValueSource)?
 
     @aws.FieldHint{hasProviderDefault = true}
     masterUserSecret: MasterUserSecret?
@@ -362,7 +362,7 @@ open class DBInstance extends formae.Resource {
     tdeCredentialArn: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true}
-    tdeCredentialPassword: (String|formae.Resolvable|formae.Value|formae.SecretValue)?
+    tdeCredentialPassword: (String|formae.ValueSource)?
 
     @aws.FieldHint{createOnly = true}
     timezone: String?

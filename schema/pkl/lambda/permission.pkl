@@ -28,7 +28,7 @@ open class Permission extends formae.Resource {
     action: String(matches(Regex(#"^(lambda:[*]|lambda:[a-zA-Z]+|[*])$"#)))
 
     @aws.FieldHint{createOnly = true}
-    eventSourceToken: (String(matches(Regex(#"^[a-zA-Z0-9._\-]+$"#)))|formae.Resolvable|formae.Value|formae.SecretValue)?
+    eventSourceToken: (String(matches(Regex(#"^[a-zA-Z0-9._\-]+$"#)))|formae.ValueSource)?
 
     @aws.FieldHint{createOnly = true}
     functionName: String(matches(Regex(#"^(arn:(aws[a-zA-Z-]*)?:lambda:)?([a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:)?(\d{12}:)?(function:)?([a-zA-Z0-9-_]+)(:(\$LATEST|[a-zA-Z0-9-_]+))?$"#)))|formae.Resolvable

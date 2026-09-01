@@ -93,7 +93,7 @@ open class VpnTunnelOptionsSpecification extends formae.SubResource {
     phase2LifetimeSeconds: Int?
 
     @aws.FieldHint{writeOnly = true}
-    preSharedKey: (String|formae.Resolvable|formae.Value|formae.SecretValue)?
+    preSharedKey: (String|formae.ValueSource)?
 
     rekeyFuzzPercentage: Int?
     rekeyMarginTimeSeconds: Int?

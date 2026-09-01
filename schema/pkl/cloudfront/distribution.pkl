@@ -249,7 +249,15 @@ open class Origin extends formae.SubResource {
 @aws.SubResourceHint
 open class OriginCustomHeader extends formae.SubResource {
     headerName: String
-    headerValue: String
+
+    /// A custom origin header is the documented way to stop callers reaching an
+    /// origin directly: CloudFront sends the header, the origin rejects requests
+    /// without it, so the value is a shared credential. Naming
+    /// `formae.SecretValue` is what marks the field opaque, so it is hashed at
+    /// rest rather than stored in cleartext. `headerName` stays a plain `String`:
+    /// it is the pair's identity, used to match a header across a diff, and
+    /// hashing it would break that.
+    headerValue: (String|formae.Value|formae.SecretValue)
 }
 
 @aws.SubResourceHint
