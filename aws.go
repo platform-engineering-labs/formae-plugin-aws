@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
@@ -36,6 +37,10 @@ type Plugin struct {
 	// which case every target config threads nil deps and Oidc auth fails
 	// closed rather than falling back to ambient credentials.
 	oidc *config.OidcDeps
+
+	// authPolicy is configured once at startup and copied onto every target
+	// config before credentials are resolved.
+	authPolicy config.AuthPolicy
 }
 
 // Compile-time check: Plugin must satisfy ResourcePlugin interface.
@@ -45,12 +50,44 @@ var _ plugin.ResourcePlugin = &Plugin{}
 // OidcTokenSource at startup.
 var _ plugin.OidcAware = &Plugin{}
 
+// Compile-time check: Plugin accepts custom settings from schema/Config.pkl.
+var _ plugin.Configurable = &Plugin{}
+
+type pluginConfig struct {
+	AllowedAuthMethods []string `json:"allowedAuthMethods"`
+}
+
+// Configure applies plugin-specific startup settings. An absent or empty
+// allowedAuthMethods list intentionally preserves unrestricted behaviour.
+func (p *Plugin) Configure(raw json.RawMessage) error {
+	var cfg pluginConfig
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return fmt.Errorf("decode AWS plugin configuration: %w", err)
+		}
+	}
+
+	policy, err := config.NewAuthPolicy(cfg.AllowedAuthMethods)
+	if err != nil {
+		return err
+	}
+	p.authPolicy = policy
+
+	return nil
+}
+
 // SetOidcTokenSource receives the token source the SDK mints OIDC identity
 // tokens through. Called once at startup; every FromTargetConfig call below
 // threads the resulting deps onto the parsed Config so Oidc auth blocks can
 // exchange a token for AWS credentials.
 func (p *Plugin) SetOidcTokenSource(src plugin.OidcTokenSource) {
 	p.oidc = config.NewOidcDeps(src)
+}
+
+func (p *Plugin) targetConfig(raw json.RawMessage) *config.Config {
+	return config.FromTargetConfig(raw).
+		WithOidcDeps(p.oidc).
+		WithAuthPolicy(p.authPolicy)
 }
 
 // EKSAutomodeResourceTypes lists AWS CloudFormation resource types that EKS Automode manages.
@@ -181,7 +218,7 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 }
 
 func (p *Plugin) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationCreate) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationCreate, targetConfig)
 		return provisioner.Create(ctx, request)
@@ -196,7 +233,7 @@ func (p *Plugin) Create(ctx context.Context, request *resource.CreateRequest) (*
 }
 
 func (p *Plugin) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationUpdate) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationUpdate, targetConfig)
 		return provisioner.Update(ctx, request)
@@ -211,7 +248,7 @@ func (p *Plugin) Update(ctx context.Context, request *resource.UpdateRequest) (*
 }
 
 func (p *Plugin) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if request.ResourceType != "" {
 		if registry.HasProvisioner(request.ResourceType, resource.OperationCheckStatus) {
 			provisioner := registry.Get(request.ResourceType, resource.OperationCheckStatus, targetConfig)
@@ -228,7 +265,7 @@ func (p *Plugin) Status(ctx context.Context, request *resource.StatusRequest) (*
 }
 
 func (p *Plugin) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationDelete) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationDelete, targetConfig)
 		return provisioner.Delete(ctx, request)
@@ -243,7 +280,7 @@ func (p *Plugin) Delete(ctx context.Context, request *resource.DeleteRequest) (*
 }
 
 func (p *Plugin) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationRead) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationRead, targetConfig)
 		return provisioner.Read(ctx, request)
@@ -258,7 +295,7 @@ func (p *Plugin) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 }
 
 func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig).WithOidcDeps(p.oidc)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationList) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationList, targetConfig)
 		return provisioner.List(ctx, request)

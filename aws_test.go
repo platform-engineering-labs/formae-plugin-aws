@@ -23,6 +23,10 @@ import (
 // an OidcTokenSource at startup.
 var _ plugin.OidcAware = (*Plugin)(nil)
 
+// Compile-time check: Plugin must accept the plugin-specific configuration
+// rendered from schema/Config.pkl.
+var _ plugin.Configurable = (*Plugin)(nil)
+
 // oidcTokenSourceFunc adapts a function to plugin.OidcTokenSource so a test
 // can script what the source answers, and observe the ctx it was called
 // with.
@@ -43,6 +47,51 @@ func TestSetOidcTokenSource_PopulatesDeps(t *testing.T) {
 
 	require.NotNil(t, p.oidc)
 	assert.NotNil(t, p.oidc.Source)
+}
+
+func TestPluginConfigure(t *testing.T) {
+	t.Run("missing config leaves authentication unrestricted", func(t *testing.T) {
+		p := &Plugin{}
+		require.NoError(t, p.Configure(nil))
+	})
+
+	t.Run("empty allowlist leaves authentication unrestricted", func(t *testing.T) {
+		p := &Plugin{}
+		require.NoError(t, p.Configure(json.RawMessage(`{"allowedAuthMethods":[]}`)))
+	})
+
+	t.Run("malformed config is rejected", func(t *testing.T) {
+		p := &Plugin{}
+		err := p.Configure(json.RawMessage(`{not-json`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode AWS plugin configuration")
+	})
+
+	t.Run("unknown auth method is rejected", func(t *testing.T) {
+		p := &Plugin{}
+		err := p.Configure(json.RawMessage(`{"allowedAuthMethods":["StaticCredentials"]}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unknown auth method "StaticCredentials"`)
+	})
+}
+
+func TestPluginConfigure_OidcOnlyRejectsTargetJSONPolicyOverrideBeforeLoading(t *testing.T) {
+	p := &Plugin{}
+	require.NoError(t, p.Configure(json.RawMessage(`{"allowedAuthMethods":["Oidc"]}`)))
+
+	request := &resource.ReadRequest{
+		ResourceType: "AWS::Formae::NoSuchProvisioneredType",
+		NativeID:     "irrelevant-for-this-test",
+		// allowedAuthMethods belongs to operator-controlled plugin config, not
+		// target config. An injected target field must be ignored rather than
+		// weakening the plugin-lifetime OIDC-only policy.
+		TargetConfig: json.RawMessage(`{"Region":"us-east-1","allowedAuthMethods":[]}`),
+	}
+
+	_, err := p.Read(context.Background(), request)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `config: auth method "DefaultChain" is not allowed; allowed methods: "Oidc"`)
 }
 
 // operationCtxMarkerKey is the context.WithValue marker used to prove a ctx
