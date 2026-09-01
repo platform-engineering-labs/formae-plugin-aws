@@ -92,7 +92,7 @@ open class DatabaseRole extends formae.Resource {
         writeOnly = true
         opaque = true
     }
-    password: (String|formae.Resolvable|formae.Value|formae.SecretValue)
+    password: (String|formae.ValueSource)
 
     /// Whether the role may log in. Defaulted rather than left implicit so it is
     /// always compared, and an out-of-band `ALTER ROLE ... NOLOGIN` shows up as

@@ -276,6 +276,25 @@ Requires formae >= 0.89.0.
   `secret.res.secretValue.json("path")` reaches into a JSON payload. The
   existing `res.secretString`, `res.arn`, `res.id` and `res.name` accessors
   keep working unchanged.
+- Every secret-bearing property can now be bound to a formae generator, so the
+  credential is drawn (and rotated) by the agent instead of being pinned in the
+  forma file. Twelve fields accept a generator output, written
+  `pw.gen.value`: `AWS::EC2::VerifiedAccessTrustProvider`
+  `OidcOptions.clientSecret`, `AWS::EC2::VPNConnection`
+  `VpnTunnelOptionsSpecifications.preSharedKey`,
+  `AWS::ElasticLoadBalancingV2::Listener` and `...::ListenerRule`
+  `AuthenticateOidcConfig.clientSecret`, `AWS::IAM::ServerCertificate`
+  `privateKey`, `AWS::IAM::User` `LoginProfile.password`,
+  `AWS::Lambda::Permission` `eventSourceToken`, `AWS::RDS::DatabaseRole`
+  `password`, `AWS::RDS::DBCluster` `masterUserPassword`,
+  `AWS::RDS::DBInstance` `masterUserPassword` and `tdeCredentialPassword`, and
+  `AWS::SecretsManager::Secret` `secretString`. Every one of these fields was
+  already opaque and stays opaque, so a generated value is still hashed at
+  rest. Literal strings, `formae.Value`, `formae.SecretValue` and (where the
+  field already accepted one) `formae.Resolvable` keep working unchanged, and
+  the two fields that carry a pattern constraint on the literal
+  (`ServerCertificate.privateKey`, `Permission.eventSourceToken`) still reject
+  a string that does not match.
 
 ### Changed
 

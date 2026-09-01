@@ -13,8 +13,11 @@ const type = "AWS::IAM::User"
 
 @aws.SubResourceHint
 open class UserLoginProfile extends formae.SubResource {
+    // Spelled out rather than naming formae.ValueSource, because this field has
+    // never accepted formae.Resolvable and taking the alias would widen it to do
+    // so. Accepting a generated value is the only widening intended here.
     @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
-    password: (String|formae.Value|formae.SecretValue)?
+    password: (String|formae.Value|formae.SecretValue|formae.GeneratorOutput)?
     passwordResetRequired: Boolean?
 }
 
