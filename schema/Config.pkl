@@ -15,5 +15,11 @@ class PluginConfig extends BaseResourcePluginConfig {
   type = "aws"
 
   /// Authentication methods targets may use. Empty means unrestricted.
-  allowedAuthMethods: Set<AuthMethod> = new {}
+  ///
+  /// A Listing, not a Set: an external class cannot be instantiated or
+  /// amended in Pkl, so `Set<AuthMethod> = new {}` fails to evaluate both on
+  /// its own default and under `allowedAuthMethods { "Oidc" }`. That made any
+  /// agent config declaring this plugin unbootable. Distinctness is asserted
+  /// instead of being carried by the type.
+  allowedAuthMethods: Listing<AuthMethod>(isDistinct) = new {}
 }
