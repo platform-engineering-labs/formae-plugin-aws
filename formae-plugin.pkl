@@ -17,6 +17,12 @@ license = "FSL-1.1-ALv2"
 // publishing and correct this if that work lands in a later release instead.
 minFormaeVersion = "0.89.0"
 
+// A cloud provider region cannot be deleted out of band, so its targets
+// must never be reaped no matter how long they stay unreachable.
+defaultReap {
+  Kind = "never"
+}
+
 output {
   renderer = new JsonRenderer {}
 }
