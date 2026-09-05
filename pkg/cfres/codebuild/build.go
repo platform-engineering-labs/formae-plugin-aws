@@ -158,18 +158,17 @@ func validateInput(in imageBuildInput) error {
 			return fmt.Errorf("invalid buildArg key %q", k)
 		}
 	}
-	if len(in.AdditionalTags) > maxAdditionalTags {
-		return fmt.Errorf("at most %d additionalTags are allowed, got %d", maxAdditionalTags, len(in.AdditionalTags))
+	declaredPins := len(in.AdditionalTags)
+	if in.VersionURI != "" {
+		declaredPins++
+	}
+	if declaredPins > maxAdditionalTags {
+		return fmt.Errorf("at most %d pins are allowed, got %d", maxAdditionalTags, declaredPins)
 	}
 	seen := make(map[string]struct{}, len(in.AdditionalTags))
 	for _, tag := range in.AdditionalTags {
-		if !imageTagPattern.MatchString(tag) {
-			return fmt.Errorf("invalid additionalTag %q", tag)
-		}
-		// A pin naming the mutable tag would be moved by the next rebuild, which is
-		// the one thing a pin exists not to be.
-		if tag == in.ImageTag {
-			return fmt.Errorf("invalid additionalTag %q: must not equal imageTag", tag)
+		if err := checkPinTag(tag, in.ImageTag, "additionalTag"); err != nil {
+			return err
 		}
 		if _, dup := seen[tag]; dup {
 			return fmt.Errorf("duplicate additionalTag %q", tag)
@@ -177,24 +176,33 @@ func validateInput(in imageBuildInput) error {
 		seen[tag] = struct{}{}
 	}
 	if in.VersionURI != "" {
-		prefix := in.EcrRepositoryURI + ":"
-		if !strings.HasPrefix(in.VersionURI, prefix) {
+		if !strings.HasPrefix(in.VersionURI, in.EcrRepositoryURI+":") {
 			return fmt.Errorf("invalid versionUri %q: must be the declared ecrRepositoryUri followed by ':' and a tag", in.VersionURI)
 		}
-		tag := strings.TrimPrefix(in.VersionURI, prefix)
-		if !imageTagPattern.MatchString(tag) {
-			return fmt.Errorf("invalid versionUri %q: invalid tag %q", in.VersionURI, tag)
-		}
-		// Pinning the mutable tag would be moved by the next rebuild, which is the
-		// one thing a pin exists not to be.
-		if tag == in.ImageTag {
-			return fmt.Errorf("invalid versionUri %q: tag must not equal imageTag", in.VersionURI)
+		// The whole suffix must be one valid tag; a valid tag admits no ':', which
+		// is what makes the last-colon split in versionTag agree with this check.
+		tag := strings.TrimPrefix(in.VersionURI, in.EcrRepositoryURI+":")
+		if err := checkPinTag(tag, in.ImageTag, "versionUri tag"); err != nil {
+			return err
 		}
 		// The same tag in both listings would be placed twice in one apply and fail
 		// its own create-once check.
 		if _, dup := seen[tag]; dup {
 			return fmt.Errorf("invalid versionUri %q: tag %q is also declared in additionalTags", in.VersionURI, tag)
 		}
+	}
+	return nil
+}
+
+// checkPinTag rejects a tag that cannot serve as a pin, whichever field declared
+// it: a malformed tag, or one equal to the mutable imageTag — which the next
+// rebuild would move, the one thing a pin exists not to be.
+func checkPinTag(tag, imageTag, field string) error {
+	if !imageTagPattern.MatchString(tag) {
+		return fmt.Errorf("invalid %s %q", field, tag)
+	}
+	if tag == imageTag {
+		return fmt.Errorf("invalid %s %q: must not equal imageTag", field, tag)
 	}
 	return nil
 }
@@ -210,26 +218,30 @@ func versionTag(versionURI string) string {
 	return versionURI[i+1:]
 }
 
-// newPins returns the pins this apply declares for the first time, in declared
-// order: those absent from the previously declared listing. The versionUri tag is
-// a pin like any other, placed after the additionalTags; one previously declared
-// under either field is carried over and left exactly where it is, so only these
-// are ever placed. Every pin is new on a create, where there is no prior.
-func newPins(prior, desired imageBuildInput) []string {
-	previously := make(map[string]struct{}, len(prior.AdditionalTags)+1)
-	for _, tag := range prior.AdditionalTags {
-		previously[tag] = struct{}{}
+// declaredPinTags returns every pin tag an input declares, in placement order:
+// the additionalTags listing, then the versionUri tag. The versionUri tag is a
+// pin like any other; only where it is declared differs.
+func declaredPinTags(in imageBuildInput) []string {
+	tags := in.AdditionalTags
+	if tag := versionTag(in.VersionURI); tag != "" {
+		tags = append(tags[:len(tags):len(tags)], tag)
 	}
-	if tag := versionTag(prior.VersionURI); tag != "" {
+	return tags
+}
+
+// newPins returns the pins this apply declares for the first time, in declared
+// order: those absent from the previously declared set, whichever field declared
+// them. A pin already declared is carried over and left exactly where it is, so
+// only these are ever placed. Every pin is new on a create, where there is no
+// prior.
+func newPins(prior, desired imageBuildInput) []string {
+	priorTags := declaredPinTags(prior)
+	previously := make(map[string]struct{}, len(priorTags))
+	for _, tag := range priorTags {
 		previously[tag] = struct{}{}
 	}
 	var fresh []string
-	for _, tag := range desired.AdditionalTags {
-		if _, carried := previously[tag]; !carried {
-			fresh = append(fresh, tag)
-		}
-	}
-	if tag := versionTag(desired.VersionURI); tag != "" {
+	for _, tag := range declaredPinTags(desired) {
 		if _, carried := previously[tag]; !carried {
 			fresh = append(fresh, tag)
 		}

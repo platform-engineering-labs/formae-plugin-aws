@@ -594,10 +594,7 @@ func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInter
 	if err := json.Unmarshal(priorProperties, &prior); err != nil {
 		return nil, "", nil
 	}
-	declared := prior.AdditionalTags
-	if tag := versionTag(prior.VersionURI); tag != "" {
-		declared = append(declared[:len(declared):len(declared)], tag)
-	}
+	declared := declaredPinTags(prior)
 	if len(declared) == 0 {
 		return nil, "", nil
 	}
@@ -858,7 +855,7 @@ func (a *ImageBuild) placePins(ctx context.Context, ref ecrRepositoryRef, digest
 	for _, pin := range pins {
 		if held, exists := existing[pin]; exists {
 			if held != digest {
-				return fmt.Errorf("ImageBuild: additionalTag %q already exists in %s and resolves to %s; a pin is never moved, so declare a tag that is not in use", pin, ref.URI, held)
+				return fmt.Errorf("ImageBuild: pin %q already exists in %s and resolves to %s; a pin is never moved, so declare a tag that is not in use", pin, ref.URI, held)
 			}
 			continue
 		}
@@ -877,9 +874,9 @@ func (a *ImageBuild) placePins(ctx context.Context, ref ecrRepositoryRef, digest
 			if errors.As(err, &already) {
 				continue
 			}
-			return fmt.Errorf("ImageBuild: placing additionalTag %q on %s: %w", pin, digest, err)
+			return fmt.Errorf("ImageBuild: placing pin %q on %s: %w", pin, digest, err)
 		}
-		log.Info("ImageBuild: placed additional tag", "imageUri", imageURI(ref.URI, pin), "imageDigest", digest)
+		log.Info("ImageBuild: placed pin", "imageUri", imageURI(ref.URI, pin), "imageDigest", digest)
 	}
 	return nil
 }
@@ -922,7 +919,7 @@ func (a *ImageBuild) digestsForTags(ctx context.Context, client ecrClientInterfa
 		if isECRImageNotFound(err) {
 			return map[string]string{}, nil
 		}
-		return nil, fmt.Errorf("ImageBuild: checking additional tags in %s: %w", ref.URI, err)
+		return nil, fmt.Errorf("ImageBuild: checking pins in %s: %w", ref.URI, err)
 	}
 	// A tag that is simply not there is the expected answer and is read as absent.
 	// Any other per-image failure means the lookup could not say, and reading "could

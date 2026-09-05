@@ -489,3 +489,25 @@ func TestBuildConfigHashIgnoresVersionUri(t *testing.T) {
 	versioned.VersionURI = versioned.EcrRepositoryURI + ":0.89.0-dev.21"
 	assert.Equal(t, computeBuildConfigHash(base, project), computeBuildConfigHash(versioned, project))
 }
+
+// TestValidateInputBoundsAllDeclaredPins asserts the pin bound covers the version
+// pin as well as the listing: both are placed by the same serial registry writes
+// the bound exists to keep in check.
+func TestValidateInputBoundsAllDeclaredPins(t *testing.T) {
+	in := validInput()
+	in.AdditionalTags = manyPins(maxAdditionalTags)
+	in.VersionURI = in.EcrRepositoryURI + ":0.89.0-dev.21"
+	assert.Error(t, validateInput(in))
+
+	in.AdditionalTags = manyPins(maxAdditionalTags - 1)
+	require.NoError(t, validateInput(in))
+}
+
+// TestValidateInputRejectsAMultiColonVersionUri asserts the whole suffix after
+// the repository must be one valid tag, so a reference whose last segment alone
+// looks like a tag cannot slip through.
+func TestValidateInputRejectsAMultiColonVersionUri(t *testing.T) {
+	in := validInput()
+	in.VersionURI = in.EcrRepositoryURI + ":a:b"
+	assert.Error(t, validateInput(in))
+}
