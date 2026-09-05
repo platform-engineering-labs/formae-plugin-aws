@@ -435,6 +435,18 @@ Requires formae >= 0.89.0.
 
 ### Fixed
 
+- Updating a writeOnly property no longer fails. Cloud Control accepts only an
+  `add` operation for a property it marks `writeOnlyProperties`, since such a
+  property is absent from every read and there is nothing there to replace, and
+  it rejected the `replace` that formae plans. Cloud Control names the offending
+  paths when it rejects one, so the plugin now rewrites exactly those operations
+  and resends. This covers every resource type without the plugin having to know
+  which properties are writeOnly ahead of time: `AWS::Lambda::Function` has ten
+  such properties (`Code/ZipFile` among them, so an inline-code function could
+  not be changed at all) and `AWS::RDS::DBInstance` sixteen. It replaces the
+  hardcoded special case that did the same for `AWS::SecretsManager::Secret`
+  `SecretString` alone.
+
 - `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` no longer fail when the
   cluster's admin credential is momentarily refused. RDS rotates an RDS-managed
   master-user secret on its own schedule, starting within a minute of the
