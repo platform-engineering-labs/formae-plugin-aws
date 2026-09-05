@@ -286,19 +286,39 @@ func (c *Client) UpdateResource(ctx context.Context, request *resource.UpdateReq
 		}
 	}
 
-	if request.ResourceType == "AWS::SecretsManager::Secret" && patchDoc != nil {
-		transformedPatch, err := transformSecretStringPatch([]byte(*patchDoc))
-		if err != nil {
-			return nil, fmt.Errorf("failed to transform SecretString patch: %w", err)
-		}
-		patchDoc = ptr.Of(string(transformedPatch))
-	}
-
 	result, err := c.api.UpdateResource(ctx, &cloudcontrol.UpdateResourceInput{
 		Identifier:    &request.NativeID,
 		PatchDocument: patchDoc,
 		TypeName:      ptr.Of(request.ResourceType),
 	})
+
+	// CloudControl accepts only "add" for a property it marks writeOnly, and
+	// names the offending paths when it rejects one. Rewrite exactly those and
+	// resend. See writeonly.go for why the rejection is the source of truth.
+	resendBudget := 0
+	if patchDoc != nil {
+		resendBudget = maxWriteOnlyResends(*patchDoc)
+	}
+	for resends := 0; err != nil && resends < resendBudget; resends++ {
+		paths := writeOnlyPathsFromError(err)
+		if len(paths) == 0 || patchDoc == nil {
+			break
+		}
+		rewritten, terr := transformWriteOnlyPatch(*patchDoc, paths)
+		if terr != nil || rewritten == *patchDoc {
+			// Nothing to rewrite: resending would repeat the same request.
+			break
+		}
+		patchDoc = ptr.Of(rewritten)
+		plugin.LoggerFromContext(ctx).Info("resending the update with 'add' for the writeOnly properties CloudControl named",
+			"resourceType", request.ResourceType, "nativeID", request.NativeID, "paths", paths)
+		result, err = c.api.UpdateResource(ctx, &cloudcontrol.UpdateResourceInput{
+			Identifier:    &request.NativeID,
+			PatchDocument: patchDoc,
+			TypeName:      ptr.Of(request.ResourceType),
+		})
+	}
+
 	if err != nil {
 		if pr, ok := classifyCloudControlError(err, resource.OperationUpdate); ok {
 			return &resource.UpdateResult{ProgressResult: pr}, nil
@@ -985,35 +1005,6 @@ func (c *Client) ListResources(ctx context.Context, input *cloudcontrol.ListReso
 		func(ctx context.Context) (*cloudcontrol.ListResourcesOutput, error) {
 			return c.api.ListResources(ctx, input)
 		})
-}
-
-// transformSecretStringPatch transforms replace operations to add operations for SecretString
-// AWS CloudControl requires writeOnlyProperties like SecretString to use 'add' operation
-func transformSecretStringPatch(patchDoc []byte) ([]byte, error) {
-	if len(patchDoc) == 0 {
-		return patchDoc, nil
-	}
-
-	var patches []map[string]any
-	if err := json.Unmarshal(patchDoc, &patches); err != nil {
-		return patchDoc, err
-	}
-
-	modified := false
-	for i, patch := range patches {
-		if op, ok := patch["op"].(string); ok && op == "replace" {
-			if path, ok := patch["path"].(string); ok && path == "/SecretString" {
-				patches[i]["op"] = "add"
-				modified = true
-			}
-		}
-	}
-
-	if !modified {
-		return patchDoc, nil
-	}
-
-	return json.Marshal(patches)
 }
 
 func stripIgnoredFields(data map[string]any, fields []string) error {

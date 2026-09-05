@@ -59,7 +59,7 @@ forma {
         def handler(event, context):
             return {
                 'statusCode': 200,
-                'body': json.dumps({'message': 'hello from formae'})
+                'body': json.dumps({'message': 'hello from formae, updated'})
             }
         """
     }
