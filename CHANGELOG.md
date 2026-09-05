@@ -8,11 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
-## [Unreleased]
+## [0.1.17]
 
 Requires formae >= 0.89.0.
 
 ### Added
+
+- Resources formae created in order to reach this account are no longer offered
+  for import. The connect role and the account-global OIDC provider its trust
+  policy names carry an ownership marker, and discovery now excludes anything
+  carrying it, so a reconcile can no longer take away formae's own access. EFS
+  file systems and access points are matched through their per-type tag
+  properties, which a generic tag filter never sees. Sharing the `formae` name
+  prefix is not enough on its own: unrelated roles stay visible.
 
 - Discovery for four more resource types: `AWS::IAM::ManagedPolicy`,
   `AWS::KMS::Alias`, `AWS::EC2::PrefixList`, and `AWS::EC2::Route` (scoped per
