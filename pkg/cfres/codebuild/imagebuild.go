@@ -560,11 +560,30 @@ func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*
 		ImageURI:       imageURI(ref.URI, tag),
 		ImageTag:       tag,
 		AdditionalTags: pins,
-		VersionURI:     versionURI,
+	}
+	if versionURI != nil {
+		outputs.VersionURI = *versionURI
 	}
 	js, err := json.Marshal(outputs)
 	if err != nil {
 		return nil, err
+	}
+	// A version tag deleted out of band must be reported as an EXPLICITLY cleared
+	// value: the caller's property merge keeps the stored value for any key
+	// absent from a read, so omitting the field (which omitempty would do) would
+	// silently preserve a reference whose tag no longer exists, and the next
+	// apply would treat the tag as still placed. Present-but-empty clears the
+	// stored value, the diff against the declared versionUri surfaces the loss,
+	// and the re-apply places the pin again.
+	if versionURI != nil && *versionURI == "" {
+		var m map[string]any
+		if err := json.Unmarshal(js, &m); err != nil {
+			return nil, err
+		}
+		m["VersionUri"] = ""
+		if js, err = json.Marshal(m); err != nil {
+			return nil, err
+		}
 	}
 	return &resource.ReadResult{ResourceType: request.ResourceType, Properties: string(js)}, nil
 }
@@ -579,28 +598,28 @@ func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*
 // tags are this resource's pins is knowable only from the caller's model, which is
 // what PriorProperties carries — the disambiguation that hint exists for. Existence
 // is still read from the registry, so a pin deleted out of band comes back missing
-// and surfaces as drift rather than being asserted to still be there. The same
-// applies to the versionUri: a deleted version tag drops the reference from the
-// read, so the loss surfaces instead of a consumer deploying a tag that no longer
-// exists.
+// and surfaces as drift rather than being asserted to still be there. The
+// versionUri result distinguishes the two absent cases: nil means the model
+// declares none, while a pointer to "" means one is declared and its tag is gone
+// from the registry — the caller must report that explicitly (see Read).
 //
 // Empty PriorProperties (discovery, or the read-back of a create) means no model to
 // disambiguate against, and reports no pins.
-func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, priorProperties json.RawMessage) ([]string, string, error) {
+func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, priorProperties json.RawMessage) ([]string, *string, error) {
 	if len(priorProperties) == 0 {
-		return nil, "", nil
+		return nil, nil, nil
 	}
 	var prior imageBuildInput
 	if err := json.Unmarshal(priorProperties, &prior); err != nil {
-		return nil, "", nil
+		return nil, nil, nil
 	}
 	declared := declaredPinTags(prior)
 	if len(declared) == 0 {
-		return nil, "", nil
+		return nil, nil, nil
 	}
 	held, err := a.digestsForTags(ctx, client, ref, declared)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	var present []string
 	for _, pin := range prior.AdditionalTags {
@@ -608,11 +627,13 @@ func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInter
 			present = append(present, pin)
 		}
 	}
-	versionURI := ""
+	var versionURI *string
 	if tag := versionTag(prior.VersionURI); tag != "" {
+		value := ""
 		if _, exists := held[tag]; exists {
-			versionURI = prior.VersionURI
+			value = prior.VersionURI
 		}
+		versionURI = &value
 	}
 	return present, versionURI, nil
 }

@@ -1665,6 +1665,11 @@ func TestReadEchoesTheVersionUriWhoseTagStillExists(t *testing.T) {
 	var out2 imageBuildOutputs
 	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out2))
 	assert.Empty(t, out2.VersionURI)
+	// The cleared value must be EXPLICIT in the response. The agent's property
+	// merge keeps the stored value for any key absent from a read, so an omitted
+	// VersionUri would silently preserve a reference whose tag no longer exists
+	// instead of surfacing the loss as drift.
+	assert.Contains(t, res.Properties, `"VersionUri":""`)
 }
 
 // TestCreateDeclaresTheVersionTagAsANewPin asserts a create carries the version
