@@ -421,6 +421,9 @@ func updateProps(t *testing.T, in imageBuildInput) json.RawMessage {
 	if len(in.AdditionalTags) > 0 {
 		props["AdditionalTags"] = in.AdditionalTags
 	}
+	if in.VersionURI != "" {
+		props["VersionUri"] = in.VersionURI
+	}
 	js, err := json.Marshal(props)
 	require.NoError(t, err)
 	return js
@@ -1516,4 +1519,181 @@ func (e *smithyAPIError) ErrorCode() string    { return e.code }
 func (e *smithyAPIError) ErrorMessage() string { return e.msg }
 func (e *smithyAPIError) ErrorFault() smithy.ErrorFault {
 	return smithy.FaultClient
+}
+
+func TestStatusSucceededEchoesVersionUri(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+
+	cb.On("BatchGetBuilds", mock.Anything, mock.Anything).Return(&codebuildsdk.BatchGetBuildsOutput{
+		Builds: []codebuildtypes.Build{{
+			Id:          aws.String("proj:build-1"),
+			BuildStatus: codebuildtypes.StatusTypeSucceeded,
+			ExportedEnvironmentVariables: []codebuildtypes.ExportedEnvironmentVariable{
+				{Name: aws.String(exportedDigestVar), Value: aws.String(testPinnedDigest)},
+			},
+		}},
+	}, nil)
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.Anything).Return(&ecrsdk.PutImageOutput{}, nil).Once()
+
+	state := testRequestState()
+	state.VersionURI = testRepoURI + ":0.89.0-dev.21"
+	state.NewPins = []string{"0.89.0-dev.21"}
+	res, err := p.Status(context.Background(), &resource.StatusRequest{RequestID: encodeRequestID(state)})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+
+	ecr.AssertCalled(t, "PutImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.PutImageInput) bool {
+		return aws.ToString(in.ImageTag) == "0.89.0-dev.21"
+	}))
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
+	assert.Equal(t, testRepoURI+":0.89.0-dev.21", out.VersionURI)
+}
+
+// TestRequestIDCarriesVersionUriAndDecodesOlderBuilds asserts the version
+// reference round-trips through the RequestID, and that both earlier forms (the
+// pre-pins eight-field one and the pre-versionUri ten-field one) still decode, so
+// a build in flight across a plugin upgrade is polled rather than stranded.
+func TestRequestIDCarriesVersionUriAndDecodesOlderBuilds(t *testing.T) {
+	state := testRequestState()
+	state.Pins = []string{"release-1"}
+	state.NewPins = []string{"release-1", "0.89.0-dev.21"}
+	state.VersionURI = testRepoURI + ":0.89.0-dev.21"
+
+	got, err := decodeRequestID(encodeRequestID(state))
+	require.NoError(t, err)
+	assert.Equal(t, state.VersionURI, got.VersionURI)
+	assert.Equal(t, state.Pins, got.Pins)
+	assert.Equal(t, state.NewPins, got.NewPins)
+
+	tenField := testRequestState()
+	tenField.Pins = []string{"release-1"}
+	tenField.NewPins = []string{"release-1"}
+	encoded := strings.Join([]string{
+		tenField.Operation, tenField.BuildID, tenField.RepoURI, tenField.Tag,
+		tenField.ProjectName, tenField.Deadline.UTC().Format(time.RFC3339),
+		tenField.BuildConfigHash, tenField.PriorDigest, "release-1", "release-1",
+	}, "|")
+	got, err = decodeRequestID(encoded)
+	require.NoError(t, err)
+	assert.Empty(t, got.VersionURI)
+	assert.Equal(t, []string{"release-1"}, got.Pins)
+}
+
+// TestUpdatePlacesTheVersionPinWithoutRebuilding asserts moving the version
+// reference alone pins the image already pushed, exactly like a new
+// additionalTag: no build runs, and the outputs carry the new reference.
+func TestUpdatePlacesTheVersionPinWithoutRebuilding(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(cb, ecr)
+	expectProjectLookup(cb, validProject())
+
+	desired := validInput()
+	desired.VersionURI = desired.EcrRepositoryURI + ":0.89.0-dev.21"
+	prior := validInput()
+	project := validProject()
+	hash := computeBuildConfigHash(prior, &project)
+
+	ecr.On("DescribeImages", mock.Anything, mock.MatchedBy(func(in *ecrsdk.DescribeImagesInput) bool {
+		return len(in.ImageIds) == 1 && aws.ToString(in.ImageIds[0].ImageTag) == desired.ImageTag
+	})).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String(testPinnedDigest)}},
+	}, nil).Once()
+	expectManifestLookup(ecr, testPinnedDigest, testDockerManifest, "application/vnd.docker.distribution.manifest.v2+json")
+	expectTagLookup(ecr, nil)
+	ecr.On("PutImage", mock.Anything, mock.Anything).Return(&ecrsdk.PutImageOutput{}, nil).Once()
+
+	res, err := p.Update(context.Background(), &resource.UpdateRequest{
+		NativeID:          encodeNativeID(testRepoURI, desired.ImageTag, testBuildProject),
+		DesiredProperties: updateProps(t, desired),
+		PriorProperties:   priorProps(t, prior, imageBuildOutputs{ImageDigest: testPinnedDigest, BuildConfigHash: hash}),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, resource.OperationStatusSuccess, res.ProgressResult.OperationStatus)
+	cb.AssertNotCalled(t, "StartBuild", mock.Anything, mock.Anything)
+
+	ecr.AssertCalled(t, "PutImage", mock.Anything, mock.MatchedBy(func(in *ecrsdk.PutImageInput) bool {
+		return aws.ToString(in.ImageTag) == "0.89.0-dev.21"
+	}))
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal(res.ProgressResult.ResourceProperties, &out))
+	assert.Equal(t, desired.VersionURI, out.VersionURI)
+}
+
+// TestReadEchoesTheVersionUriWhoseTagStillExists asserts Read reports the version
+// reference from the caller's model when its pin is still registered, and omits it
+// when the pin was deleted out of band, so the loss surfaces as drift.
+func TestReadEchoesTheVersionUriWhoseTagStillExists(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil).Once()
+	expectTagLookup(ecr, map[string]string{"0.89.0-dev.21": testPinnedDigest})
+
+	prior, err := json.Marshal(imageBuildInput{VersionURI: testRepoURI + ":0.89.0-dev.21"})
+	require.NoError(t, err)
+
+	res, err := p.Read(context.Background(), &resource.ReadRequest{
+		NativeID:        encodeNativeID(testRepoURI, "0.1.0", testBuildProject),
+		ResourceType:    resourceType,
+		PriorProperties: prior,
+	})
+	require.NoError(t, err)
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out))
+	assert.Equal(t, testRepoURI+":0.89.0-dev.21", out.VersionURI)
+
+	ecr2 := &mockECRClient{}
+	p2 := newTestProvisioner(nil, ecr2)
+	ecr2.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil).Once()
+	expectTagLookup(ecr2, nil)
+	res, err = p2.Read(context.Background(), &resource.ReadRequest{
+		NativeID:        encodeNativeID(testRepoURI, "0.1.0", testBuildProject),
+		ResourceType:    resourceType,
+		PriorProperties: prior,
+	})
+	require.NoError(t, err)
+	var out2 imageBuildOutputs
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out2))
+	assert.Empty(t, out2.VersionURI)
+	// The cleared value must be EXPLICIT in the response. The agent's property
+	// merge keeps the stored value for any key absent from a read, so an omitted
+	// VersionUri would silently preserve a reference whose tag no longer exists
+	// instead of surfacing the loss as drift.
+	assert.Contains(t, res.Properties, `"VersionUri":""`)
+}
+
+// TestCreateDeclaresTheVersionTagAsANewPin asserts a create carries the version
+// tag into the build's fresh-pin set and the version reference into the poll
+// state, so Status places the pin and echoes the reference.
+func TestCreateDeclaresTheVersionTagAsANewPin(t *testing.T) {
+	cb := &mockCodeBuildClient{}
+	p := newTestProvisioner(cb, nil)
+	expectProjectLookup(cb, validProject())
+	cb.On("StartBuild", mock.Anything, mock.Anything).Return(&codebuildsdk.StartBuildOutput{
+		Build: &codebuildtypes.Build{Id: aws.String("proj:build-7"), TimeoutInMinutes: aws.Int32(45)},
+	}, nil)
+
+	in := validInput()
+	in.AdditionalTags = []string{"release-1"}
+	in.VersionURI = in.EcrRepositoryURI + ":0.89.0-dev.21"
+	props, err := json.Marshal(in)
+	require.NoError(t, err)
+
+	res, err := p.Create(context.Background(), &resource.CreateRequest{Properties: props})
+	require.NoError(t, err)
+	state, err := decodeRequestID(res.ProgressResult.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"release-1", "0.89.0-dev.21"}, state.NewPins)
+	assert.Equal(t, in.VersionURI, state.VersionURI)
+	assert.Equal(t, []string{"release-1"}, state.Pins)
 }

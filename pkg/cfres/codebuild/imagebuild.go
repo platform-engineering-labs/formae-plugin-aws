@@ -151,9 +151,13 @@ func parseNativeID(nativeID string) (repoURI, tag, projectName string, err error
 // plugin returns, so a build that placed a pin but reported nothing would drop the
 // listing from that model and classify the same pin as new on the next apply.
 //
+// VersionURI is the declared version reference, echoed into the outputs the same
+// way the listing is: a consumer resolving `res.versionUri` reads it from what the
+// build reports.
+//
 // None of the fields can contain '|' (a repository URI, a tag, a project name, an
-// RFC3339 time, a hex hash, a sha256: digest, and two comma-joined tag lists whose
-// pattern admits neither separator).
+// RFC3339 time, a hex hash, a sha256: digest, a repo:tag reference, and two
+// comma-joined tag lists whose pattern admits neither separator).
 type requestState struct {
 	Operation       string
 	BuildID         string
@@ -165,6 +169,7 @@ type requestState struct {
 	PriorDigest     string
 	Pins            []string
 	NewPins         []string
+	VersionURI      string
 }
 
 func encodeRequestID(s requestState) string {
@@ -179,15 +184,17 @@ func encodeRequestID(s requestState) string {
 		s.PriorDigest,
 		strings.Join(s.Pins, ","),
 		strings.Join(s.NewPins, ","),
+		s.VersionURI,
 	}, "|")
 }
 
-// decodeRequestID accepts both the ten-field form and the eight-field form emitted
-// before pins existed, so a build dispatched by the previous version and still in
-// flight across a plugin upgrade is polled rather than stranded.
+// decodeRequestID accepts the eleven-field form as well as the ten- and
+// eight-field forms emitted before versionUri and before pins existed, so a build
+// dispatched by a previous version and still in flight across a plugin upgrade is
+// polled rather than stranded.
 func decodeRequestID(requestID string) (requestState, error) {
-	parts := strings.SplitN(requestID, "|", 10)
-	if len(parts) != 10 && len(parts) != 8 {
+	parts := strings.SplitN(requestID, "|", 11)
+	if len(parts) != 11 && len(parts) != 10 && len(parts) != 8 {
 		return requestState{}, fmt.Errorf("invalid RequestID %q", requestID)
 	}
 	deadline, err := time.Parse(time.RFC3339, parts[5])
@@ -204,9 +211,12 @@ func decodeRequestID(requestID string) (requestState, error) {
 		BuildConfigHash: parts[6],
 		PriorDigest:     parts[7],
 	}
-	if len(parts) == 10 {
+	if len(parts) >= 10 {
 		state.Pins = splitPins(parts[8])
 		state.NewPins = splitPins(parts[9])
+	}
+	if len(parts) == 11 {
+		state.VersionURI = parts[10]
 	}
 	return state, nil
 }
@@ -353,6 +363,7 @@ func (a *ImageBuild) startBuild(ctx context.Context, client codeBuildClientInter
 		PriorDigest:     priorDigest,
 		Pins:            in.AdditionalTags,
 		NewPins:         freshPins,
+		VersionURI:      in.VersionURI,
 	}
 	return &resource.ProgressResult{
 		Operation:       op,
@@ -506,6 +517,7 @@ func buildOutputsFromExports(exports []codebuildtypes.ExportedEnvironmentVariabl
 		ImageURI:        uri,
 		ImageTag:        state.Tag,
 		BuildConfigHash: state.BuildConfigHash,
+		VersionURI:      state.VersionURI,
 	}, nil
 }
 
@@ -538,7 +550,7 @@ func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*
 		return &resource.ReadResult{ResourceType: request.ResourceType, ErrorCode: resource.OperationErrorCodeNotFound}, nil
 	}
 	digest := aws.ToString(out.ImageDetails[0].ImageDigest)
-	pins, err := a.readDeclaredPins(ctx, client, ref, request.PriorProperties)
+	pins, versionURI, err := a.readDeclaredPins(ctx, client, ref, request.PriorProperties)
 	if err != nil {
 		return nil, err
 	}
@@ -549,15 +561,36 @@ func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*
 		ImageTag:       tag,
 		AdditionalTags: pins,
 	}
+	if versionURI != nil {
+		outputs.VersionURI = *versionURI
+	}
 	js, err := json.Marshal(outputs)
 	if err != nil {
 		return nil, err
+	}
+	// A version tag deleted out of band must be reported as an EXPLICITLY cleared
+	// value: the caller's property merge keeps the stored value for any key
+	// absent from a read, so omitting the field (which omitempty would do) would
+	// silently preserve a reference whose tag no longer exists, and the next
+	// apply would treat the tag as still placed. Present-but-empty clears the
+	// stored value, the diff against the declared versionUri surfaces the loss,
+	// and the re-apply places the pin again.
+	if versionURI != nil && *versionURI == "" {
+		var m map[string]any
+		if err := json.Unmarshal(js, &m); err != nil {
+			return nil, err
+		}
+		m["VersionUri"] = ""
+		if js, err = json.Marshal(m); err != nil {
+			return nil, err
+		}
 	}
 	return &resource.ReadResult{ResourceType: request.ResourceType, Properties: string(js)}, nil
 }
 
 // readDeclaredPins reports which of the pins the caller's model declares are still
-// registered in the repository, in declared order.
+// registered in the repository, in declared order, along with the declared
+// versionUri when its own tag is still registered.
 //
 // A pin cannot be recovered from the registry alone: it deliberately names a
 // predecessor manifest rather than the one the mutable tag points at, and nothing
@@ -565,21 +598,28 @@ func (a *ImageBuild) Read(ctx context.Context, request *resource.ReadRequest) (*
 // tags are this resource's pins is knowable only from the caller's model, which is
 // what PriorProperties carries — the disambiguation that hint exists for. Existence
 // is still read from the registry, so a pin deleted out of band comes back missing
-// and surfaces as drift rather than being asserted to still be there.
+// and surfaces as drift rather than being asserted to still be there. The
+// versionUri result distinguishes the two absent cases: nil means the model
+// declares none, while a pointer to "" means one is declared and its tag is gone
+// from the registry — the caller must report that explicitly (see Read).
 //
 // Empty PriorProperties (discovery, or the read-back of a create) means no model to
 // disambiguate against, and reports no pins.
-func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, priorProperties json.RawMessage) ([]string, error) {
+func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInterface, ref ecrRepositoryRef, priorProperties json.RawMessage) ([]string, *string, error) {
 	if len(priorProperties) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var prior imageBuildInput
-	if err := json.Unmarshal(priorProperties, &prior); err != nil || len(prior.AdditionalTags) == 0 {
-		return nil, nil
+	if err := json.Unmarshal(priorProperties, &prior); err != nil {
+		return nil, nil, nil
 	}
-	held, err := a.digestsForTags(ctx, client, ref, prior.AdditionalTags)
+	declared := declaredPinTags(prior)
+	if len(declared) == 0 {
+		return nil, nil, nil
+	}
+	held, err := a.digestsForTags(ctx, client, ref, declared)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var present []string
 	for _, pin := range prior.AdditionalTags {
@@ -587,7 +627,15 @@ func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInter
 			present = append(present, pin)
 		}
 	}
-	return present, nil
+	var versionURI *string
+	if tag := versionTag(prior.VersionURI); tag != "" {
+		value := ""
+		if _, exists := held[tag]; exists {
+			value = prior.VersionURI
+		}
+		versionURI = &value
+	}
+	return present, versionURI, nil
 }
 
 // ── Update ──────────────────────────────────────────────────────
@@ -658,6 +706,7 @@ func (a *ImageBuild) Update(ctx context.Context, request *resource.UpdateRequest
 			// with like from the next update on.
 			outputs.BuildConfigHash = newHash
 			outputs.AdditionalTags = desired.AdditionalTags
+			outputs.VersionURI = desired.VersionURI
 			js, _ := json.Marshal(outputs)
 			return &resource.UpdateResult{ProgressResult: &resource.ProgressResult{
 				Operation:          resource.OperationUpdate,
@@ -827,7 +876,7 @@ func (a *ImageBuild) placePins(ctx context.Context, ref ecrRepositoryRef, digest
 	for _, pin := range pins {
 		if held, exists := existing[pin]; exists {
 			if held != digest {
-				return fmt.Errorf("ImageBuild: additionalTag %q already exists in %s and resolves to %s; a pin is never moved, so declare a tag that is not in use", pin, ref.URI, held)
+				return fmt.Errorf("ImageBuild: pin %q already exists in %s and resolves to %s; a pin is never moved, so declare a tag that is not in use", pin, ref.URI, held)
 			}
 			continue
 		}
@@ -846,9 +895,9 @@ func (a *ImageBuild) placePins(ctx context.Context, ref ecrRepositoryRef, digest
 			if errors.As(err, &already) {
 				continue
 			}
-			return fmt.Errorf("ImageBuild: placing additionalTag %q on %s: %w", pin, digest, err)
+			return fmt.Errorf("ImageBuild: placing pin %q on %s: %w", pin, digest, err)
 		}
-		log.Info("ImageBuild: placed additional tag", "imageUri", imageURI(ref.URI, pin), "imageDigest", digest)
+		log.Info("ImageBuild: placed pin", "imageUri", imageURI(ref.URI, pin), "imageDigest", digest)
 	}
 	return nil
 }
@@ -891,7 +940,7 @@ func (a *ImageBuild) digestsForTags(ctx context.Context, client ecrClientInterfa
 		if isECRImageNotFound(err) {
 			return map[string]string{}, nil
 		}
-		return nil, fmt.Errorf("ImageBuild: checking additional tags in %s: %w", ref.URI, err)
+		return nil, fmt.Errorf("ImageBuild: checking pins in %s: %w", ref.URI, err)
 	}
 	// A tag that is simply not there is the expected answer and is read as absent.
 	// Any other per-image failure means the lookup could not say, and reading "could

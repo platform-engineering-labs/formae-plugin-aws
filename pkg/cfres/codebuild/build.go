@@ -73,13 +73,16 @@ type imageBuildInput struct {
 	BuildArgs        map[string]string `json:"BuildArgs,omitempty"`
 	ProjectName      string            `json:"ProjectName"`
 	AdditionalTags   []string          `json:"AdditionalTags,omitempty"`
+	VersionURI       string            `json:"VersionUri,omitempty"`
 }
 
 // imageBuildOutputs is the computed read-only state persisted in ResourceProperties
 // and surfaced as the resource's resolvable outputs.
-// AdditionalTags is echoed rather than computed: it is the declared listing, not an
-// output, and it rides here because the caller rebuilds its stored model of a
-// list-valued property from the properties the plugin returns.
+// AdditionalTags and VersionURI are echoed rather than computed: they are declared
+// inputs, not outputs, and they ride here because the caller rebuilds its stored
+// model from the properties the plugin returns — and, for VersionURI, because a
+// consumer resolving `res.versionUri` at execution time reads it from exactly this
+// echo.
 type imageBuildOutputs struct {
 	ImageRef        string   `json:"ImageRef,omitempty"`
 	ImageDigest     string   `json:"ImageDigest,omitempty"`
@@ -87,6 +90,7 @@ type imageBuildOutputs struct {
 	ImageTag        string   `json:"ImageTag,omitempty"`
 	BuildConfigHash string   `json:"BuildConfigHash,omitempty"`
 	AdditionalTags  []string `json:"AdditionalTags,omitempty"`
+	VersionURI      string   `json:"VersionUri,omitempty"`
 }
 
 // ecrRepositoryRef is the parsed form of an ECR repository URI.
@@ -154,38 +158,90 @@ func validateInput(in imageBuildInput) error {
 			return fmt.Errorf("invalid buildArg key %q", k)
 		}
 	}
-	if len(in.AdditionalTags) > maxAdditionalTags {
-		return fmt.Errorf("at most %d additionalTags are allowed, got %d", maxAdditionalTags, len(in.AdditionalTags))
+	declaredPins := len(in.AdditionalTags)
+	if in.VersionURI != "" {
+		declaredPins++
+	}
+	if declaredPins > maxAdditionalTags {
+		return fmt.Errorf("at most %d pins are allowed, got %d", maxAdditionalTags, declaredPins)
 	}
 	seen := make(map[string]struct{}, len(in.AdditionalTags))
 	for _, tag := range in.AdditionalTags {
-		if !imageTagPattern.MatchString(tag) {
-			return fmt.Errorf("invalid additionalTag %q", tag)
-		}
-		// A pin naming the mutable tag would be moved by the next rebuild, which is
-		// the one thing a pin exists not to be.
-		if tag == in.ImageTag {
-			return fmt.Errorf("invalid additionalTag %q: must not equal imageTag", tag)
+		if err := checkPinTag(tag, in.ImageTag, "additionalTag"); err != nil {
+			return err
 		}
 		if _, dup := seen[tag]; dup {
 			return fmt.Errorf("duplicate additionalTag %q", tag)
 		}
 		seen[tag] = struct{}{}
 	}
+	if in.VersionURI != "" {
+		if !strings.HasPrefix(in.VersionURI, in.EcrRepositoryURI+":") {
+			return fmt.Errorf("invalid versionUri %q: must be the declared ecrRepositoryUri followed by ':' and a tag", in.VersionURI)
+		}
+		// The whole suffix must be one valid tag; a valid tag admits no ':', which
+		// is what makes the last-colon split in versionTag agree with this check.
+		tag := strings.TrimPrefix(in.VersionURI, in.EcrRepositoryURI+":")
+		if err := checkPinTag(tag, in.ImageTag, "versionUri tag"); err != nil {
+			return err
+		}
+		// The same tag in both listings would be placed twice in one apply and fail
+		// its own create-once check.
+		if _, dup := seen[tag]; dup {
+			return fmt.Errorf("invalid versionUri %q: tag %q is also declared in additionalTags", in.VersionURI, tag)
+		}
+	}
 	return nil
 }
 
+// checkPinTag rejects a tag that cannot serve as a pin, whichever field declared
+// it: a malformed tag, or one equal to the mutable imageTag — which the next
+// rebuild would move, the one thing a pin exists not to be.
+func checkPinTag(tag, imageTag, field string) error {
+	if !imageTagPattern.MatchString(tag) {
+		return fmt.Errorf("invalid %s %q", field, tag)
+	}
+	if tag == imageTag {
+		return fmt.Errorf("invalid %s %q: must not equal imageTag", field, tag)
+	}
+	return nil
+}
+
+// versionTag returns the tag part of a declared versionUri, or "" when unset. The
+// tag is everything after the last ':'; neither an ECR repository URI nor a tag
+// admits one, so the split is unambiguous.
+func versionTag(versionURI string) string {
+	i := strings.LastIndex(versionURI, ":")
+	if i < 0 {
+		return ""
+	}
+	return versionURI[i+1:]
+}
+
+// declaredPinTags returns every pin tag an input declares, in placement order:
+// the additionalTags listing, then the versionUri tag. The versionUri tag is a
+// pin like any other; only where it is declared differs.
+func declaredPinTags(in imageBuildInput) []string {
+	tags := in.AdditionalTags
+	if tag := versionTag(in.VersionURI); tag != "" {
+		tags = append(tags[:len(tags):len(tags)], tag)
+	}
+	return tags
+}
+
 // newPins returns the pins this apply declares for the first time, in declared
-// order: those absent from the previously declared listing. A pin already declared
-// is carried over and left exactly where it is, so only these are ever placed.
-// Every pin is new on a create, where there is no prior.
+// order: those absent from the previously declared set, whichever field declared
+// them. A pin already declared is carried over and left exactly where it is, so
+// only these are ever placed. Every pin is new on a create, where there is no
+// prior.
 func newPins(prior, desired imageBuildInput) []string {
-	previously := make(map[string]struct{}, len(prior.AdditionalTags))
-	for _, tag := range prior.AdditionalTags {
+	priorTags := declaredPinTags(prior)
+	previously := make(map[string]struct{}, len(priorTags))
+	for _, tag := range priorTags {
 		previously[tag] = struct{}{}
 	}
 	var fresh []string
-	for _, tag := range desired.AdditionalTags {
+	for _, tag := range declaredPinTags(desired) {
 		if _, carried := previously[tag]; !carried {
 			fresh = append(fresh, tag)
 		}

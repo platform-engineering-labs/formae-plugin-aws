@@ -419,3 +419,95 @@ func TestIsLegacyBuildConfigHash(t *testing.T) {
 func TestImageURI(t *testing.T) {
 	assert.Equal(t, "repo:tag", imageURI("repo", "tag"))
 }
+
+func TestValidateInputAcceptsVersionUri(t *testing.T) {
+	in := validInput()
+	in.VersionURI = in.EcrRepositoryURI + ":0.89.0-dev.21"
+	require.NoError(t, validateInput(in))
+
+	// Absent is fine: the field is optional.
+	require.NoError(t, validateInput(validInput()))
+}
+
+func TestValidateInputRejectsBadVersionUri(t *testing.T) {
+	repo := validInput().EcrRepositoryURI
+	cases := map[string]string{
+		"wrong repository": "123456789012.dkr.ecr.us-east-1.amazonaws.com/other:0.89.0",
+		"bare tag":         "0.89.0",
+		"no tag":           repo,
+		"empty tag":        repo + ":",
+		"bad tag":          repo + ":bad tag!",
+		"digest form":      repo + "@sha256:abc",
+	}
+	for name, uri := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := validInput()
+			in.VersionURI = uri
+			assert.Error(t, validateInput(in))
+		})
+	}
+
+	t.Run("tag equal to imageTag", func(t *testing.T) {
+		in := validInput()
+		in.VersionURI = repo + ":" + in.ImageTag
+		assert.Error(t, validateInput(in))
+	})
+	t.Run("tag also declared as a pin", func(t *testing.T) {
+		in := validInput()
+		in.AdditionalTags = []string{"0.89.0-dev.21"}
+		in.VersionURI = repo + ":0.89.0-dev.21"
+		assert.Error(t, validateInput(in))
+	})
+}
+
+func TestNewPinsIncludesTheVersionTag(t *testing.T) {
+	repo := validInput().EcrRepositoryURI
+
+	// A freshly declared version tag is a new pin, after the declared listing.
+	desired := imageBuildInput{EcrRepositoryURI: repo, AdditionalTags: []string{"release-1"}, VersionURI: repo + ":v1"}
+	assert.Equal(t, []string{"release-1", "v1"}, newPins(imageBuildInput{}, desired))
+
+	// Carried over unchanged, nothing is new.
+	assert.Empty(t, newPins(desired, desired))
+
+	// A version tag previously declared as an additionalTag is carried, not re-placed.
+	prior := imageBuildInput{AdditionalTags: []string{"v1"}}
+	assert.Empty(t, newPins(prior, imageBuildInput{EcrRepositoryURI: repo, VersionURI: repo + ":v1"}))
+
+	// A moved version tag is a new pin.
+	priorVersioned := imageBuildInput{EcrRepositoryURI: repo, VersionURI: repo + ":v1"}
+	assert.Equal(t, []string{"v2"}, newPins(priorVersioned, imageBuildInput{EcrRepositoryURI: repo, VersionURI: repo + ":v2"}))
+}
+
+// TestBuildConfigHashIgnoresVersionUri asserts the version reference is not a
+// build-affecting input: moving it alone places a pin on the image that already
+// exists, it never forces a rebuild.
+func TestBuildConfigHashIgnoresVersionUri(t *testing.T) {
+	project := &codebuildtypes.Project{Name: aws.String(testBuildProject)}
+	base := validInput()
+	versioned := validInput()
+	versioned.VersionURI = versioned.EcrRepositoryURI + ":0.89.0-dev.21"
+	assert.Equal(t, computeBuildConfigHash(base, project), computeBuildConfigHash(versioned, project))
+}
+
+// TestValidateInputBoundsAllDeclaredPins asserts the pin bound covers the version
+// pin as well as the listing: both are placed by the same serial registry writes
+// the bound exists to keep in check.
+func TestValidateInputBoundsAllDeclaredPins(t *testing.T) {
+	in := validInput()
+	in.AdditionalTags = manyPins(maxAdditionalTags)
+	in.VersionURI = in.EcrRepositoryURI + ":0.89.0-dev.21"
+	assert.Error(t, validateInput(in))
+
+	in.AdditionalTags = manyPins(maxAdditionalTags - 1)
+	require.NoError(t, validateInput(in))
+}
+
+// TestValidateInputRejectsAMultiColonVersionUri asserts the whole suffix after
+// the repository must be one valid tag, so a reference whose last segment alone
+// looks like a tag cannot slip through.
+func TestValidateInputRejectsAMultiColonVersionUri(t *testing.T) {
+	in := validInput()
+	in.VersionURI = in.EcrRepositoryURI + ":a:b"
+	assert.Error(t, validateInput(in))
+}
