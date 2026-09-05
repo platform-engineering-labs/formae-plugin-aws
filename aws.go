@@ -124,6 +124,46 @@ func (p *Plugin) RateLimit() pkgmodel.RateLimitConfig {
 func (p *Plugin) DiscoveryFilters() []pkgmodel.MatchFilter {
 	return []pkgmodel.MatchFilter{
 		{
+			// Anything formae created in order to run in this account or to
+			// reach it. Chiefly the connect role and the account-global OIDC
+			// provider its trust policy names: discovered like any other
+			// resource, they could be imported and then reconciled away, which
+			// severs formae's own access to the account.
+			//
+			// The marker answers one question, whether formae created the
+			// thing. It does not say who may delete it, which is why it is
+			// separate from the formae-ai:owner provenance tag the connect
+			// tooling reads. A name prefix is not ownership: unrelated roles
+			// share the "formae" prefix and must stay visible.
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  `$.Tags[?(@.Key=='formae-owned')].Value`,
+					PropertyValue: "true",
+				},
+			},
+		},
+		{
+			// EFS is the exception to $.Tags. FileSystem and AccessPoint expose
+			// their tags under per-type properties, so the filter above never
+			// sees them and they would leak.
+			ResourceTypes: []string{"AWS::EFS::FileSystem"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  `$.FileSystemTags[?(@.Key=='formae-owned')].Value`,
+					PropertyValue: "true",
+				},
+			},
+		},
+		{
+			ResourceTypes: []string{"AWS::EFS::AccessPoint"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  `$.AccessPointTags[?(@.Key=='formae-owned')].Value`,
+					PropertyValue: "true",
+				},
+			},
+		},
+		{
 			// Filter out EKS Automode-managed resources.
 			// These resources are tagged with "kubernetes.io/cluster/<cluster-name>" = "owned".
 			// Using RFC 9535 match() function for regex pattern matching on tag keys.

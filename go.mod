@@ -30,7 +30,7 @@ require (
 	github.com/aws/smithy-go v1.27.7
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/google/uuid v1.6.0
-	github.com/platform-engineering-labs/formae/pkg/model v0.1.26
+	github.com/platform-engineering-labs/formae/pkg/model v0.1.28-0.20260905024731-383de8b8543c
 	// Re-pin to the next official pkg/plugin tag when one is cut.
 	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821224650-dc5149d5a102
 	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630
