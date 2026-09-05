@@ -73,13 +73,16 @@ type imageBuildInput struct {
 	BuildArgs        map[string]string `json:"BuildArgs,omitempty"`
 	ProjectName      string            `json:"ProjectName"`
 	AdditionalTags   []string          `json:"AdditionalTags,omitempty"`
+	VersionURI       string            `json:"VersionUri,omitempty"`
 }
 
 // imageBuildOutputs is the computed read-only state persisted in ResourceProperties
 // and surfaced as the resource's resolvable outputs.
-// AdditionalTags is echoed rather than computed: it is the declared listing, not an
-// output, and it rides here because the caller rebuilds its stored model of a
-// list-valued property from the properties the plugin returns.
+// AdditionalTags and VersionURI are echoed rather than computed: they are declared
+// inputs, not outputs, and they ride here because the caller rebuilds its stored
+// model from the properties the plugin returns — and, for VersionURI, because a
+// consumer resolving `res.versionUri` at execution time reads it from exactly this
+// echo.
 type imageBuildOutputs struct {
 	ImageRef        string   `json:"ImageRef,omitempty"`
 	ImageDigest     string   `json:"ImageDigest,omitempty"`
@@ -87,6 +90,7 @@ type imageBuildOutputs struct {
 	ImageTag        string   `json:"ImageTag,omitempty"`
 	BuildConfigHash string   `json:"BuildConfigHash,omitempty"`
 	AdditionalTags  []string `json:"AdditionalTags,omitempty"`
+	VersionURI      string   `json:"VersionUri,omitempty"`
 }
 
 // ecrRepositoryRef is the parsed form of an ECR repository URI.
@@ -172,20 +176,60 @@ func validateInput(in imageBuildInput) error {
 		}
 		seen[tag] = struct{}{}
 	}
+	if in.VersionURI != "" {
+		prefix := in.EcrRepositoryURI + ":"
+		if !strings.HasPrefix(in.VersionURI, prefix) {
+			return fmt.Errorf("invalid versionUri %q: must be the declared ecrRepositoryUri followed by ':' and a tag", in.VersionURI)
+		}
+		tag := strings.TrimPrefix(in.VersionURI, prefix)
+		if !imageTagPattern.MatchString(tag) {
+			return fmt.Errorf("invalid versionUri %q: invalid tag %q", in.VersionURI, tag)
+		}
+		// Pinning the mutable tag would be moved by the next rebuild, which is the
+		// one thing a pin exists not to be.
+		if tag == in.ImageTag {
+			return fmt.Errorf("invalid versionUri %q: tag must not equal imageTag", in.VersionURI)
+		}
+		// The same tag in both listings would be placed twice in one apply and fail
+		// its own create-once check.
+		if _, dup := seen[tag]; dup {
+			return fmt.Errorf("invalid versionUri %q: tag %q is also declared in additionalTags", in.VersionURI, tag)
+		}
+	}
 	return nil
 }
 
+// versionTag returns the tag part of a declared versionUri, or "" when unset. The
+// tag is everything after the last ':'; neither an ECR repository URI nor a tag
+// admits one, so the split is unambiguous.
+func versionTag(versionURI string) string {
+	i := strings.LastIndex(versionURI, ":")
+	if i < 0 {
+		return ""
+	}
+	return versionURI[i+1:]
+}
+
 // newPins returns the pins this apply declares for the first time, in declared
-// order: those absent from the previously declared listing. A pin already declared
-// is carried over and left exactly where it is, so only these are ever placed.
-// Every pin is new on a create, where there is no prior.
+// order: those absent from the previously declared listing. The versionUri tag is
+// a pin like any other, placed after the additionalTags; one previously declared
+// under either field is carried over and left exactly where it is, so only these
+// are ever placed. Every pin is new on a create, where there is no prior.
 func newPins(prior, desired imageBuildInput) []string {
-	previously := make(map[string]struct{}, len(prior.AdditionalTags))
+	previously := make(map[string]struct{}, len(prior.AdditionalTags)+1)
 	for _, tag := range prior.AdditionalTags {
+		previously[tag] = struct{}{}
+	}
+	if tag := versionTag(prior.VersionURI); tag != "" {
 		previously[tag] = struct{}{}
 	}
 	var fresh []string
 	for _, tag := range desired.AdditionalTags {
+		if _, carried := previously[tag]; !carried {
+			fresh = append(fresh, tag)
+		}
+	}
+	if tag := versionTag(desired.VersionURI); tag != "" {
 		if _, carried := previously[tag]; !carried {
 			fresh = append(fresh, tag)
 		}

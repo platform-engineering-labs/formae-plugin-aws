@@ -24,9 +24,22 @@ import "../aws.pkl"
 
 const type = "AWS::CodeBuild::ImageBuild"
 
-/// Read-only outputs produced by the build, referenceable as resolvables via
-/// `imageBuild.res.*`. `imageRef` (repo@sha256:…) is the immutable, primary
-/// consumption reference; `imageUri` (repo:tag) is a convenience mutable alias.
+/// Outputs of the build, referenceable as resolvables via `imageBuild.res.*`.
+///
+/// `versionUri` (repo:versionTag, echoing the declared `versionUri`) is the
+/// recommended consumption reference for deploy-time consumers such as task
+/// definitions: because its value is declared rather than produced by the build,
+/// a consumer referencing it is planned in the same apply that rebuilds the
+/// image, so an image roll converges in one apply — while the reference still
+/// orders the consumer after the build and its pin placement.
+///
+/// `imageRef` (repo@sha256:…) is the immutable digest reference. It exists only
+/// after the build runs, so a consumer referencing it cannot see a new digest at
+/// plan time: an image roll through `imageRef` takes two applies (the first
+/// rebuilds, the second rolls the consumer). Prefer `versionUri` unless the
+/// consumer genuinely needs digest pinning.
+///
+/// `imageUri` (repo:tag) is a convenience mutable alias.
 open class ImageBuildResolvable extends formae.Resolvable {
     hidden type = module.type
 
@@ -44,6 +57,10 @@ open class ImageBuildResolvable extends formae.Resolvable {
 
     hidden imageTag: ImageBuildResolvable = (this) {
         property = "ImageTag"
+    }
+
+    hidden versionUri: ImageBuildResolvable = (this) {
+        property = "VersionUri"
     }
 }
 
@@ -105,6 +122,33 @@ open class ImageBuild extends formae.Resource {
     /// happen to a registry.
     @aws.FieldHint
     additionalTags: Listing<String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))>?
+
+    /// Immutable full image reference `<ecrRepositoryUri>:<versionTag>`, declared
+    /// by the author and therefore known at plan time. The tag part is placed as
+    /// a create-once immutable pin on the manifest this build pushes, with
+    /// exactly the semantics of an `additionalTags` pin (never moved, never
+    /// deleted, an already-existing tag fails the apply).
+    ///
+    /// This is the recommended reference for deploy-time consumers (see
+    /// `res.versionUri`): unlike the digest, it changes when the author bumps
+    /// the version, so a consumer diffs dirty in the same apply that rebuilds
+    /// the image and the roll converges in one apply instead of two.
+    ///
+    /// The repository part must equal `ecrRepositoryUri` (validated before any
+    /// build starts; this field exists to name the image THIS build pushes), the
+    /// tag must differ from `imageTag` (the mutable tag moves on every rebuild,
+    /// which is the one thing a pin must not do), and the tag must not also
+    /// appear in `additionalTags` (it would be placed twice in one apply and
+    /// fail its own create-once check). `ecrRepositoryUri` is often a resolvable
+    /// in the forma while this field needs the literal string: restate the
+    /// repository URI from the same source values and the plugin cross-checks
+    /// the two at execution, so they cannot drift apart silently.
+    ///
+    /// Deliberately not `createOnly`: a version bump is an in-place update, and
+    /// the delete half of a replacement would destroy the predecessor manifests
+    /// the pins exist to keep.
+    @aws.FieldHint
+    versionUri: String?
 
     /// The full literal Dockerfile content to build. The image is built verbatim
     /// from this Dockerfile; the returned digest is the source of truth.

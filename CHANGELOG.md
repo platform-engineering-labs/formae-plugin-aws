@@ -14,6 +14,16 @@ Requires formae >= 0.89.0.
 
 ### Added
 
+- `AWS::CodeBuild::ImageBuild` gains a `versionUri` field and matching
+  `res.versionUri` resolvable: the full `<repo>:<versionTag>` reference,
+  declared by the author and placed as a create-once immutable pin on the
+  manifest the build pushes. Because the value is declared rather than produced
+  by the build, a consumer (say, a task definition's container image) that
+  references `res.versionUri` is planned in the same apply that rebuilds the
+  image, so an image roll converges in one apply; deploying through
+  `res.imageRef` (the digest, which exists only after the build) takes two.
+  The digest resolvables are unchanged and remain available.
+
 - Resources formae created in order to reach this account are no longer offered
   for import. The connect role and the account-global OIDC provider its trust
   policy names carry an ownership marker, and discovery now excludes anything
