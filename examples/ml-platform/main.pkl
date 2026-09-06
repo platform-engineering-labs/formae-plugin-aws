@@ -41,6 +41,7 @@ description {
 }
 
 local mlPlatform = new platform.MLPlatform {
+  stack = vars.stack.res
   name = vars.properties.name.value
   region = vars.properties.region.value
   accountId = vars.properties.accountId.value
