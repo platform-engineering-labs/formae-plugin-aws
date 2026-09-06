@@ -74,7 +74,8 @@ verify-examples:
 		echo "Resolving examples/PklProject dependencies..."; \
 		(cd examples && pkl project resolve); \
 	fi
-	@for f in $$(find examples/cloudfront-* examples/codebuild-* -name '*.pkl' 2>/dev/null); do \
+	@for f in $$(find examples/cloudfront-* examples/codebuild-* -name '*.pkl' 2>/dev/null) \
+	          examples/secret-resolvable/main.pkl examples/ml-platform/main.pkl; do \
 		echo "Evaluating $$f..."; \
 		FORMAE_TEST_RUN_ID=verify pkl eval --project-dir examples "$$f" >/dev/null || exit 1; \
 	done
