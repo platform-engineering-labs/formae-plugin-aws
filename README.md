@@ -10,31 +10,38 @@ API](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudc
 
 ## Supported Resources
 
-This plugin supports **210 AWS resource types** across 22 services via the
+This plugin supports **246 AWS resource types** across 28 services via the
 CloudControl API:
 
 | Service | Resources | Examples |
 |---------|-----------|----------|
 | EC2 | 96 | VPC, Subnet, SecurityGroup, Instance, NATGateway, InternetGateway |
+| RDS | 18 | DBInstance, DBCluster, DBSubnetGroup, OptionGroup |
 | IAM | 16 | Role, Policy, User, Group, InstanceProfile, OIDCProvider |
-| RDS | 16 | DBInstance, DBCluster, DBSubnetGroup, OptionGroup |
-| Lambda | 10 | Function, LayerVersion, Permission, EventSourceMapping |
-| ECS | 7 | Cluster, Service, TaskDefinition, CapacityProvider |
 | S3 | 11 | Bucket, BucketPolicy, AccessPoint |
-| EKS | 2 | Cluster, NodeGroup |
+| Lambda | 10 | Function, LayerVersion, Permission, EventSourceMapping |
+| API Gateway | 8 | RestApi, Resource, Method, Deployment, Stage |
+| ECS | 8 | Cluster, Service, TaskDefinition, CapacityProvider |
+| CloudFront | 7 | Distribution |
+| EKS | 7 | Cluster, NodeGroup |
+| ELBv2 | 7 | LoadBalancer, TargetGroup, Listener, ListenerRule |
 | Route53 | 7 | HostedZone, RecordSet, HealthCheck |
+| ECR | 6 | Repository, RegistryPolicy, ReplicationConfiguration |
+| App Runner | 5 | Service, VpcConnector, AutoScalingConfiguration |
+| Elastic Beanstalk | 4 | Application, Environment, ConfigurationTemplate |
+| Network Firewall | 4 | Firewall, FirewallPolicy, RuleGroup |
+| SES | 4 | EmailIdentity, ConfigurationSet, ReceiptRule |
+| SageMaker | 4 | Domain, UserProfile, Endpoint |
+| Secrets Manager | 4 | Secret, ResourcePolicy, RotationSchedule |
+| EFS | 3 | FileSystem, MountTarget, AccessPoint |
+| EventBridge | 3 | Rule, EventBus, Connection |
+| SQS | 3 | Queue, QueuePolicy |
+| CodeBuild | 2 | Project, ImageBuild |
 | DynamoDB | 2 | Table, GlobalTable |
 | KMS | 2 | Key, Alias |
-| Secrets Manager | 4 | Secret, ResourcePolicy, RotationSchedule |
-| CloudFront | 1 | Distribution |
+| Service Discovery | 2 | PrivateDnsNamespace, Service |
+| Certificate Manager | 1 | Certificate |
 | CloudTrail | 1 | Trail |
-| ELBv2 | 7 | LoadBalancer, TargetGroup, Listener, ListenerRule |
-| ECR | 6 | Repository, RegistryPolicy, ReplicationConfiguration |
-| EFS | 3 | FileSystem, MountTarget, AccessPoint |
-| SQS | 3 | Queue, QueuePolicy |
-| API Gateway | 8 | RestApi, Resource, Method, Deployment, Stage |
-| SageMaker | 4 | Domain, UserProfile, Endpoint |
-| Elastic Beanstalk | 4 | Application, Environment, ConfigurationTemplate |
 | Logs | 1 | LogGroup |
 
 See [`schema/pkl/`](schema/pkl/) for the complete list of supported resource

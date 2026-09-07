@@ -5,7 +5,6 @@
  */
 
 import "@formae/formae.pkl"
-import "@formae/ext/random.pkl"
 import "@aws/aws.pkl"
 import "@aws/s3/bucket.pkl"
 import "@aws/kms/key.pkl"
@@ -20,6 +19,9 @@ import "@aws/ec2/securitygroup.pkl"
 
 class Storage {
   name: String
+  /// The stack the generated database password belongs to. A generator names
+  /// its stack explicitly; it is not inherited from the enclosing forma.
+  stack: formae.StackResolvable
   region: aws.Region
   accountId: String
   vpcId: String
@@ -215,11 +217,21 @@ class Storage {
     }
   }
 
+  /// formae draws the password and delivers it to the secret below. The value
+  /// never appears in the plan, the inventory, the logs or the datastore, which
+  /// keeps only a digest. No `rotation` here means one draw, never rotated.
+  hidden dbPasswordGen: formae.PasswordGenerator = new {
+    label = "\(outer.name)-db-password-gen"
+    stack = outer.stack
+    length = 16
+    symbols = false
+  }
+
   hidden dbPasswordSecret: secret.Secret = new {
     label = "\(outer.name)-db-password"
     name = "\(outer.name)/db-password"
     description = "Database password for ML platform"
-    secretString = formae.value(random.password(16, false)).opaque.setOnce
+    secretString = dbPasswordGen.gen.value
     kmsKeyId = kmsKey.res.arn
     tags {
       new { key = "Name"; value = label }
@@ -229,7 +241,7 @@ class Storage {
 
   hidden featureStoreDb: dbinstance.DBInstance = new {
     label = "\(name)-feature-store-db"
-    allocatedStorage = 20
+    allocatedStorage = "20"
     dbInstanceClass = outer.dbInstanceClass
     engine = "postgres"
     engineVersion = "13"
