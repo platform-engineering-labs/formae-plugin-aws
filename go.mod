@@ -30,10 +30,10 @@ require (
 	github.com/aws/smithy-go v1.27.7
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/google/uuid v1.6.0
-	github.com/platform-engineering-labs/formae/pkg/model v0.1.28-0.20260905024731-383de8b8543c
+	github.com/platform-engineering-labs/formae/pkg/model v0.1.28
 	// Re-pin to the next official pkg/plugin tag when one is cut.
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2-0.20260821224650-dc5149d5a102
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7-0.20260811042554-70c525251630
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -75,7 +75,7 @@ require (
 	github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df // indirect
 	github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 // indirect
 	// Re-pin to the next official pkg/credential tag when one is cut.
-	github.com/platform-engineering-labs/formae/pkg/credential v0.0.0-20260821213704-ba68bacf6dd6 // indirect
+	github.com/platform-engineering-labs/formae/pkg/credential v0.1.0 // indirect
 	github.com/platform-engineering-labs/orbital v0.1.36 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
