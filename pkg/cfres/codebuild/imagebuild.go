@@ -609,10 +609,17 @@ func (a *ImageBuild) readDeclaredPins(ctx context.Context, client ecrClientInter
 	if len(priorProperties) == 0 {
 		return nil, nil, nil
 	}
-	var prior imageBuildInput
-	if err := json.Unmarshal(priorProperties, &prior); err != nil {
-		return nil, nil, nil
+	// Read receives the stored model, whose unrelated fields can contain
+	// formae reference objects. Decode only the declared pins we need; trying
+	// to decode the full write input rejects those objects and loses the pins.
+	var pins struct {
+		AdditionalTags []string `json:"AdditionalTags"`
+		VersionURI     string   `json:"VersionUri"`
 	}
+	if err := json.Unmarshal(priorProperties, &pins); err != nil {
+		return nil, nil, fmt.Errorf("ImageBuild: invalid prior pin properties: %w", err)
+	}
+	prior := imageBuildInput{AdditionalTags: pins.AdditionalTags, VersionURI: pins.VersionURI}
 	declared := declaredPinTags(prior)
 	if len(declared) == 0 {
 		return nil, nil, nil

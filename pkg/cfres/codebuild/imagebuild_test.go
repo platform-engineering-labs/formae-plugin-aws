@@ -1697,3 +1697,47 @@ func TestCreateDeclaresTheVersionTagAsANewPin(t *testing.T) {
 	assert.Equal(t, in.VersionURI, state.VersionURI)
 	assert.Equal(t, []string{"release-1"}, state.Pins)
 }
+
+func TestReadVersionUriWithWrappedPriorProperties(t *testing.T) {
+	ecr := &mockECRClient{}
+	p := newTestProvisioner(nil, ecr)
+
+	ecr.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil).Once()
+	expectTagLookup(ecr, map[string]string{"0.89.0-dev.21": testPinnedDigest})
+
+	prior, err := json.Marshal(map[string]any{"VersionUri": testRepoURI + ":0.89.0-dev.21", "EcrRepositoryUri": map[string]any{"$ref": "formae://repository#/RepositoryUri", "$value": testRepoURI}, "ProjectName": map[string]any{"$ref": "formae://builder#/Name", "$value": testBuildProject}})
+	require.NoError(t, err)
+
+	res, err := p.Read(context.Background(), &resource.ReadRequest{
+		NativeID:        encodeNativeID(testRepoURI, "0.1.0", testBuildProject),
+		ResourceType:    resourceType,
+		PriorProperties: prior,
+	})
+	require.NoError(t, err)
+	var out imageBuildOutputs
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out))
+	assert.Equal(t, testRepoURI+":0.89.0-dev.21", out.VersionURI)
+
+	ecr2 := &mockECRClient{}
+	p2 := newTestProvisioner(nil, ecr2)
+	ecr2.On("DescribeImages", mock.Anything, mock.Anything).Return(&ecrsdk.DescribeImagesOutput{
+		ImageDetails: []ecrtypes.ImageDetail{{ImageDigest: aws.String("sha256:cafe")}},
+	}, nil).Once()
+	expectTagLookup(ecr2, nil)
+	res, err = p2.Read(context.Background(), &resource.ReadRequest{
+		NativeID:        encodeNativeID(testRepoURI, "0.1.0", testBuildProject),
+		ResourceType:    resourceType,
+		PriorProperties: prior,
+	})
+	require.NoError(t, err)
+	var out2 imageBuildOutputs
+	require.NoError(t, json.Unmarshal([]byte(res.Properties), &out2))
+	assert.Empty(t, out2.VersionURI)
+	// The cleared value must be EXPLICIT in the response. The agent's property
+	// merge keeps the stored value for any key absent from a read, so an omitted
+	// VersionUri would silently preserve a reference whose tag no longer exists
+	// instead of surfacing the loss as drift.
+	assert.Contains(t, res.Properties, `"VersionUri":""`)
+}
