@@ -434,6 +434,10 @@ func (c *Client) ReadResource(ctx context.Context, request *resource.ReadRequest
 		stripEmptyCollectionsFromMap(propsMap)
 	}
 
+	if request.ResourceType == iamRoleResourceType {
+		stabilizeIAMRoleTrustPolicy(propsMap, json.RawMessage(properties), request.PriorProperties)
+	}
+
 	transformedProps, err := json.Marshal(propsMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal transformed properties: %w", err)
