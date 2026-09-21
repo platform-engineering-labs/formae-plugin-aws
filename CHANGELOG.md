@@ -16,12 +16,13 @@ Requires formae >= 0.89.0.
 
 - `AWS::IAM::Role` trust policies no longer appear to drift when AWS returns
   equivalent statements, principals, or actions in a different order. The
-  plugin preserves the declared order after confirming the policy content is
-  unchanged, while still reporting real policy changes.
+  plugin preserves the previously recorded order after confirming the policy
+  content is unchanged, while still reporting real policy changes.
 - `AWS::CodeBuild::ImageBuild` keeps its declared `versionUri` and
   `additionalTags` pins when repository or project fields use resource
-  references. If a pinned tag is removed from ECR, the read now clears it so
-  formae can report the change instead of retaining stale state.
+  references. If the pinned version tag referenced by `versionUri` is removed
+  from ECR, the read now clears `versionUri` so formae can report the change
+  instead of retaining stale state.
 
 ## [0.1.17]
 
