@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
+## [0.1.18]
+
+Requires formae >= 0.89.0.
+
+### Fixed
+
+- `AWS::IAM::Role` trust policies no longer appear to drift when AWS returns
+  equivalent statements, principals, or actions in a different order. The
+  plugin preserves the declared order after confirming the policy content is
+  unchanged, while still reporting real policy changes.
+- `AWS::CodeBuild::ImageBuild` keeps its declared `versionUri` and
+  `additionalTags` pins when repository or project fields use resource
+  references. If a pinned tag is removed from ECR, the read now clears it so
+  formae can report the change instead of retaining stale state.
+
 ## [0.1.17]
 
 Requires formae >= 0.89.0.
