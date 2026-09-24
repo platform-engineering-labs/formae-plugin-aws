@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
+## [0.1.19]
+
+Requires formae >= 0.89.0.
+
+### Fixed
+
+- `AWS::ECS::TaskDefinition` now matches containers by their serialized name
+  when planning changes. Updating one container image in a task with sidecars
+  no longer produces unrelated container property changes.
+
 ## [0.1.18]
 
 Requires formae >= 0.89.0.
