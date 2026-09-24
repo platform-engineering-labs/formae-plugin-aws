@@ -27,6 +27,12 @@ on:
         default: true
         type: boolean
 
+      post_cleanup:
+        description: "Run post-cleanup after tests"
+        required: false
+        default: true
+        type: boolean
+
 # Share the conformance-tests serialization group with CI/nightly so we
 # never race for shared AWS state. Debug invocations queue behind any
 # in-flight CI/nightly run.
@@ -186,7 +192,7 @@ jobs:
 
   post-cleanup:
     needs: [conformance-tests]
-    if: always()
+    if: ${{ always() && inputs.post_cleanup }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write

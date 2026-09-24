@@ -1,0 +1,69 @@
+/*
+ * © 2026 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+import "@aws/aws.pkl"
+import "@aws/ecs/taskdefinition.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+
+// A task definition needs no cluster, service, networking, or running tasks.
+// Explicit empty collections match CloudControl's Read normalization.
+local container = new taskdefinition.ContainerDefinition {
+  command = new Listing<String> {}
+  credentialSpecs = new Listing<String> {}
+  dependsOn = new Listing<taskdefinition.ContainerDependency> {}
+  dnsSearchDomains = new Listing<String> {}
+  dnsServers = new Listing<String> {}
+  dockerLabels = new Mapping<String, Any> {}
+  dockerSecurityOptions = new Listing<String> {}
+  entryPoint = new Listing<String> {}
+  environmentFiles = new Listing<taskdefinition.EnvironmentFile> {}
+  extraHosts = new Listing<taskdefinition.HostEntry> {}
+  links = new Listing<String> {}
+  mountPoints = new Listing<taskdefinition.MountPoint> {}
+  portMappings = new Listing<taskdefinition.PortMapping> {}
+  resourceRequirements = new Listing<taskdefinition.ResourceRequirement> {}
+  secrets = new Listing<taskdefinition.Secret> {}
+  systemControls = new Listing<taskdefinition.SystemControl> {}
+  ulimits = new Listing<taskdefinition.Ulimit> {}
+  volumesFrom = new Listing<taskdefinition.VolumeFrom> {}
+}
+
+forma {
+  new formae.Stack {
+    label = "plugin-sdk-test-ecs-container-identity-\(testRunID)"
+  }
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config { region = "us-east-1" }
+  }
+  new taskdefinition.TaskDefinition {
+    label = "plugin-sdk-test-ecs-container-identity"
+    family = "formae-sdk-test-container-identity-\(testRunID)"
+    requiresCompatibilities { "FARGATE" }
+    networkMode = "awsvpc"
+    cpu = "256"
+    memory = "512"
+    tags = new Listing<aws.Tag> {}
+    containerDefinitions {
+      (container) {
+        name = "app"
+        image = "public.ecr.aws/docker/library/nginx:1.28"
+        essential = true
+        environment { new { name = "MODE"; value = "serve" } }
+      }
+      (container) {
+        name = "sidecar"
+        image = "public.ecr.aws/docker/library/busybox:1.37"
+        essential = false
+        command = new Listing<String> { "sleep"; "3600" }
+        environment = new Listing<taskdefinition.KeyValuePair> {}
+      }
+    }
+  }
+}
