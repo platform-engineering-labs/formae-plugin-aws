@@ -750,6 +750,22 @@ aws rds describe-db-snapshots --snapshot-type manual --region "$REGION" \
     fi
 done
 
+# --- RDS manual DB cluster snapshots
+# A DBCluster delete through CloudControl also leaves a final cluster snapshot,
+# and these count against the same per-account 100 manual-snapshot limit. Once
+# it is reached, the rds-database and rds-databaserole teardowns fail with
+# "Cannot create more than 100 manual snapshots". Purge the test-owned manual
+# cluster snapshots; match on either the snapshot id or its source cluster id,
+# since final-snapshot ids are auto-generated.
+echo "Cleaning RDS test manual DB cluster snapshots..."
+aws rds describe-db-cluster-snapshots --snapshot-type manual --region "$REGION" \
+    --query "DBClusterSnapshots[?$(name_match DBClusterSnapshotIdentifier) || $(name_match DBClusterIdentifier)].DBClusterSnapshotIdentifier" --output text 2>/dev/null | tr '\t' '\n' | while read -r snap; do
+    if [[ -n "$snap" ]]; then
+        echo "  Deleting RDS manual cluster snapshot: $snap"
+        aws rds delete-db-cluster-snapshot --db-cluster-snapshot-identifier "$snap" --region "$REGION" 2>/dev/null || true
+    fi
+done
+
 # --- RDS DB clusters (after DB instances, before DB subnet groups and VPCs)
 # An Aurora cluster outlives a cancelled run and then blocks its subnet group and
 # VPC from being torn down by every later run. Members are deleted first: a
