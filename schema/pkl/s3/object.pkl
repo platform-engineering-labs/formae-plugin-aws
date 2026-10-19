@@ -61,10 +61,16 @@ typealias ObjectLockLegalHoldStatus = "ON"|"OFF"
 
 typealias ObjectLockMode = "GOVERNANCE"|"COMPLIANCE"
 
+// Not discoverable: a bucket's object count is unbounded and is data rather
+// than infrastructure, so a discovery scan enumerates every key in every
+// bucket in the account. That is slow enough to stall the agent's scan and it
+// fills the inventory with rows nobody declared. Objects that formae manages
+// are still created, read, updated and deleted as usual; they simply are not
+// found by discovery, so an existing object has to be declared to be managed.
 @aws.ResourceHint {
     type = module.type
     identifier = "$.Key"
-    discoverable = true
+    discoverable = false
     parent = "AWS::S3::Bucket"
     listParam = new formae.ListProperty { parentProperty = "BucketName" listParameter = "BucketName" }
 }

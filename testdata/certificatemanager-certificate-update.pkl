@@ -13,6 +13,7 @@ import "@aws/certificatemanager/certificate.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-certificatemanager-certificate-\(testRunID)"
+local certDomain = "formae-plugin-sdk-test-cert-\(testRunID).example"
 
 forma {
   new formae.Stack {
@@ -29,7 +30,13 @@ forma {
 
   new certificate.Certificate {
     label = "plugin-sdk-test-cert"
-    domainName = "formae-plugin-sdk-test-cert-\(testRunID).example"
+    domainName = certDomain
+    // Unchanged from the base fixture: subject alternative names are
+    // createOnly, so this update is a tag-only change.
+    subjectAlternativeNames = new Listing<String> {
+      "auth.\(certDomain)"
+      "cloud.\(certDomain)"
+    }
     validationMethod = "DNS"
     keyAlgorithm = "RSA_2048"
     tags = new Listing<aws.Tag> {

@@ -14,7 +14,7 @@ const type = "AWS::IAM::UserToGroupAddition"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Membership construct without a CloudControl list handler
 }
 open class UserToGroupAddition extends formae.Resource {
 

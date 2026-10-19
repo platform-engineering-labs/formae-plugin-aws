@@ -34,7 +34,7 @@ open class DBSecurityGroupResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    discoverable = false
+    discoverable = false // EC2-Classic era resource; CloudControl exposes no read or list handler
 }
 open class DBSecurityGroup extends formae.Resource {
 

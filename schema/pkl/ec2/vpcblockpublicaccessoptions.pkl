@@ -16,7 +16,7 @@ typealias InternetGatewayBlockMode = "block-bidirectional"|"block-ingress"
 @aws.ResourceHint {
     type = module.type
     identifier = "AccountId"
-    discoverable = false
+    discoverable = false // Account-level singleton without a CloudControl list handler
 }
 open class VPCBlockPublicAccessOptions extends formae.Resource {
 

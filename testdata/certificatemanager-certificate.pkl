@@ -13,6 +13,7 @@ import "@aws/certificatemanager/certificate.pkl"
 
 local testRunID = read("env:FORMAE_TEST_RUN_ID")
 local stackName = "plugin-sdk-test-certificatemanager-certificate-\(testRunID)"
+local certDomain = "formae-plugin-sdk-test-cert-\(testRunID).example"
 
 forma {
   new formae.Stack {
@@ -29,7 +30,15 @@ forma {
 
   new certificate.Certificate {
     label = "plugin-sdk-test-cert"
-    domainName = "formae-plugin-sdk-test-cert-\(testRunID).example"
+    domainName = certDomain
+    // The additional names only — the primary domain is excluded, which
+    // is the canonical form. ACM injects the primary into the list it
+    // returns and the provisioner subtracts it again, so this list is
+    // what the readback reports.
+    subjectAlternativeNames = new Listing<String> {
+      "auth.\(certDomain)"
+      "cloud.\(certDomain)"
+    }
     validationMethod = "DNS"
     keyAlgorithm = "RSA_2048"
     tags = new Listing<aws.Tag> {

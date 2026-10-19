@@ -2,21 +2,27 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-// Package codebuild implements the AWS::CodeBuild::ImageBuild custom provisioner:
-// a synthetic, imperative-during-apply resource that builds and pushes a container
-// image from a caller-supplied Dockerfile via AWS CodeBuild and returns the pushed
-// image's immutable digest reference as computed outputs. It is not a CloudControl
-// passthrough.
+// Package codebuild implements the AWS::CodeBuild::Project and
+// AWS::CodeBuild::ImageBuild custom provisioners. Project is a declared CodeBuild
+// project managed over the CodeBuild API (the type is NON_PROVISIONABLE in
+// CloudControl). ImageBuild is a synthetic, imperative-during-apply action that
+// runs a build on a declared project to build and push a container image from a
+// caller-supplied Dockerfile, and returns the pushed image's immutable digest
+// reference as computed outputs. Neither is a CloudControl passthrough.
 package codebuild
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	codebuildtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 )
 
 // generatorVersion is bumped whenever the generated buildspec changes shape, so
@@ -24,11 +30,18 @@ import (
 // user's inputs are identical.
 const generatorVersion = "2"
 
+// buildConfigHashScheme prefixes every hash this version produces. It identifies
+// which set of inputs the hash was taken over, so a hash recorded by an earlier
+// plugin version is recognisable as belonging to a different scheme instead of
+// being compared as though it were comparable.
+const buildConfigHashScheme = "v3"
+
+// maxAdditionalTags bounds the pins one build may place. Placement is a serial ECR
+// call per pin against a build that has already succeeded, so the bound keeps a
+// runaway listing from turning a finished build into a long tail of registry writes.
+const maxAdditionalTags = 20
+
 const (
-	defaultComputeType     = "BUILD_GENERAL1_SMALL"
-	defaultTimeoutMinutes  = 30
-	defaultBuildEnvimage   = "aws/codebuild/standard:7.0"
-	resourceNamePrefix     = "formae-imgbuild-"
 	dockerfileEnvVar       = "DOCKERFILE_B64"
 	buildArgsEnvVar        = "BUILD_ARGS_B64"
 	imageURIEnvVar         = "IMAGE_URI"
@@ -37,42 +50,47 @@ const (
 	exportedDigestVar      = "IMAGE_DIGEST"
 	exportedImageRefVar    = "IMAGE_REF"
 	exportedImageURIVar    = "IMAGE_URI"
-	inlinePolicyName       = "formae-imagebuild-build"
 )
 
 var (
-	computeTypes = map[string]struct{}{
-		"BUILD_GENERAL1_SMALL":  {},
-		"BUILD_GENERAL1_MEDIUM": {},
-		"BUILD_GENERAL1_LARGE":  {},
-	}
-
 	ecrRepositoryURIPattern = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/(.+)$`)
 	imageTagPattern         = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 	buildArgKeyPattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// CodeBuild's own project-name rule: 2 to 255 characters of letters, digits,
+	// hyphens and underscores, starting with a letter or a digit.
+	projectNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{1,254}$`)
+	// legacyBuildConfigHashPattern matches a hash recorded before the scheme prefix
+	// existed: a bare, unprefixed sha256 hex digest.
+	legacyBuildConfigHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // imageBuildInput mirrors the Pkl schema's input fields (capitalized to match the
 // plugin wire format's output-key transformation).
 type imageBuildInput struct {
-	EcrRepositoryURI      string            `json:"EcrRepositoryUri"`
-	ImageTag              string            `json:"ImageTag"`
-	Dockerfile            string            `json:"Dockerfile"`
-	BuildArgs             map[string]string `json:"BuildArgs,omitempty"`
-	ComputeType           string            `json:"ComputeType,omitempty"`
-	TimeoutMinutes        int               `json:"TimeoutMinutes,omitempty"`
-	ServiceRoleArn        string            `json:"ServiceRoleArn,omitempty"`
-	BuildEnvironmentImage string            `json:"BuildEnvironmentImage,omitempty"`
+	EcrRepositoryURI string            `json:"EcrRepositoryUri"`
+	ImageTag         string            `json:"ImageTag"`
+	Dockerfile       string            `json:"Dockerfile"`
+	BuildArgs        map[string]string `json:"BuildArgs,omitempty"`
+	ProjectName      string            `json:"ProjectName"`
+	AdditionalTags   []string          `json:"AdditionalTags,omitempty"`
+	VersionURI       string            `json:"VersionUri,omitempty"`
 }
 
 // imageBuildOutputs is the computed read-only state persisted in ResourceProperties
 // and surfaced as the resource's resolvable outputs.
+// AdditionalTags and VersionURI are echoed rather than computed: they are declared
+// inputs, not outputs, and they ride here because the caller rebuilds its stored
+// model from the properties the plugin returns — and, for VersionURI, because a
+// consumer resolving `res.versionUri` at execution time reads it from exactly this
+// echo.
 type imageBuildOutputs struct {
-	ImageRef        string `json:"ImageRef,omitempty"`
-	ImageDigest     string `json:"ImageDigest,omitempty"`
-	ImageURI        string `json:"ImageUri,omitempty"`
-	ImageTag        string `json:"ImageTag,omitempty"`
-	BuildConfigHash string `json:"BuildConfigHash,omitempty"`
+	ImageRef        string   `json:"ImageRef,omitempty"`
+	ImageDigest     string   `json:"ImageDigest,omitempty"`
+	ImageURI        string   `json:"ImageUri,omitempty"`
+	ImageTag        string   `json:"ImageTag,omitempty"`
+	BuildConfigHash string   `json:"BuildConfigHash,omitempty"`
+	AdditionalTags  []string `json:"AdditionalTags,omitempty"`
+	VersionURI      string   `json:"VersionUri,omitempty"`
 }
 
 // ecrRepositoryRef is the parsed form of an ECR repository URI.
@@ -105,22 +123,6 @@ func parseEcrRepositoryURI(uri string) (ecrRepositoryRef, error) {
 	}, nil
 }
 
-// normalizeInput fills in defaults so that build-affecting inputs have a canonical
-// form.
-func normalizeInput(in imageBuildInput) imageBuildInput {
-	out := in
-	if out.ComputeType == "" {
-		out.ComputeType = defaultComputeType
-	}
-	if out.TimeoutMinutes == 0 {
-		out.TimeoutMinutes = defaultTimeoutMinutes
-	}
-	if out.BuildEnvironmentImage == "" {
-		out.BuildEnvironmentImage = defaultBuildEnvimage
-	}
-	return out
-}
-
 // validateInput rejects malformed inputs before anything is materialized into a
 // build. The forma is operator-authored, so this is breakage-prevention, not an
 // attacker boundary — but a strict check turns a silently-broken build into an
@@ -141,20 +143,110 @@ func validateInput(in imageBuildInput) error {
 	if in.Dockerfile == "" {
 		return fmt.Errorf("dockerfile is required")
 	}
-	if in.ComputeType != "" {
-		if _, ok := computeTypes[in.ComputeType]; !ok {
-			return fmt.Errorf("invalid computeType %q", in.ComputeType)
-		}
+	if in.ProjectName == "" {
+		return fmt.Errorf("projectName is required")
 	}
-	if in.TimeoutMinutes != 0 && (in.TimeoutMinutes < 5 || in.TimeoutMinutes > 60) {
-		return fmt.Errorf("timeoutMinutes must be between 5 and 60, got %d", in.TimeoutMinutes)
+	// The project name is a segment of the NativeID, which is '|'-separated.
+	if strings.Contains(in.ProjectName, "|") {
+		return fmt.Errorf("invalid projectName %q: must not contain '|'", in.ProjectName)
+	}
+	if !projectNamePattern.MatchString(in.ProjectName) {
+		return fmt.Errorf("invalid projectName %q", in.ProjectName)
 	}
 	for k := range in.BuildArgs {
 		if !buildArgKeyPattern.MatchString(k) {
 			return fmt.Errorf("invalid buildArg key %q", k)
 		}
 	}
+	declaredPins := len(in.AdditionalTags)
+	if in.VersionURI != "" {
+		declaredPins++
+	}
+	if declaredPins > maxAdditionalTags {
+		return fmt.Errorf("at most %d pins are allowed, got %d", maxAdditionalTags, declaredPins)
+	}
+	seen := make(map[string]struct{}, len(in.AdditionalTags))
+	for _, tag := range in.AdditionalTags {
+		if err := checkPinTag(tag, in.ImageTag, "additionalTag"); err != nil {
+			return err
+		}
+		if _, dup := seen[tag]; dup {
+			return fmt.Errorf("duplicate additionalTag %q", tag)
+		}
+		seen[tag] = struct{}{}
+	}
+	if in.VersionURI != "" {
+		if !strings.HasPrefix(in.VersionURI, in.EcrRepositoryURI+":") {
+			return fmt.Errorf("invalid versionUri %q: must be the declared ecrRepositoryUri followed by ':' and a tag", in.VersionURI)
+		}
+		// The whole suffix must be one valid tag; a valid tag admits no ':', which
+		// is what makes the last-colon split in versionTag agree with this check.
+		tag := strings.TrimPrefix(in.VersionURI, in.EcrRepositoryURI+":")
+		if err := checkPinTag(tag, in.ImageTag, "versionUri tag"); err != nil {
+			return err
+		}
+		// The same tag in both listings would be placed twice in one apply and fail
+		// its own create-once check.
+		if _, dup := seen[tag]; dup {
+			return fmt.Errorf("invalid versionUri %q: tag %q is also declared in additionalTags", in.VersionURI, tag)
+		}
+	}
 	return nil
+}
+
+// checkPinTag rejects a tag that cannot serve as a pin, whichever field declared
+// it: a malformed tag, or one equal to the mutable imageTag — which the next
+// rebuild would move, the one thing a pin exists not to be.
+func checkPinTag(tag, imageTag, field string) error {
+	if !imageTagPattern.MatchString(tag) {
+		return fmt.Errorf("invalid %s %q", field, tag)
+	}
+	if tag == imageTag {
+		return fmt.Errorf("invalid %s %q: must not equal imageTag", field, tag)
+	}
+	return nil
+}
+
+// versionTag returns the tag part of a declared versionUri, or "" when unset. The
+// tag is everything after the last ':'; neither an ECR repository URI nor a tag
+// admits one, so the split is unambiguous.
+func versionTag(versionURI string) string {
+	i := strings.LastIndex(versionURI, ":")
+	if i < 0 {
+		return ""
+	}
+	return versionURI[i+1:]
+}
+
+// declaredPinTags returns every pin tag an input declares, in placement order:
+// the additionalTags listing, then the versionUri tag. The versionUri tag is a
+// pin like any other; only where it is declared differs.
+func declaredPinTags(in imageBuildInput) []string {
+	tags := in.AdditionalTags
+	if tag := versionTag(in.VersionURI); tag != "" {
+		tags = append(tags[:len(tags):len(tags)], tag)
+	}
+	return tags
+}
+
+// newPins returns the pins this apply declares for the first time, in declared
+// order: those absent from the previously declared set, whichever field declared
+// them. A pin already declared is carried over and left exactly where it is, so
+// only these are ever placed. Every pin is new on a create, where there is no
+// prior.
+func newPins(prior, desired imageBuildInput) []string {
+	priorTags := declaredPinTags(prior)
+	previously := make(map[string]struct{}, len(priorTags))
+	for _, tag := range priorTags {
+		previously[tag] = struct{}{}
+	}
+	var fresh []string
+	for _, tag := range declaredPinTags(desired) {
+		if _, carried := previously[tag]; !carried {
+			fresh = append(fresh, tag)
+		}
+	}
+	return fresh
 }
 
 // buildArgsFile renders the build args as a newline-separated KEY=VALUE list,
@@ -222,126 +314,160 @@ phases:
 // call sites read uniformly and so tests can assert on its content.
 func generateBuildspec() string { return buildspec }
 
-// computeBuildConfigHash hashes exactly the build-affecting inputs plus the
-// generator version. timeoutMinutes and serviceRoleArn affect whether a build
-// succeeds but not what is built, so they are excluded.
-func computeBuildConfigHash(in imageBuildInput) string {
-	n := normalizeInput(in)
+// computeBuildConfigHash hashes the build-affecting inputs — this resource's own
+// inputs, the generator version, and the fingerprint of the project the build runs
+// on — and returns them under the current scheme prefix.
+func computeBuildConfigHash(in imageBuildInput, project *codebuildtypes.Project) string {
+	sum := sha256.Sum256([]byte(buildConfigHashBody(in, project)))
+	return buildConfigHashScheme + ":" + hex.EncodeToString(sum[:])
+}
+
+// buildConfigHashBody renders the canonical, hashed representation of everything
+// that determines the image a build produces. Map- and list-valued inputs are
+// emitted in a canonical order, and every value is quoted, so an identical
+// configuration always renders identically and two different configurations never
+// render alike — a Dockerfile or a build-arg value containing a newline would
+// otherwise render as extra lines of the body.
+//
+// additionalTags is deliberately absent: a pin names a manifest, it does not
+// change the one a build produces. Hashing it would make adding a pin force a
+// rebuild, and the rebuilt image is precisely not the image the pin was meant to
+// name.
+func buildConfigHashBody(in imageBuildInput, project *codebuildtypes.Project) string {
 	var b strings.Builder
-	b.WriteString("v=" + generatorVersion + "\n")
-	b.WriteString("dockerfile=" + n.Dockerfile + "\n")
-	b.WriteString("compute=" + n.ComputeType + "\n")
-	b.WriteString("env=" + n.BuildEnvironmentImage + "\n")
-	keys := make([]string, 0, len(n.BuildArgs))
-	for k := range n.BuildArgs {
+	b.WriteString("v=" + strconv.Quote(generatorVersion) + "\n")
+	b.WriteString("dockerfile=" + strconv.Quote(in.Dockerfile) + "\n")
+	keys := make([]string, 0, len(in.BuildArgs))
+	for k := range in.BuildArgs {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		b.WriteString("arg=" + k + "=" + n.BuildArgs[k] + "\n")
+		b.WriteString("arg=" + strconv.Quote(k) + "=" + strconv.Quote(in.BuildArgs[k]) + "\n")
 	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])
+	b.WriteString(projectFingerprint(project))
+	return b.String()
 }
 
-// resourceNames returns the deterministic, bounded names of the internally-managed
-// CodeBuild project and IAM role for a given push target. The names are derived
-// from the repository URI and tag alone (both available from the NativeID), so
-// Create, Status, and Delete all reconstruct the same names without needing the
-// resource label or stack.
-func resourceNames(repoURI, tag string) (projectName, roleName string) {
-	sum := sha256.Sum256([]byte(repoURI + "|" + tag))
-	short := hex.EncodeToString(sum[:])[:12]
-	projectName = resourceNamePrefix + short
-	roleName = resourceNamePrefix + short + "-role"
-	return projectName, roleName
+// projectFingerprint renders the properties of the referenced build project that
+// determine what a build on it produces: the project it runs on and its build
+// environment. The compute size and builder image belong to the project rather
+// than to this resource, but they genuinely change the built image, so a mutation
+// of the project has to invalidate it — otherwise an operator could swap the
+// builder image and be told nothing changed. Properties that do not change the
+// image a build produces (a description, the project's timeout) are deliberately
+// left out, so churn on them does not force a rebuild.
+func projectFingerprint(project *codebuildtypes.Project) string {
+	var (
+		name          string
+		envType       codebuildtypes.EnvironmentType
+		computeType   codebuildtypes.ComputeType
+		image         string
+		privileged    bool
+		envVars       []codebuildtypes.EnvironmentVariable
+		cacheType     codebuildtypes.CacheType
+		cacheModes    []codebuildtypes.CacheMode
+		cacheLocation string
+	)
+	if project != nil {
+		name = aws.ToString(project.Name)
+		if env := project.Environment; env != nil {
+			envType = env.Type
+			computeType = env.ComputeType
+			image = aws.ToString(env.Image)
+			privileged = aws.ToBool(env.PrivilegedMode)
+			envVars = env.EnvironmentVariables
+		}
+		if cache := project.Cache; cache != nil {
+			cacheType = cache.Type
+			cacheModes = cache.Modes
+			cacheLocation = aws.ToString(cache.Location)
+		}
+	}
+
+	// The project's own environment variables are visible to the build (the plugin
+	// overrides only the ones it sets), so they are part of the fingerprint. A
+	// variable's type is too: the same name and value resolved from Parameter Store
+	// is a different build input than a plaintext literal.
+	varLines := make([]string, 0, len(envVars))
+	for _, v := range envVars {
+		varLines = append(varLines, "project.environmentVariable="+
+			strconv.Quote(aws.ToString(v.Name))+"="+
+			strconv.Quote(string(v.Type))+"="+
+			strconv.Quote(aws.ToString(v.Value))+"\n")
+	}
+	sort.Strings(varLines)
+
+	// The cache mode is what selects Docker layer caching — the thing that lets a
+	// build reuse previously built layers — and it changes with the cache type left
+	// at LOCAL, so the type alone would not see it. The location is the bucket and
+	// prefix an S3 cache reads and writes.
+	modeLines := make([]string, 0, len(cacheModes))
+	for _, m := range cacheModes {
+		modeLines = append(modeLines, "project.cacheMode="+strconv.Quote(string(m))+"\n")
+	}
+	sort.Strings(modeLines)
+
+	var b strings.Builder
+	b.WriteString("project=" + strconv.Quote(name) + "\n")
+	b.WriteString("project.environmentType=" + strconv.Quote(string(envType)) + "\n")
+	b.WriteString("project.computeType=" + strconv.Quote(string(computeType)) + "\n")
+	b.WriteString("project.image=" + strconv.Quote(image) + "\n")
+	b.WriteString("project.privilegedMode=" + strconv.FormatBool(privileged) + "\n")
+	for _, l := range varLines {
+		b.WriteString(l)
+	}
+	b.WriteString("project.cacheType=" + strconv.Quote(string(cacheType)) + "\n")
+	for _, l := range modeLines {
+		b.WriteString(l)
+	}
+	b.WriteString("project.cacheLocation=" + strconv.Quote(cacheLocation) + "\n")
+	return b.String()
+}
+
+// isLegacyBuildConfigHash reports whether a recorded hash predates the scheme
+// prefix. Such a hash was taken over a different set of inputs, so it can neither
+// match nor be meaningfully compared against a current one — it only says that
+// some earlier build produced the recorded image.
+//
+// This recognizes exactly the one format that came before the prefix. A future
+// scheme bump wants the general form of the same rule — adopt a prior hash under
+// any scheme other than the current one, not just a bare-hex one — otherwise that
+// bump reopens the same forced re-push of an already pushed tag this predicate
+// exists to prevent.
+//
+// Note that for the one scheme change this currently recognizes, the adoption
+// path it feeds is defence-in-depth rather than a live migration path. A row
+// carrying a bare-hex hash was written before ImageBuild referenced a project, so
+// it also carries a two-segment NativeID that the current parse rejects, and
+// adding the now-required projectName re-creates the resource rather than
+// updating it. No row any released version wrote satisfies both conditions at
+// once. The predicate and its adoption branch are kept because the next scheme
+// bump does hit exactly this case, with rows whose NativeID is current.
+func isLegacyBuildConfigHash(hash string) bool {
+	return legacyBuildConfigHashPattern.MatchString(hash)
+}
+
+// priorInputsUnchanged reports whether this resource's own build-affecting inputs
+// are unchanged since the recorded build, which is the condition under which a
+// hash from an older scheme may be adopted rather than rebuilt. Adoption also
+// writes the current hash back, so adopting across a changed Dockerfile or build
+// arg would record that the new inputs had been built and leave the declared
+// Dockerfile and the deployed image permanently diverged — the following apply
+// would compare equal and never build the change.
+//
+// A row that recorded no Dockerfile at all cannot be compared, and is treated as
+// unchanged so it can still migrate: the alternative is a rebuild that re-pushes an
+// existing tag, which an immutable repository rejects outright.
+func priorInputsUnchanged(prior, desired imageBuildInput) bool {
+	if prior.Dockerfile == "" {
+		return true
+	}
+	// Compared as maps rather than as their rendered form, so a value containing a
+	// newline cannot render like a different set of args and pass as unchanged.
+	return prior.Dockerfile == desired.Dockerfile &&
+		maps.Equal(prior.BuildArgs, desired.BuildArgs)
 }
 
 // imageURI returns the mutable registry/repo:tag reference.
 func imageURI(repoURI, tag string) string { return repoURI + ":" + tag }
-
-// policyDocument, policyStatement model an IAM policy for JSON marshaling.
-type policyDocument struct {
-	Version   string            `json:"Version"`
-	Statement []policyStatement `json:"Statement"`
-}
-
-type policyStatement struct {
-	Effect    string           `json:"Effect"`
-	Action    []string         `json:"Action,omitempty"`
-	Resource  any              `json:"Resource,omitempty"`
-	Principal *policyPrincipal `json:"Principal,omitempty"`
-}
-
-type policyPrincipal struct {
-	Service string `json:"Service"`
-}
-
-// buildTrustPolicy returns the assume-role trust policy that lets CodeBuild assume
-// the internal service role.
-func buildTrustPolicy() string {
-	doc := policyDocument{
-		Version: "2012-10-17",
-		Statement: []policyStatement{{
-			Effect:    "Allow",
-			Principal: &policyPrincipal{Service: "codebuild.amazonaws.com"},
-			Action:    []string{"sts:AssumeRole"},
-		}},
-	}
-	return mustMarshalPolicy(doc)
-}
-
-// buildInlinePolicy derives the service role's inline policy from what the
-// generated buildspec actually does: pull/push the target ECR repository and write
-// to the CodeBuild log group. It is scoped to the target repository and log group;
-// this covers a public base image (no auth needed) or a same-account ECR base image
-// (pulled through the same repository-scoped grant).
-func buildInlinePolicy(ref ecrRepositoryRef, projectName string) string {
-	ecrRepoArn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", ref.Region, ref.AccountID, ref.RepoName)
-	logGroupArn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:/aws/codebuild/%s", ref.Region, ref.AccountID, projectName)
-	doc := policyDocument{
-		Version: "2012-10-17",
-		Statement: []policyStatement{
-			{
-				Effect:   "Allow",
-				Action:   []string{"ecr:GetAuthorizationToken"},
-				Resource: "*",
-			},
-			{
-				Effect: "Allow",
-				Action: []string{
-					"ecr:BatchCheckLayerAvailability",
-					"ecr:GetDownloadUrlForLayer",
-					"ecr:BatchGetImage",
-					"ecr:DescribeImages",
-					"ecr:ListImages",
-					"ecr:InitiateLayerUpload",
-					"ecr:UploadLayerPart",
-					"ecr:CompleteLayerUpload",
-					"ecr:PutImage",
-				},
-				Resource: ecrRepoArn,
-			},
-			{
-				Effect: "Allow",
-				Action: []string{
-					"logs:CreateLogGroup",
-					"logs:CreateLogStream",
-					"logs:PutLogEvents",
-				},
-				Resource: []string{logGroupArn, logGroupArn + ":*"},
-			},
-		},
-	}
-	return mustMarshalPolicy(doc)
-}
-
-func mustMarshalPolicy(doc policyDocument) string {
-	b, err := json.Marshal(doc)
-	if err != nil {
-		// The policy documents are built from constants and validated inputs, so
-		// marshaling cannot realistically fail; panic surfaces a programming error.
-		panic(fmt.Sprintf("marshaling IAM policy: %v", err))
-	}
-	return string(b)
-}

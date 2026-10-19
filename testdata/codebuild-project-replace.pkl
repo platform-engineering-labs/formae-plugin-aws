@@ -1,0 +1,133 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/iam/role.pkl"
+import "@aws/logs/loggroup.pkl"
+import "@aws/codebuild/project.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-codebuild-project-\(testRunID)"
+local logGroupNameValue = "/formae/plugin-sdk-test/codebuild-project/\(testRunID)"
+
+// Placeholder build spec — the project is never built during the test, it only
+// has to be a well-formed spec the CodeBuild API accepts.
+local testBuildSpec = """
+  version: 0.2
+  phases:
+    build:
+      commands:
+        - echo "plugin sdk test"
+  """
+
+// Service role CodeBuild assumes to run builds, with permission to write to the
+// declared log group.
+local projectRole = new role.Role {
+  label = "codebuild-project-role"
+  roleName = "formae-sdk-test-cb-role-\(testRunID)"
+  assumeRolePolicyDocument {
+    ["Version"] = "2012-10-17"
+    ["Statement"] {
+      new {
+        ["Effect"] = "Allow"
+        ["Principal"] {
+          ["Service"] = "codebuild.amazonaws.com"
+        }
+        ["Action"] = "sts:AssumeRole"
+      }
+    }
+  }
+  policies {
+    new {
+      policyName = "codebuild-cloudwatch-logs"
+      policyDocument {
+        ["Version"] = "2012-10-17"
+        ["Statement"] {
+          new {
+            ["Effect"] = "Allow"
+            ["Action"] {
+              "logs:CreateLogGroup"
+              "logs:CreateLogStream"
+              "logs:PutLogEvents"
+            }
+            ["Resource"] = "*"
+          }
+        }
+      }
+    }
+  }
+}
+
+// CloudWatch Logs destination for the project's build logs.
+local testLogGroup = new loggroup.LogGroup {
+  label = "test-loggroup-for-codebuild-project"
+  logGroupName = logGroupNameValue
+  retentionInDays = 1
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for CodeBuild Project"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  // Service role the project runs as (referenced as a resolvable below).
+  projectRole
+
+  // Log group the project writes build logs to (referenced as a resolvable below).
+  testLogGroup
+
+  // Resource under test — the project name is createOnly, so renaming it forces
+  // a replace.
+  new project.Project {
+    label = "plugin-sdk-test-codebuild-project"
+    name = "formae-plugin-sdk-test-cb-project-replaced-\(testRunID)"
+    description = "Plugin SDK test project"
+    serviceRole = projectRole.res.arn
+    source {
+      type = "NO_SOURCE"
+      buildSpec = testBuildSpec
+    }
+    artifacts {
+      type = "NO_ARTIFACTS"
+    }
+    environment {
+      type = "LINUX_CONTAINER"
+      computeType = "BUILD_GENERAL1_SMALL"
+      image = "aws/codebuild/standard:7.0"
+      privilegedMode = true
+      environmentVariables {
+        new {
+          name = "PLUGIN_SDK_TEST_RUN_ID"
+          value = testRunID
+          type = "PLAINTEXT"
+        }
+      }
+    }
+    logsConfig {
+      cloudWatchLogs {
+        status = "ENABLED"
+        groupName = testLogGroup.res.logGroupName
+      }
+    }
+    timeoutInMinutes = 20
+    tags {
+      new { key = "Environment"; value = "test" }
+      new { key = "Purpose"; value = "plugin-sdk-conformance" }
+    }
+  }
+}

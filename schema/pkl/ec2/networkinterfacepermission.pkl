@@ -14,7 +14,7 @@ const type = "AWS::EC2::NetworkInterfacePermission"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Not supported by CloudControl; discovery needs a control-plane list
 }
 open class NetworkInterfacePermission extends formae.Resource {
 

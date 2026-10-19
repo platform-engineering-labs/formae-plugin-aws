@@ -45,7 +45,7 @@ open class AuthenticateOidcConfig extends formae.SubResource {
     authorizationEndpoint: String
     clientId: String
     @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
-    clientSecret: (String|formae.Resolvable|formae.Value|formae.SecretValue)?
+    clientSecret: (String|formae.ValueSource)?
     issuer: String
     onUnauthenticatedRequest: String?
     scope: String?
@@ -181,7 +181,6 @@ open class ListenerRuleResolvable extends formae.Resolvable {
     identifier = "RuleArn"
     parent = "AWS::ElasticLoadBalancingV2::Listener"
     listParam = new formae.ListProperty { parentProperty = "ListenerArn" listParameter = "ListenerArn" }
-    discoverable = false
 }
 open class ListenerRule extends formae.Resource {
 

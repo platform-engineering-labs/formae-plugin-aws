@@ -22,7 +22,6 @@ open class Entry extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "PrefixListId"
-    discoverable = false
     extractable = false
 }
 open class PrefixList extends formae.Resource {

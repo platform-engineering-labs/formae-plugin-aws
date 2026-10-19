@@ -74,7 +74,7 @@ local testDefaultRoute = new route.Route {
   label = "test-default-route-for-ecs-svc-lb-rule"
   routeTableId = testRouteTable.res.routeTableId
   destinationCidrBlock = "0.0.0.0/0"
-  gatewayId = testIgw.res.internetGatewayId
+  gatewayId = testIgwAttachment.res.internetGatewayId
 }
 
 local testSubnetAAssoc = new subnetroutetableassociation.SubnetRouteTableAssociation {

@@ -14,7 +14,7 @@ const type = "AWS::ECS::PrimaryTaskSet"
 @aws.ResourceHint {
     type = module.type
     identifier = "Cluster"
-    discoverable = false
+    discoverable = false // Marks an existing task set as primary; there is no object to list
 }
 open class PrimaryTaskSet extends formae.Resource {
 

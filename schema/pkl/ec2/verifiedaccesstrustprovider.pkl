@@ -24,7 +24,7 @@ open class OidcOptions extends formae.SubResource {
     clientId: (String|formae.Resolvable)?
 
     @aws.FieldHint{writeOnly = true; requiredOnUpdate = true}
-    clientSecret: (String|formae.Resolvable|formae.Value|formae.SecretValue)?
+    clientSecret: (String|formae.ValueSource)?
 
     issuer: (String|formae.Resolvable)?
     scope: String?

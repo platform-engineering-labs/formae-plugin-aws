@@ -37,7 +37,7 @@ open class LayerVersionResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "LayerVersionArn"
-    discoverable = false
+    discoverable = false // CloudControl can only list versions of a named layer and no layer parent type exists; discovery needs a control-plane walk of layers and their versions
 }
 open class LayerVersion extends formae.Resource {
 

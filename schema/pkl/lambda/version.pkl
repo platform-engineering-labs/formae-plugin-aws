@@ -22,6 +22,14 @@ open class RuntimePolicy extends formae.SubResource {
     updateRuntimeOn: String
 }
 
+open class VersionResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden functionArn: VersionResolvable = (this) {
+        property = "FunctionArn"
+    }
+}
+
 @aws.ResourceHint {
     type = module.type
     identifier = "Version"
@@ -57,4 +65,11 @@ open class Version extends formae.Resource {
     // field that can never be updated in place.
     @aws.FieldHint{createOnly = true; hasProviderDefault = true}
     runtimePolicy: RuntimePolicy?
+
+    hidden parent = this
+
+    hidden res: VersionResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
 }

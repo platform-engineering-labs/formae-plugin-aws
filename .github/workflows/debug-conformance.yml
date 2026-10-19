@@ -63,9 +63,8 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/aws-credentials
         with:
-          aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: DebugPreCleanup
 
@@ -151,9 +150,8 @@ jobs:
       # === End source-build path ===
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/aws-credentials
         with:
-          aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: DebugConformance
           role-duration-seconds: 7200
@@ -198,9 +196,8 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/aws-credentials
         with:
-          aws-region: us-east-1
           role-to-assume: arn:aws:iam::942849037363:role/admin-test-pel
           role-session-name: DebugPostCleanup
 

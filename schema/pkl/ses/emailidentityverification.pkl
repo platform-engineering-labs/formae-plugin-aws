@@ -15,7 +15,7 @@ const type = "AWS::SES::EmailIdentityVerification"
 @aws.ResourceHint {
     type = module.type
     identifier = "EmailIdentity"
-    discoverable = false
+    discoverable = false // Represents a verification workflow, not a listable object; the identity itself is discovered via AWS::SES::EmailIdentity
 }
 open class EmailIdentityVerification extends formae.Resource {
 

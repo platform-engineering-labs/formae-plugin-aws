@@ -14,7 +14,6 @@ const type = "AWS::IAM::VirtualMFADevice"
 @aws.ResourceHint {
     type = module.type
     identifier = "SerialNumber"
-    discoverable = false
     extractable = false
 }
 open class VirtualMFADevice extends formae.Resource {

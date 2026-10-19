@@ -103,7 +103,7 @@ forma {
         label = "ecs-public-route"
         routeTableId = routeTable.res.id
         destinationCidrBlock = "0.0.0.0/0"
-        gatewayId = igw.res.id
+        gatewayId = attachIgw.res.internetGatewayId
     }
     publicRoute
 

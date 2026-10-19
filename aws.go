@@ -7,10 +7,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	cctypes "github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
 
+	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/arn"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/ccx"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/config"
@@ -27,10 +30,65 @@ import (
 // The SDK automatically provides identity methods (Name, Version, Namespace)
 // and schema methods (SupportedResources, SchemaForResourceType) by reading
 // formae-plugin.pkl and schema/pkl/ at startup.
-type Plugin struct{}
+type Plugin struct {
+	// oidc carries the token source the SDK installs via SetOidcTokenSource,
+	// plus the plugin-lifetime credentials cache it backs. Nil until the SDK
+	// calls SetOidcTokenSource (or on an agent too old to pair a broker), in
+	// which case every target config threads nil deps and Oidc auth fails
+	// closed rather than falling back to ambient credentials.
+	oidc *config.OidcDeps
+
+	// authPolicy is configured once at startup and copied onto every target
+	// config before credentials are resolved.
+	authPolicy config.AuthPolicy
+}
 
 // Compile-time check: Plugin must satisfy ResourcePlugin interface.
 var _ plugin.ResourcePlugin = &Plugin{}
+
+// Compile-time check: Plugin must satisfy OidcAware, so the SDK hands it an
+// OidcTokenSource at startup.
+var _ plugin.OidcAware = &Plugin{}
+
+// Compile-time check: Plugin accepts custom settings from schema/Config.pkl.
+var _ plugin.Configurable = &Plugin{}
+
+type pluginConfig struct {
+	AllowedAuthMethods []string `json:"allowedAuthMethods"`
+}
+
+// Configure applies plugin-specific startup settings. An absent or empty
+// allowedAuthMethods list intentionally preserves unrestricted behaviour.
+func (p *Plugin) Configure(raw json.RawMessage) error {
+	var cfg pluginConfig
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return fmt.Errorf("decode AWS plugin configuration: %w", err)
+		}
+	}
+
+	policy, err := config.NewAuthPolicy(cfg.AllowedAuthMethods)
+	if err != nil {
+		return err
+	}
+	p.authPolicy = policy
+
+	return nil
+}
+
+// SetOidcTokenSource receives the token source the SDK mints OIDC identity
+// tokens through. Called once at startup; every FromTargetConfig call below
+// threads the resulting deps onto the parsed Config so Oidc auth blocks can
+// exchange a token for AWS credentials.
+func (p *Plugin) SetOidcTokenSource(src plugin.OidcTokenSource) {
+	p.oidc = config.NewOidcDeps(src)
+}
+
+func (p *Plugin) targetConfig(raw json.RawMessage) *config.Config {
+	return config.FromTargetConfig(raw).
+		WithOidcDeps(p.oidc).
+		WithAuthPolicy(p.authPolicy)
+}
 
 // EKSAutomodeResourceTypes lists AWS CloudFormation resource types that EKS Automode manages.
 // These resources are tagged with "kubernetes.io/cluster/<cluster-name>" = "owned".
@@ -66,6 +124,46 @@ func (p *Plugin) RateLimit() pkgmodel.RateLimitConfig {
 func (p *Plugin) DiscoveryFilters() []pkgmodel.MatchFilter {
 	return []pkgmodel.MatchFilter{
 		{
+			// Anything formae created in order to run in this account or to
+			// reach it. Chiefly the connect role and the account-global OIDC
+			// provider its trust policy names: discovered like any other
+			// resource, they could be imported and then reconciled away, which
+			// severs formae's own access to the account.
+			//
+			// The marker answers one question, whether formae created the
+			// thing. It does not say who may delete it, which is why it is
+			// separate from the formae-ai:owner provenance tag the connect
+			// tooling reads. A name prefix is not ownership: unrelated roles
+			// share the "formae" prefix and must stay visible.
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  `$.Tags[?(@.Key=='formae-owned')].Value`,
+					PropertyValue: "true",
+				},
+			},
+		},
+		{
+			// EFS is the exception to $.Tags. FileSystem and AccessPoint expose
+			// their tags under per-type properties, so the filter above never
+			// sees them and they would leak.
+			ResourceTypes: []string{"AWS::EFS::FileSystem"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  `$.FileSystemTags[?(@.Key=='formae-owned')].Value`,
+					PropertyValue: "true",
+				},
+			},
+		},
+		{
+			ResourceTypes: []string{"AWS::EFS::AccessPoint"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  `$.AccessPointTags[?(@.Key=='formae-owned')].Value`,
+					PropertyValue: "true",
+				},
+			},
+		},
+		{
 			// Filter out EKS Automode-managed resources.
 			// These resources are tagged with "kubernetes.io/cluster/<cluster-name>" = "owned".
 			// Using RFC 9535 match() function for regex pattern matching on tag keys.
@@ -77,7 +175,52 @@ func (p *Plugin) DiscoveryFilters() []pkgmodel.MatchFilter {
 				},
 			},
 		},
+		{
+			// Filter out AWS-owned managed prefix lists (com.amazonaws.*). They
+			// exist in every account, cannot be modified or deleted, and their
+			// prefix-list id carries no ownership signal, so the owner is only
+			// visible after the read.
+			ResourceTypes: []string{"AWS::EC2::PrefixList"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  "$.OwnerId",
+					PropertyValue: "AWS",
+				},
+			},
+		},
+		{
+			// Filter out the implicit local route every route table carries for
+			// its VPC CIDR. It is created and deleted with the route table and
+			// cannot be managed on its own.
+			ResourceTypes: []string{"AWS::EC2::Route"},
+			Conditions: []pkgmodel.FilterCondition{
+				{
+					PropertyPath:  "$.GatewayId",
+					PropertyValue: "local",
+				},
+			},
+		},
 	}
+}
+
+// discoveryListExclusions skips resources whose native id alone identifies
+// them as AWS-managed, before the per-resource read that discovery performs
+// on every listed id. DiscoveryFilters run agent-side only after that read,
+// so types with large AWS-managed populations (IAM ships ~1400 managed
+// policies) would spend the whole rate-limit budget reading resources that
+// are then discarded.
+var discoveryListExclusions = map[string]func(nativeID string) bool{
+	"AWS::IAM::ManagedPolicy": func(id string) bool {
+		return strings.HasPrefix(id, "arn:aws:iam::aws:policy/")
+	},
+	"AWS::KMS::Alias": func(id string) bool {
+		return strings.HasPrefix(id, "alias/aws/")
+	},
+	// CloudControl's version list includes the $LATEST pseudo-version, which
+	// is not a published version and whose read always fails.
+	"AWS::Lambda::Version": func(id string) bool {
+		return strings.HasSuffix(id, ":$LATEST")
+	},
 }
 
 // LabelConfig returns the label extraction configuration for discovered AWS resources.
@@ -102,6 +245,10 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 			"AWS::S3::Object": "$.Key",
 			// CloudTrail trails have no Name tag; use the trail name as the label.
 			"AWS::CloudTrail::Trail": "$.TrailName",
+			// Cloud Map namespaces and services are identified by their name;
+			// their tags are not required to carry one.
+			"AWS::ServiceDiscovery::PrivateDnsNamespace": "$.Name",
+			"AWS::ServiceDiscovery::Service":             "$.Name",
 			// Resources that represent relationships use parent IDs
 			"AWS::EC2::VPCGatewayAttachment":          "$.VpcId",
 			"AWS::EC2::SubnetRouteTableAssociation":   "$.SubnetId",
@@ -111,7 +258,7 @@ func (p *Plugin) LabelConfig() pkgmodel.LabelConfig {
 }
 
 func (p *Plugin) Create(ctx context.Context, request *resource.CreateRequest) (*resource.CreateResult, error) {
-	targetConfig := config.FromTargetConfig(request.TargetConfig)
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationCreate) {
 		provisioner := registry.Get(request.ResourceType, resource.OperationCreate, targetConfig)
 		return provisioner.Create(ctx, request)
@@ -126,12 +273,13 @@ func (p *Plugin) Create(ctx context.Context, request *resource.CreateRequest) (*
 }
 
 func (p *Plugin) Update(ctx context.Context, request *resource.UpdateRequest) (*resource.UpdateResult, error) {
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationUpdate) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationUpdate, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationUpdate, targetConfig)
 		return provisioner.Update(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -140,14 +288,15 @@ func (p *Plugin) Update(ctx context.Context, request *resource.UpdateRequest) (*
 }
 
 func (p *Plugin) Status(ctx context.Context, request *resource.StatusRequest) (*resource.StatusResult, error) {
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if request.ResourceType != "" {
 		if registry.HasProvisioner(request.ResourceType, resource.OperationCheckStatus) {
-			provisioner := registry.Get(request.ResourceType, resource.OperationCheckStatus, config.FromTargetConfig(request.TargetConfig))
+			provisioner := registry.Get(request.ResourceType, resource.OperationCheckStatus, targetConfig)
 			return provisioner.Status(ctx, request)
 		}
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -156,12 +305,13 @@ func (p *Plugin) Status(ctx context.Context, request *resource.StatusRequest) (*
 }
 
 func (p *Plugin) Delete(ctx context.Context, request *resource.DeleteRequest) (*resource.DeleteResult, error) {
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationDelete) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationDelete, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationDelete, targetConfig)
 		return provisioner.Delete(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -170,12 +320,13 @@ func (p *Plugin) Delete(ctx context.Context, request *resource.DeleteRequest) (*
 }
 
 func (p *Plugin) Read(ctx context.Context, request *resource.ReadRequest) (*resource.ReadResult, error) {
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationRead) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationRead, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationRead, targetConfig)
 		return provisioner.Read(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -184,12 +335,13 @@ func (p *Plugin) Read(ctx context.Context, request *resource.ReadRequest) (*reso
 }
 
 func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
+	targetConfig := p.targetConfig(request.TargetConfig)
 	if registry.HasProvisioner(request.ResourceType, resource.OperationList) {
-		provisioner := registry.Get(request.ResourceType, resource.OperationList, config.FromTargetConfig(request.TargetConfig))
+		provisioner := registry.Get(request.ResourceType, resource.OperationList, targetConfig)
 		return provisioner.List(ctx, request)
 	}
 
-	client, err := ccx.NewClient(config.FromTargetConfig(request.TargetConfig))
+	client, err := ccx.NewClient(targetConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +368,7 @@ func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*reso
 		}
 		return nil, err
 	}
+	excluded := discoveryListExclusions[request.ResourceType]
 	for _, r := range result.ResourceDescriptions {
 		// CloudControl does not reliably filter by ResourceModel for all resource types.
 		// Post-filter results to ensure each resource's properties match the requested filter.
@@ -223,6 +376,9 @@ func (p *Plugin) List(ctx context.Context, request *resource.ListRequest) (*reso
 			if !matchesFilter(*r.Properties, request.AdditionalProperties) {
 				continue
 			}
+		}
+		if excluded != nil && excluded(*r.Identifier) {
+			continue
 		}
 		nativeIDs = append(nativeIDs, *r.Identifier)
 	}
@@ -255,9 +411,28 @@ func matchesFilter(propertiesJSON string, filter map[string]string) bool {
 			// Not a simple string (could be object/array) — can't compare, include the resource
 			continue
 		}
-		if propValue != filterValue {
+		if !filterValuesEquivalent(propValue, filterValue) {
 			return false
 		}
 	}
 	return true
+}
+
+// filterValuesEquivalent reports whether a listed resource's property value and
+// a filter value name the same thing. CloudControl echoes some properties in a
+// different form than the one used to scope the list: Lambda::Permission, for
+// example, lists with a FunctionName but echoes it back as the function ARN.
+// Two values are equivalent when they are equal, or when one is an ARN whose
+// trailing resource id equals the other.
+func filterValuesEquivalent(propValue, filterValue string) bool {
+	if propValue == filterValue {
+		return true
+	}
+	if strings.HasPrefix(propValue, "arn:") && arn.IdFrom(propValue) == filterValue {
+		return true
+	}
+	if strings.HasPrefix(filterValue, "arn:") && arn.IdFrom(filterValue) == propValue {
+		return true
+	}
+	return false
 }

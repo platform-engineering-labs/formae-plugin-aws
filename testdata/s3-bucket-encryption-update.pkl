@@ -1,0 +1,59 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/s3/bucket.pkl"
+
+// Read the test run ID from environment variable set by the test harness
+// This ensures consistent naming within a test run but unique names between runs
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-s3-bucket-encryption-\(testRunID)"
+
+// The default-encryption block (including BlockedEncryptionTypes) is held
+// identical to the base fixture; the update mutates a tag. This exercises the
+// Update path and confirms BlockedEncryptionTypes survives a reconcile without
+// being stripped, while avoiding an in-place edit of the single encryption
+// rule (which S3 rejects when re-put as part of a rule mutation).
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for S3 Bucket default encryption with BlockedEncryptionTypes"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  new bucket.Bucket {
+    label = "plugin-sdk-test-bucket-encryption"
+    bucketName = "formae-plugin-sdk-test-encryption-\(testRunID)"
+    tags {
+      new { key = "Environment"; value = "updated" }
+    }
+    bucketEncryption = new bucket.BucketEncryption {
+      serverSideEncryptionConfiguration {
+        new bucket.ServerSideEncryptionRule {
+          bucketKeyEnabled = true
+          serverSideEncryptionByDefault = new bucket.ServerSideEncryptionByDefault {
+            sseAlgorithm = "AES256"
+          }
+          blockedEncryptionTypes = new bucket.BlockedEncryptionTypes {
+            encryptionType {
+              "SSE-C"
+            }
+          }
+        }
+      }
+    }
+  }
+}

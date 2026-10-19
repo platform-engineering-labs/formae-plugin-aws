@@ -7,9 +7,17 @@ package apigateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/service/apigateway"
+	apigwtypes "github.com/aws/aws-sdk-go-v2/service/apigateway/types"
 
 	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
@@ -31,7 +39,8 @@ func init() {
 			resource.OperationRead,
 			resource.OperationCreate,
 			resource.OperationUpdate,
-			resource.OperationDelete},
+			resource.OperationDelete,
+			resource.OperationList},
 		func(cfg *config.Config) prov.Provisioner {
 			return &Method{cfg: cfg}
 		})
@@ -110,8 +119,77 @@ func (m *Method) Status(ctx context.Context, request *resource.StatusRequest) (*
 	return ccxClient.StatusResource(ctx, request, m.Read)
 }
 
+type apiGatewayMethodClientInterface interface {
+	GetResources(ctx context.Context, params *apigateway.GetResourcesInput, optFns ...func(*apigateway.Options)) (*apigateway.GetResourcesOutput, error)
+}
+
 func (m *Method) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
-	return nil, fmt.Errorf("apiGateway::Method: list operation not supported")
+	awsCfg, err := m.cfg.ToAwsConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading AWS config: %w", err)
+	}
+	// Discovery has no operator-level retry loop around List, and registry
+	// dispatch bypasses the ccx retry budget, so give this client the same
+	// discovery-grade budget ccx uses (10 attempts, backoff capped at 30s)
+	// instead of the SDK default of 3 attempts.
+	client := apigateway.NewFromConfig(awsCfg, func(o *apigateway.Options) {
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+			so.MaxAttempts = 10
+			so.MaxBackoff = 30 * time.Second
+		})
+	})
+	return m.listWithClient(ctx, client, request)
+}
+
+func (m *Method) listWithClient(ctx context.Context, client apiGatewayMethodClientInterface, request *resource.ListRequest) (*resource.ListResult, error) {
+	restApiID, ok := request.AdditionalProperties["RestApiId"]
+	if !ok || restApiID == "" {
+		return nil, fmt.Errorf("AWS::ApiGateway::Method list requires RestApiId filter")
+	}
+
+	// CloudControl has no list handler for Method, so enumerate methods via
+	// the API Gateway control plane. GetResources with embed=methods returns
+	// every resource's method map, including the implicit root resource,
+	// whose methods a per-resource scoping would miss.
+	nativeIDs := []string{}
+	var position *string
+	for {
+		output, err := client.GetResources(ctx, &apigateway.GetResourcesInput{
+			RestApiId: aws.String(restApiID),
+			Embed:     []string{"methods"},
+			Limit:     aws.Int32(500),
+			Position:  position,
+		})
+		if err != nil {
+			// Treat a missing parent as an empty list rather than a discovery
+			// failure: the API may have been deleted between the list
+			// operation being queued and the call landing.
+			var notFound *apigwtypes.NotFoundException
+			if errors.As(err, &notFound) {
+				return &resource.ListResult{NativeIDs: []string{}}, nil
+			}
+			return nil, fmt.Errorf("listing API Gateway resources: %w", err)
+		}
+		for _, item := range output.Items {
+			if item.Id == nil {
+				continue
+			}
+			// Composite native ID mirrors the CloudControl CRUD path for
+			// Method:
+			//   <RestApiId>|<ResourceId>|<HttpMethod>
+			// Discovery must produce the same shape or inventory lookups
+			// diverge between discovered and managed Methods.
+			for httpMethod := range item.ResourceMethods {
+				nativeIDs = append(nativeIDs, fmt.Sprintf("%s|%s|%s", restApiID, *item.Id, httpMethod))
+			}
+		}
+		if output.Position == nil || *output.Position == "" {
+			break
+		}
+		position = output.Position
+	}
+	sort.Strings(nativeIDs)
+	return &resource.ListResult{NativeIDs: nativeIDs}, nil
 }
 
 // handleLambdaIntegration transforms the Lambda integration properties for API Gateway.

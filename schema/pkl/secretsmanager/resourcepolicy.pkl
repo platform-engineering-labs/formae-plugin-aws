@@ -20,7 +20,7 @@ open class ResourcePolicy extends formae.Resource {
     @aws.FieldHint{writeOnly = true}
     blockPublicPolicy: Boolean?
 
-    @aws.FieldHint
+    @aws.FieldHint{updateMethod = "Atomic"}
     resourcePolicy: Dynamic
 
     @aws.FieldHint{createOnly = true}

@@ -19,6 +19,10 @@ import "sagemaker.pkl"
 // containers, and SageMaker - into a single deployable unit.
 class MLPlatform {
   name: String
+  /// Passed down to the generator that draws the database password. A
+  /// generator names its stack explicitly rather than inheriting the
+  /// enclosing forma's.
+  stack: formae.StackResolvable
   region: aws.Region
   accountId: String
   vpcCidr: String = "10.0.0.0/16"
@@ -39,6 +43,7 @@ class MLPlatform {
 
   hidden storage: storage.Storage = new {
     name = outer.name
+    stack = outer.stack
     region = outer.region
     accountId = outer.accountId
     vpcId = networking.vpc.res.id

@@ -3,9 +3,10 @@ module github.com/platform-engineering-labs/formae-plugin-aws
 go 1.26.0
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.42.0
+	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/service/acm v1.39.4
+	github.com/aws/aws-sdk-go-v2/service/apigateway v1.42.5
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.70.0
@@ -16,19 +17,23 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.12
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.8
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.0
+	github.com/aws/aws-sdk-go-v2/service/rds v1.108.0
+	github.com/aws/aws-sdk-go-v2/service/rdsdata v1.32.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.62.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.1
 	github.com/aws/aws-sdk-go-v2/service/s3control v1.68.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.36.1
+	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.42.0
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.23
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
-	github.com/aws/smithy-go v1.27.1
+	github.com/aws/smithy-go v1.27.7
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/google/uuid v1.6.0
-	github.com/platform-engineering-labs/formae/pkg/model v0.1.26
-	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.1
-	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.5-0.20260528030337-9ae690b3715c
+	github.com/platform-engineering-labs/formae/pkg/model v0.1.28
+	// Re-pin to the next official pkg/plugin tag when one is cut.
+	github.com/platform-engineering-labs/formae/pkg/plugin v0.4.2
+	github.com/platform-engineering-labs/formae/pkg/plugin-conformance-tests v0.2.7
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -38,11 +43,11 @@ require (
 	github.com/apple/pkl-go v0.13.2 // indirect
 	github.com/asdine/storm v2.1.2+incompatible // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.9 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.15 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.15
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.22 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.29 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.29 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.36 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.36 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.12 // indirect
@@ -69,6 +74,8 @@ require (
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/naegelejd/go-acl v0.0.0-20260323030528-42e4d61407df // indirect
 	github.com/platform-engineering-labs/formae/pkg/api/model v0.1.1 // indirect
+	// Re-pin to the next official pkg/credential tag when one is cut.
+	github.com/platform-engineering-labs/formae/pkg/credential v0.1.0 // indirect
 	github.com/platform-engineering-labs/orbital v0.1.36 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
@@ -113,6 +120,9 @@ require (
 	resty.dev/v3 v3.0.0-beta.6.0.20260127085140-f531c9de7027 // indirect
 )
 
-replace ergo.services/ergo => github.com/JeroenSoeters/ergo v1.999.320-pel.2
+// Matches the ergo fork revision required by the pinned pkg/plugin and
+// pkg/credential (both need -pel.6). A replace directive is not transitive,
+// so it has to be repeated here.
+replace ergo.services/ergo => github.com/JeroenSoeters/ergo v1.999.320-pel.6
 
 replace ergo.services/actor/statemachine => github.com/JeroenSoeters/actor/statemachine v0.0.0-20260205190926-8b1b2eaf30f4

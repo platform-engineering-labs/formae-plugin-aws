@@ -1,0 +1,62 @@
+# © 2026 Platform Engineering Labs Inc.
+#
+# SPDX-License-Identifier: FSL-1.1-ALv2
+#
+# Composite action: assume the AWS test role via GitHub OIDC, retrying once
+# with a freshly-minted OIDC token if the first attempt fails.
+#
+# Why: conformance jobs intermittently failed at "Configure AWS Credentials"
+# with `connect ETIMEDOUT <sts-ip>:443` followed by `Token expired`. A single
+# transient runner→STS network blip sends aws-actions/configure-aws-credentials
+# into its long internal AssumeRole retry, which outlives the short-lived GitHub
+# OIDC token; every subsequent retry then fails token-expired and the whole job
+# dies. Re-running the action mints a *new* OIDC token (core.getIDToken() runs
+# per invocation), so a second attempt after a brief cool-off clears the blip.
+#
+# The job must have `permissions: id-token: write` and check out the repo before
+# using this local action.
+name: Configure AWS Credentials (with OIDC retry)
+description: Assume an AWS role via OIDC with a fresh-token retry on transient STS failures.
+inputs:
+  role-to-assume:
+    description: ARN of the role to assume.
+    required: true
+  role-session-name:
+    description: STS session name.
+    required: true
+  aws-region:
+    description: AWS region.
+    required: false
+    default: us-east-1
+  role-duration-seconds:
+    description: Assumed-role session duration in seconds.
+    required: false
+    default: "3600"
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS Credentials (attempt 1)
+      id: attempt1
+      continue-on-error: true
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.role-to-assume }}
+        role-session-name: ${{ inputs.role-session-name }}
+        role-duration-seconds: ${{ inputs.role-duration-seconds }}
+
+    - name: Cool off before OIDC retry
+      if: steps.attempt1.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::First AssumeRole attempt failed (likely a transient STS timeout); retrying with a fresh OIDC token after 15s."
+        sleep 15
+
+    - name: Configure AWS Credentials (attempt 2)
+      if: steps.attempt1.outcome == 'failure'
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.role-to-assume }}
+        role-session-name: ${{ inputs.role-session-name }}
+        role-duration-seconds: ${{ inputs.role-duration-seconds }}

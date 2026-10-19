@@ -28,7 +28,7 @@ open class KeyResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    discoverable = false
+    discoverable = false // Listing returns AWS-managed keys and the read shape exposes no property that distinguishes them, so discovery would flood inventory with unmanageable keys
     extractable = false
 }
 open class Key extends formae.Resource {

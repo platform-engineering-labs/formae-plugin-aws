@@ -1,0 +1,117 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ *
+ * Constraints enforced by AWS, not by this schema:
+ *   - `healthCheckConfig` and `healthCheckCustomConfig` are mutually
+ *     exclusive; set at most one.
+ *   - `healthCheckConfig` is invalid when the service's namespace is a
+ *     private DNS namespace (health checks require a public namespace).
+ *   - The top-level `namespaceId` and `dnsConfig.namespaceId` must agree
+ *     when both are set.
+ */
+
+module aws.servicediscovery.service
+
+import "@formae/formae.pkl"
+import "../aws.pkl"
+
+const type = "AWS::ServiceDiscovery::Service"
+
+typealias RoutingPolicy = "MULTIVALUE"|"WEIGHTED"
+
+typealias DnsRecordType = "A"|"AAAA"|"CNAME"|"SRV"
+
+@aws.SubResourceHint
+open class DnsRecord extends formae.SubResource {
+    type: DnsRecordType
+    tTL: Int
+}
+
+@aws.SubResourceHint
+open class DnsConfig extends formae.SubResource {
+    @aws.FieldHint{updateMethod = "Atomic"}
+    dnsRecords: Listing<DnsRecord>
+
+    routingPolicy: RoutingPolicy?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    namespaceId: (String|formae.Resolvable)?
+}
+
+@aws.SubResourceHint
+open class HealthCheckCustomConfig extends formae.SubResource {
+    failureThreshold: Int?
+}
+
+@aws.SubResourceHint
+open class HealthCheckConfig extends formae.SubResource {
+    type: String
+    resourcePath: String?
+    failureThreshold: Int?
+}
+
+open class ServiceResolvable extends formae.Resolvable {
+    hidden type = module.type
+
+    hidden arn: ServiceResolvable = (this) {
+        property = "Arn"
+    }
+
+    hidden id: ServiceResolvable = (this) {
+        property = "Id"
+    }
+
+    hidden name: ServiceResolvable = (this) {
+        property = "Name"
+    }
+}
+
+@aws.ResourceHint {
+    type = module.type
+    identifier = "Id"
+    discoverable = true
+}
+open class Service extends formae.Resource {
+
+    @aws.FieldHint{createOnly = true}
+    name: String?
+
+    @aws.FieldHint{
+        createOnly = true
+        hasProviderDefault = true
+    }
+    type: String?
+
+    @aws.FieldHint
+    description: String?
+
+    @aws.FieldHint{hasProviderDefault = true}
+    serviceAttributes: Mapping<String, String>?
+
+    @aws.FieldHint{createOnly = true}
+    healthCheckCustomConfig: HealthCheckCustomConfig?
+
+    @aws.FieldHint
+    healthCheckConfig: HealthCheckConfig?
+
+    @aws.FieldHint
+    dnsConfig: DnsConfig?
+
+    @aws.FieldHint{createOnly = true}
+    namespaceId: (String|formae.Resolvable)?
+
+    @aws.FieldHint {
+        updateMethod = "EntitySet"
+        indexField = "Key"
+    }
+    tags: Listing<aws.Tag>?
+
+    local parent = this
+
+    hidden res: ServiceResolvable = new {
+        label = parent.label
+        stack = parent.stack?.label
+    }
+}

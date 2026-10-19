@@ -1,0 +1,90 @@
+/*
+ * © 2025 Platform Engineering Labs Inc.
+ *
+ * SPDX-License-Identifier: FSL-1.1-ALv2
+ */
+
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@aws/aws.pkl"
+
+import "@aws/ec2/vpc.pkl"
+import "@aws/servicediscovery/privatednsnamespace.pkl"
+import "@aws/servicediscovery/servicediscoveryservice.pkl"
+
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+local stackName = "plugin-sdk-test-servicediscovery-service-\(testRunID)"
+
+// Own VPC with DNS enabled: the namespace below is backed by a Route53 private
+// hosted zone associated with it, and a VPC can hold only one hosted zone per
+// domain name.
+local testVpc = new vpc.VPC {
+  label = "test-vpc-for-servicediscovery-service"
+  cidrBlock = "10.236.0.0/16"
+  enableDnsSupport = true
+  enableDnsHostnames = true
+}
+
+// The namespace a service needs to live in. It deliberately declares no
+// `properties`: Cloud Map gives every namespace an SOA TTL whether or not the
+// declaration asked for one, so a namespace that never asks is what proves the
+// defaulted TTL does not read back as drift. This fixture is where that shows
+// up soonest -- it re-applies the whole forma for the update and again for the
+// out-of-band delete step, so a namespace drifting against its own declaration
+// surfaces as a spurious namespace change on each of them.
+//
+// The domain name is unique to this fixture so it never competes for a hosted
+// zone with another fixture in the same account.
+local testNamespace = new privatednsnamespace.PrivateDnsNamespace {
+  label = "test-namespace-for-servicediscovery-service"
+  name = "formae-plugin-sdk-test-svcns-\(testRunID).local"
+  vpc = testVpc.res.vpcId
+  description = "Plugin SDK test namespace hosting the service under test"
+}
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK test for ServiceDiscovery Service"
+  }
+
+  new formae.Target {
+    label = "aws-target"
+    config = new aws.Config {
+      region = "us-east-1"
+    }
+  }
+
+  testVpc
+  testNamespace
+
+  // Service under test: last, the only resource of its type, and a leaf -- it
+  // registers no instances, so the out-of-band delete step can remove it on its
+  // own, and the namespace it lives in outlives it.
+  //
+  // healthCheckConfig is invalid in a private DNS namespace (Route53 health
+  // checks need a public one), so the service takes the custom health check
+  // config instead, which is what a registering workload updates.
+  new servicediscoveryservice.Service {
+    label = "plugin-sdk-test-servicediscovery-service"
+    name = "formae-plugin-sdk-test-svc-\(testRunID)"
+    namespaceId = testNamespace.res.id
+    description = "Plugin SDK test Cloud Map service"
+    dnsConfig = new servicediscoveryservice.DnsConfig {
+      routingPolicy = "MULTIVALUE"
+      dnsRecords {
+        new servicediscoveryservice.DnsRecord {
+          type = "A"
+          tTL = 60
+        }
+      }
+    }
+    healthCheckCustomConfig = new servicediscoveryservice.HealthCheckCustomConfig {
+      failureThreshold = 1
+    }
+    tags {
+      new { key = "Environment"; value = "test" }
+    }
+  }
+}

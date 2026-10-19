@@ -15,7 +15,7 @@ const type = "AWS::IAM::GroupPolicy"
     type = module.type
     identifier = "PolicyName"
     parent = "AWS::IAM::Group"
-    discoverable = false
+    discoverable = false // No CloudControl list handler; discovery needs a control-plane list scoped per group
 }
 open class GroupPolicy extends formae.Resource {
 

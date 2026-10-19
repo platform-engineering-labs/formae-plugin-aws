@@ -14,7 +14,7 @@ const type = "AWS::IAM::Policy"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // Legacy CloudFormation construct that fans one policy document out to several principals; there is no corresponding cloud object to list
 }
 open class Policy extends formae.Resource {
 

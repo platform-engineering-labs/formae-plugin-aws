@@ -14,7 +14,7 @@ const type = "AWS::IAM::AccessKey"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // No CloudControl list handler, and the secret is only available at create time so an adopted key is of limited use
 }
 open class AccessKey extends formae.Resource {
 

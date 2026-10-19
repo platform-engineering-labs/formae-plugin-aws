@@ -15,7 +15,7 @@ const type = "AWS::EC2::GatewayRouteTableAssociation"
 @aws.ResourceHint {
     type = module.type
     identifier = "GatewayId"
-    discoverable = false
+    discoverable = false // No CloudControl list handler; discovery needs a control-plane list over route table associations
 }
 open class GatewayRouteTableAssociation extends formae.Resource {
 

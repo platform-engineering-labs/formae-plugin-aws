@@ -14,7 +14,7 @@ const type = "AWS::SQS::QueuePolicy"
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // No CloudControl read or list handler; the policy is an attribute of the queue
 }
 open class QueuePolicy extends formae.Resource {
 

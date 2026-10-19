@@ -202,7 +202,7 @@ open class DBCluster extends formae.Resource {
     manageMasterUserPassword: Boolean?
 
     @aws.FieldHint
-    masterUserPassword: (String|formae.Resolvable|formae.Value|formae.SecretValue)?
+    masterUserPassword: (String|formae.ValueSource)?
 
     @aws.FieldHint
     masterUserSecret: MasterUserSecret?

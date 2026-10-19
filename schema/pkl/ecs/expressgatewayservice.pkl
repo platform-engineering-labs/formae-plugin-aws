@@ -83,7 +83,7 @@ open class ExpressGatewayServiceResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "ServiceArn"
-    discoverable = false
+    discoverable = false // No CloudControl list handler; discovery needs a control-plane list
 }
 open class ExpressGatewayService extends formae.Resource {
 

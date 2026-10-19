@@ -7,12 +7,16 @@ package ec2
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/registry"
@@ -33,7 +37,8 @@ func init() {
 			resource.OperationCreate,
 			resource.OperationUpdate,
 			resource.OperationCheckStatus,
-			resource.OperationDelete},
+			resource.OperationDelete,
+			resource.OperationList},
 		func(cfg *config.Config) prov.Provisioner {
 			return &Route{cfg: cfg}
 		})
@@ -292,9 +297,82 @@ func (r Route) Read(ctx context.Context, request *resource.ReadRequest) (*resour
 	}, nil
 }
 
+type ec2RouteClientInterface interface {
+	DescribeRouteTables(ctx context.Context, params *ec2.DescribeRouteTablesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeRouteTablesOutput, error)
+}
+
 func (r Route) List(ctx context.Context, request *resource.ListRequest) (*resource.ListResult, error) {
-	// Future feature
-	return &resource.ListResult{
-		NativeIDs: []string{},
-	}, nil
+	cfg, err := r.cfg.ToAwsConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load AWS config: %w", err)
+	}
+	// Discovery has no operator-level retry loop around List, and registry
+	// dispatch bypasses the ccx retry budget, so give this client the same
+	// discovery-grade budget ccx uses (10 attempts, backoff capped at 30s)
+	// instead of the SDK default of 3 attempts.
+	client := ec2.NewFromConfig(cfg, func(o *ec2.Options) {
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+			so.MaxAttempts = 10
+			so.MaxBackoff = 30 * time.Second
+		})
+	})
+	return r.listWithClient(ctx, client, request)
+}
+
+func (r Route) listWithClient(ctx context.Context, client ec2RouteClientInterface, request *resource.ListRequest) (*resource.ListResult, error) {
+	routeTableID, ok := request.AdditionalProperties["RouteTableId"]
+	if !ok || routeTableID == "" {
+		return nil, fmt.Errorf("AWS::EC2::Route list requires RouteTableId filter")
+	}
+
+	resp, err := client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
+		RouteTableIds: []string{routeTableID},
+	})
+	if err != nil {
+		// Treat a missing parent as an empty list rather than a discovery
+		// failure: the route table may have been deleted between the list
+		// operation being queued and the call landing.
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidRouteTableID.NotFound" {
+			return &resource.ListResult{NativeIDs: []string{}}, nil
+		}
+		return nil, fmt.Errorf("describing route table: %w", err)
+	}
+
+	nativeIDs := []string{}
+	if len(resp.RouteTables) == 0 {
+		return &resource.ListResult{NativeIDs: nativeIDs}, nil
+	}
+	for _, route := range resp.RouteTables[0].Routes {
+		props := map[string]any{"RouteTableId": routeTableID}
+		if route.DestinationCidrBlock != nil {
+			props["DestinationCidrBlock"] = *route.DestinationCidrBlock
+		}
+		switch {
+		case route.GatewayId != nil:
+			props["GatewayId"] = *route.GatewayId
+		case route.NatGatewayId != nil:
+			props["NatGatewayId"] = *route.NatGatewayId
+		case route.NetworkInterfaceId != nil:
+			props["NetworkInterfaceId"] = *route.NetworkInterfaceId
+		case route.InstanceId != nil:
+			props["InstanceId"] = *route.InstanceId
+		case route.TransitGatewayId != nil:
+			props["TransitGatewayId"] = *route.TransitGatewayId
+		case route.VpcPeeringConnectionId != nil:
+			props["VpcPeeringConnectionId"] = *route.VpcPeeringConnectionId
+		}
+		// The composite native ID must mirror the create path byte for byte
+		// or inventory lookups diverge between discovered and managed routes,
+		// so both go through buildNativeID. Routes outside the modelled shape
+		// (IPv6 or prefix-list destinations, unmodelled targets) make it
+		// error and are skipped.
+		nativeID, _, err := buildNativeID(props)
+		if err != nil {
+			continue
+		}
+		nativeIDs = append(nativeIDs, nativeID)
+	}
+
+	return &resource.ListResult{NativeIDs: nativeIDs}, nil
 }

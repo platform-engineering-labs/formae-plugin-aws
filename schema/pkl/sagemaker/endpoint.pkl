@@ -91,7 +91,7 @@ open class EndpointResolvable extends formae.Resolvable {
 @aws.ResourceHint {
     type = module.type
     identifier = "Ref"
-    discoverable = false
+    discoverable = false // CloudControl rejects list for this type as not yet supported
 }
 open class Endpoint extends formae.Resource {
 

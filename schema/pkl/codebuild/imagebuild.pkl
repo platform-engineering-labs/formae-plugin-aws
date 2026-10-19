@@ -4,6 +4,19 @@
  * SPDX-License-Identifier: FSL-1.1-ALv2
  */
 
+/// Builds a container image from a supplied Dockerfile and pushes it to ECR.
+///
+/// `AWS::CodeBuild::ImageBuild` is a pure build-and-push action: it runs one
+/// build on the `AWS::CodeBuild::Project` named by `projectName` and creates no
+/// AWS resource of its own beyond the pushed image. The project, its IAM service
+/// role and its log group are declared resources in their own right.
+///
+/// Preconditions that can be checked cheaply are checked before the build starts
+/// — the project must exist and must be configured as described on
+/// `projectName`. The ones that cannot are deliberately left to surface as real
+/// AWS errors from the build itself: whether the project's network placement has
+/// egress to ECR, STS and CloudWatch Logs, and whether its service role actually
+/// grants the ECR pushes.
 module aws.codebuild.imagebuild
 
 import "@formae/formae.pkl"
@@ -11,9 +24,22 @@ import "../aws.pkl"
 
 const type = "AWS::CodeBuild::ImageBuild"
 
-/// Read-only outputs produced by the build, referenceable as resolvables via
-/// `imageBuild.res.*`. `imageRef` (repo@sha256:…) is the immutable, primary
-/// consumption reference; `imageUri` (repo:tag) is a convenience mutable alias.
+/// Outputs of the build, referenceable as resolvables via `imageBuild.res.*`.
+///
+/// `versionUri` (repo:versionTag, echoing the declared `versionUri`) is the
+/// recommended consumption reference for deploy-time consumers such as task
+/// definitions: because its value is declared rather than produced by the build,
+/// a consumer referencing it is planned in the same apply that rebuilds the
+/// image, so an image roll converges in one apply — while the reference still
+/// orders the consumer after the build and its pin placement.
+///
+/// `imageRef` (repo@sha256:…) is the immutable digest reference. It exists only
+/// after the build runs, so a consumer referencing it cannot see a new digest at
+/// plan time: an image roll through `imageRef` takes two applies (the first
+/// rebuilds, the second rolls the consumer). Prefer `versionUri` unless the
+/// consumer genuinely needs digest pinning.
+///
+/// `imageUri` (repo:tag) is a convenience mutable alias.
 open class ImageBuildResolvable extends formae.Resolvable {
     hidden type = module.type
 
@@ -32,14 +58,16 @@ open class ImageBuildResolvable extends formae.Resolvable {
     hidden imageTag: ImageBuildResolvable = (this) {
         property = "ImageTag"
     }
-}
 
-typealias ComputeType = "BUILD_GENERAL1_SMALL"|"BUILD_GENERAL1_MEDIUM"|"BUILD_GENERAL1_LARGE"
+    hidden versionUri: ImageBuildResolvable = (this) {
+        property = "VersionUri"
+    }
+}
 
 @aws.ResourceHint {
     type = module.type
     identifier = "ImageRef"
-    discoverable = false
+    discoverable = false // A build has no listable inventory to discover
 }
 open class ImageBuild extends formae.Resource {
 
@@ -54,6 +82,74 @@ open class ImageBuild extends formae.Resource {
     @aws.FieldHint { createOnly = true }
     imageTag: String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))
 
+    /// Immutable pins placed on the manifest this build pushes, alongside
+    /// `imageTag`. A pin names one manifest for its whole life, which is what
+    /// makes it usable as a rollback target: `imageTag` moves to the new digest
+    /// on every in-place rebuild, a pin does not.
+    ///
+    /// Pins are create-once. A pin declared for the first time is placed on the
+    /// manifest this build produced, but only if the tag does not already exist
+    /// — a newly declared pin whose tag is already present fails the apply,
+    /// naming the tag and the digest it currently resolves to, so a typo or a
+    /// reused release name cannot yield a green apply whose rollback pin names
+    /// an unrelated image. A pin carried over from the previous apply is left
+    /// exactly where it is. The plugin therefore never moves and never deletes
+    /// a pin, which is what retains the predecessor: it still carries a tag, so
+    /// the rebuild leaves its manifest alone.
+    ///
+    /// Deliberately not `createOnly`: adding a pin must not re-create the
+    /// resource, because the delete half of a replacement would destroy the
+    /// predecessor this field exists to keep.
+    ///
+    /// Two consequences worth declaring against. Removing a pin from this
+    /// listing is a no-op in the registry — it names a predecessor manifest,
+    /// and reaping that is exactly what pins prevent — so a placed pin is
+    /// removable only out of band or by a repository lifecycle policy.
+    ///
+    /// And a repository that accumulates pins cannot be emptied by tearing this
+    /// resource down: teardown removes only `imageTag`, while every pin is by
+    /// design a manifest meant to outlive the build that produced it. Its
+    /// lifecycle becomes the operator's to manage — a repository lifecycle
+    /// policy that ages pins out, or an out-of-band delete. Note that a
+    /// formae-managed `AWS::ECR::Repository` still holding images cannot be
+    /// destroyed, and that `emptyOnDelete` does not currently change this:
+    /// CloudControl's delete carries no resource model, so the repository's
+    /// delete handler never sees the property.
+    ///
+    /// Placement is a lookup followed by a write, so on a tag-mutable
+    /// repository an out-of-band writer creating the same tag in between can
+    /// still move it. The guarantee is what this resource does, not what can
+    /// happen to a registry.
+    @aws.FieldHint
+    additionalTags: Listing<String(matches(Regex(#"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"#)))>?
+
+    /// Immutable full image reference `<ecrRepositoryUri>:<versionTag>`, declared
+    /// by the author and therefore known at plan time. The tag part is placed as
+    /// a create-once immutable pin on the manifest this build pushes, with
+    /// exactly the semantics of an `additionalTags` pin (never moved, never
+    /// deleted, an already-existing tag fails the apply).
+    ///
+    /// This is the recommended reference for deploy-time consumers (see
+    /// `res.versionUri`): unlike the digest, it changes when the author bumps
+    /// the version, so a consumer diffs dirty in the same apply that rebuilds
+    /// the image and the roll converges in one apply instead of two.
+    ///
+    /// The repository part must equal `ecrRepositoryUri` (validated before any
+    /// build starts; this field exists to name the image THIS build pushes), the
+    /// tag must differ from `imageTag` (the mutable tag moves on every rebuild,
+    /// which is the one thing a pin must not do), and the tag must not also
+    /// appear in `additionalTags` (it would be placed twice in one apply and
+    /// fail its own create-once check). `ecrRepositoryUri` is often a resolvable
+    /// in the forma while this field needs the literal string: restate the
+    /// repository URI from the same source values and the plugin cross-checks
+    /// the two at execution, so they cannot drift apart silently.
+    ///
+    /// Deliberately not `createOnly`: a version bump is an in-place update, and
+    /// the delete half of a replacement would destroy the predecessor manifests
+    /// the pins exist to keep.
+    @aws.FieldHint
+    versionUri: String?
+
     /// The full literal Dockerfile content to build. The image is built verbatim
     /// from this Dockerfile; the returned digest is the source of truth.
     @aws.FieldHint
@@ -64,24 +160,24 @@ open class ImageBuild extends formae.Resource {
     @aws.FieldHint
     buildArgs: Mapping<String, String>?
 
-    /// CodeBuild compute size for the build project. Defaults to SMALL.
-    @aws.FieldHint
-    computeType: ComputeType?
-
-    /// Build timeout in minutes. Must be shorter than the engine's async poll
-    /// deadline. Defaults to 30.
-    @aws.FieldHint
-    timeoutMinutes: (Int(this >= 5 && this <= 60))?
-
-    /// BYO CodeBuild service role ARN. When supplied the plugin never creates,
-    /// mutates, or deletes the role. Resolvable from an AWS::IAM::Role.
-    @aws.FieldHint
-    serviceRoleArn: (String|formae.Resolvable)?
-
-    /// CodeBuild build-environment image (docker-in-docker capable). Defaults to a
-    /// pinned aws/codebuild/standard image.
-    @aws.FieldHint
-    buildEnvironmentImage: String?
+    /// Name of the AWS::CodeBuild::Project to run the build on. Resolvable from
+    /// that project's `res.name`. Part of the resource identity.
+    ///
+    /// The build runs `docker build` and `docker push` inside the project, so the
+    /// project must declare `environment.type = "LINUX_CONTAINER"` with
+    /// `privilegedMode = true`, `source.type = "NO_SOURCE"` and
+    /// `artifacts.type = "NO_ARTIFACTS"`; a project that does not is rejected
+    /// before any build starts. Everything the build runs is supplied per build by
+    /// the plugin as a build spec override, so the project's own `source.buildSpec`
+    /// is never read or written and may be any placeholder. Its service role must
+    /// grant the ECR pulls and pushes for `ecrRepositoryUri` and writes to its log
+    /// group; the project's compute size, build image and build timeout apply to
+    /// the build.
+    ///
+    /// The project may be shared by several image builds: teardown stops only the
+    /// builds this resource started, and never deletes the project.
+    @aws.FieldHint { createOnly = true }
+    projectName: (String|formae.Resolvable)
 
     // ── Computed outputs ────────────────────────────────────────
 

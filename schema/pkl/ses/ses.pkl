@@ -42,7 +42,11 @@ typealias MatchingEventType = "SEND"|"REJECT"|"BOUNCE"|"COMPLAINT"|"DELIVERY"|"O
 typealias BehaviorOnMxFailure = "USE_DEFAULT_VALUE"|"REJECT_MESSAGE"
 typealias DkimSigningKeyLength = "RSA_1024_BIT"|"RSA_2048_BIT"
 typealias SuppressedReason = "BOUNCE"|"COMPLAINT"
-typealias DimensionValueSource = "MESSAGE_TAG"|"EMAIL_HEADER"|"LINK_TAG"
+/// The CloudFormation spelling of this enum, which is the form the provider
+/// echoes back on a read. The SESv2 SDK spells the same values MESSAGE_TAG /
+/// EMAIL_HEADER / LINK_TAG; those are accepted on create but read back in the
+/// spelling below, so a resource written with them diffs on every apply.
+typealias DimensionValueSource = "messageTag"|"emailHeader"|"linkTag"
 typealias VerificationStatus = "PENDING"|"SUCCESS"|"FAILED"|"TEMPORARY_FAILURE"|"NOT_STARTED"
 typealias EngagementMetricsState = "ENABLED"|"DISABLED"
 typealias OptimizedSharedDeliveryState = "ENABLED"|"DISABLED"
@@ -161,6 +165,11 @@ open class EventDestinationDefinition extends formae.SubResource {
 
     /// SES requires at least one matching event type at apply time.
     /// Length constraint dropped — see DnsRecord.values for context.
+    ///
+    /// Atomic because the set has to be replaced wholesale: merging leaves
+    /// behind any type the previous state carried, so removing one from a
+    /// forma would otherwise never take effect.
+    @aws.FieldHint { updateMethod = "Atomic" }
     matchingEventTypes: Listing<MatchingEventType>
 
     snsDestination: SnsDestinationConfig?

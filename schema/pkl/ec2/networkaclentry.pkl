@@ -26,7 +26,7 @@ open class PortRange extends formae.SubResource {
 @aws.ResourceHint {
     type = module.type
     identifier = "Id"
-    discoverable = false
+    discoverable = false // No CloudControl read or list handler; discovery needs a control-plane list scoped per network ACL
 }
 open class NetworkAclEntry extends formae.Resource {
 

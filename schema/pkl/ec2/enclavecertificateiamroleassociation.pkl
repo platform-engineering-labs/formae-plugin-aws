@@ -15,7 +15,7 @@ const type = "AWS::EC2::EnclaveCertificateIamRoleAssociation"
 @aws.ResourceHint {
     type = module.type
     identifier = "CertificateArn"
-    discoverable = false
+    discoverable = false // CloudControl list requires a certificate ARN that is not declared in the handler schema; discovery needs parent scoping by certificate
 }
 open class EnclaveCertificateIamRoleAssociation extends formae.Resource {
 

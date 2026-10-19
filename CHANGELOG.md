@@ -8,6 +8,553 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
+## [0.1.17]
+
+Requires formae >= 0.89.0.
+
+### Added
+
+- `AWS::CodeBuild::ImageBuild` gains a `versionUri` field and matching
+  `res.versionUri` resolvable: the full `<repo>:<versionTag>` reference,
+  declared by the author and placed as a create-once immutable pin on the
+  manifest the build pushes. Because the value is declared rather than produced
+  by the build, a consumer (say, a task definition's container image) that
+  references `res.versionUri` is planned in the same apply that rebuilds the
+  image, so an image roll converges in one apply; deploying through
+  `res.imageRef` (the digest, which exists only after the build) takes two.
+  The digest resolvables are unchanged and remain available.
+
+- Resources formae created in order to reach this account are no longer offered
+  for import. The connect role and the account-global OIDC provider its trust
+  policy names carry an ownership marker, and discovery now excludes anything
+  carrying it, so a reconcile can no longer take away formae's own access. EFS
+  file systems and access points are matched through their per-type tag
+  properties, which a generic tag filter never sees. Sharing the `formae` name
+  prefix is not enough on its own: unrelated roles stay visible.
+
+- Discovery for four more resource types: `AWS::IAM::ManagedPolicy`,
+  `AWS::KMS::Alias`, `AWS::EC2::PrefixList`, and `AWS::EC2::Route` (scoped per
+  route table). AWS-managed inventory is kept out of discovery: AWS-managed
+  policies (`arn:aws:iam::aws:policy/*`) and reserved aliases (`alias/aws/*`)
+  are skipped at list time before the per-resource read, AWS-owned prefix
+  lists are excluded by owner, and the implicit local route every route table
+  carries is excluded by gateway.
+- Every resource type that keeps `discoverable = false` now carries an inline
+  comment recording why: no listable inventory, no CloudControl list support,
+  a defect worth recording, or AWS-managed flooding without a filterable
+  signal.
+
+- Polymorphic `auth` on the target config: `DefaultChainAuth` (the existing
+  default credential provider chain — env vars, shared config, IMDS/IRSA —
+  optionally pinned to a shared-config `profile`) or `OidcAuth` (federated
+  identity: an OIDC identity token from the paired oidc-credential broker,
+  exchanged for credentials by assuming a role you name in the target
+  account). `auth` and the legacy flat `profile` field are mutually
+  exclusive; setting both is rejected at eval.
+
+  `OidcAuth` requires a formae agent with oidc-credential broker support
+  (`minFormaeVersion = "0.89.0"` in `formae-plugin.pkl`). Paired with an
+  older agent, or an agent with no broker paired, credential resolution
+  fails closed with an explicit error rather than ever falling back to
+  ambient credentials.
+
+  **Known limitation: the STS exchange uses a default-configured client.**
+  The `AssumeRoleWithWebIdentity` call that turns the identity token into
+  credentials is made with a region-only STS client, so
+  `AWS_USE_FIPS_ENDPOINT`, `AWS_ENDPOINT_URL_STS` and a custom CA bundle are
+  not honoured on that one exchange. Proxy settings are honoured, because
+  they come from the HTTP transport rather than from SDK configuration.
+  Every other AWS call the plugin makes uses the fully configured client and
+  is unaffected.
+
+  **One-time bookkeeping, not drift.** Existing targets carry no `auth`
+  block, and adding the field to the schema is a change formae records
+  against every target's stored metadata regardless of whether the target's
+  declared configuration actually changed. Expect a single, resource-inert
+  target-metadata update on the first reconcile after upgrading to this
+  version — no cloud resource is read, created, updated or destroyed by it.
+  If a stack shows exactly one such update per target immediately after the
+  upgrade, this is why; it is not drift and does not recur.
+
+- `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` support. A PostgreSQL
+  database inside an Aurora cluster, and its owning login role, are now
+  first-class declared resources. CloudControl models a cluster and its
+  instances but nothing inside the engine, so both are driven directly over the
+  **RDS Data API** — the plugin needs no network path to the database, only
+  IAM-authenticated HTTPS against the cluster ARN and a Secrets Manager secret
+  in the standard RDS JSON format. Aurora PostgreSQL only; a cluster running
+  another engine, or one without the Data API enabled, is rejected with an
+  explicit error rather than a failed statement.
+
+  Modelled on the database: `clusterArn`, `adminSecretArn`, `databaseName` and
+  `owner`. On the role: `clusterArn`, `adminSecretArn`, `roleName`, `password`
+  and `canLogin`. Both expose resolvables so a database, its owning role and the
+  secret holding its credentials are wired through the resource graph rather
+  than by naming convention. The admin secret is deliberately mutable — an
+  update proves the replacement credential can reach the cluster before anything
+  starts depending on it — while the cluster and the object's name are
+  create-only.
+
+  **The password never reaches the SQL text.** A `PASSWORD` clause cannot take a
+  bind parameter, so the plugin composes the PostgreSQL SCRAM-SHA-256 verifier
+  itself and sends that; the plaintext appears in neither CloudTrail's
+  `rds-data` events nor any statement logging. The password field is write-only
+  and opaque, so it is hashed at rest and never compared against the salted
+  verifier the engine stores. Rotation is therefore driven from the change being
+  applied: the password is written when that change touches it, and also when it
+  carries no usable signal — a missed rotation is a correctness bug, while
+  writing the same password again converges. Each write stores a freshly salted
+  verifier, so a redundant one is convergent rather than a no-op. A password the
+  plugin cannot read is treated the same way. Once formae holds an opaque value
+  only as a hash it stops sending the value itself, and what arrives in its place
+  is deliberately not the type the schema declares; an update that is not writing
+  the password tolerates that rather than failing, so the login attribute and the
+  admin credential stay changeable, while one that *is* writing it fails outright
+  rather than storing something no client could authenticate against.
+  Passwords must be printable ASCII (U+0020 to
+  U+007E), the range PostgreSQL's SASLprep normalization passes through
+  unchanged; Secrets Manager's generated passwords already satisfy this.
+
+  **Destroying either resource is destructive and has no snapshot or retain
+  semantics.** Destroying a database runs `DROP DATABASE`, escalating to
+  `WITH (FORCE)` — which terminates open sessions — only when the engine reports
+  the database in use. Destroying a role runs `DROP ROLE`, which PostgreSQL
+  refuses while the role owns any object, including objects in databases formae
+  does not manage; that refusal is surfaced as an actionable error naming the
+  role. Creating a database also grants the admin membership of the owning role
+  where PostgreSQL requires it, and that grant is never revoked: it confers
+  nothing the admin could not re-grant itself, and a revoke could not be made
+  atomic.
+
+  Neither type is discoverable — enumerating objects inside a cluster needs
+  admin credentials discovery cannot supply — so listing fails with an explicit
+  unsupported error rather than an empty page. The principal running the plugin
+  needs `rds-data:ExecuteStatement` on the cluster,
+  `secretsmanager:GetSecretValue` on the admin secret (plus `kms:Decrypt` on its
+  key for a customer-managed key), and `rds:DescribeDBClusters` for the
+  create-time preflight.
+
+  **A cluster that is not serving yet is waited out, not failed.** An Aurora
+  cluster reports itself available, with the Data API enabled, for several
+  minutes before it can answer a statement — until it has a running DB instance
+  every call is rejected. Creating a database or a role probes the cluster
+  first, and a cluster that cannot answer yet defers the create: the operation
+  reports itself as still running and finishes from a later status check, once
+  the cluster serves. Declaring a cluster, its instance and a database in one
+  forma therefore works, instead of exhausting the retry budget minutes short of
+  the cluster being ready. The wait is bounded — a create still waiting after
+  fifteen minutes fails, naming the cluster — and no statement that changes
+  anything is sent until the cluster answers. A wait interrupted by the plugin
+  restarting fails and asks for the apply to be run again, rather than reporting
+  a create that never ran. Other conditions that clear on
+  their own (an endpoint still coming up, a resuming or unavailable database, a
+  service fault or timeout) are reported to the agent as recoverable on every
+  operation, so it retries them instead of failing the resource. Faults that
+  will not clear — access denied, an unusable secret, a rejected statement —
+  stay terminal, keep their diagnosis, and never start a wait.
+- Discovery for seven more resource types whose CloudControl list support was
+  verified against the type registry and a live account: `AWS::IAM::User`,
+  `AWS::IAM::VirtualMFADevice`, `AWS::ECS::CapacityProvider`,
+  `AWS::RDS::CustomDBEngineVersion`, `AWS::S3::AccessGrantsInstance`,
+  `AWS::Lambda::Permission` (scoped per function), and
+  `AWS::ElasticLoadBalancingV2::ListenerRule` (scoped per listener). Live
+  resources of these types now appear in inventory and can be brought under
+  management.
+- Discovery for `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, and
+  `AWS::CloudFront::Distribution`, and extract for
+  `AWS::CloudFront::Distribution`. Live API Gateway resources and methods and
+  CloudFront distributions now appear in inventory and can be brought under
+  management. Method has no CloudControl list handler, so the plugin
+  enumerates methods via the API Gateway control plane, scoped per REST API so
+  methods on the implicit root resource are discovered too.
+- S3 `BucketEncryption`: `ServerSideEncryptionRule` now models
+  `BlockedEncryptionTypes` (an `EncryptionType` listing of `NONE`/`SSE-C`), so
+  buckets that block SSE-C round-trip through extract and reconcile instead of
+  having the setting stripped on bring-under-management.
+- `AWS::CodeBuild::Project` support. A CodeBuild build project is now a
+  first-class declared resource. CloudControl reports the type as
+  non-provisionable, so the plugin drives it directly through the CodeBuild API.
+  Modelled: `name`, `description`, `serviceRole`, `source` (type, inline
+  `buildSpec`, `location`), `artifacts` (type, `location`, `name`, `packaging`),
+  `environment` (type, `computeType`, `image`, `privilegedMode`,
+  `imagePullCredentialsType`, `environmentVariables`), `cache` (type,
+  `location`, `modes`), `logsConfig` (CloudWatch Logs and S3 destinations),
+  `timeoutInMinutes`, `queuedTimeoutInMinutes`, `concurrentBuildLimit`, `tags`,
+  and the assigned `arn`. A project exposes `res.name` and `res.arn`
+  resolvables, so its service role, its log group and the image build that runs
+  on it are wired through the resource graph instead of by naming convention.
+  Note that CodeBuild's update call leaves an unspecified field untouched, so
+  every modelled field is sent on every update: removing a field from the forma
+  clears it rather than leaving the previous value in place.
+
+  Deliberately not modelled in this version: `vpcConfig`, `secondarySources` /
+  `secondaryArtifacts`, `fileSystemLocations`, `buildBatchConfig`, `badge`,
+  `triggers` (webhooks), and `visibility`. A project created outside formae is
+  likely to use at least one of them, and adopting it would silently drop that
+  configuration on the first update — so the resource is **not discoverable**
+  in this version. Discovery can be enabled once the full property surface is
+  modelled.
+- `AWS::Lambda::Version` now exposes a `res.functionArn` resolvable carrying
+  its qualified (versioned) function ARN, so a CloudFront distribution's
+  `lambdaFunctionAssociations` entry can reference a published version by
+  reference instead of a hand-edited literal ARN pin. Lambda@Edge rejects
+  `$LATEST`, so the association has always needed a versioned ARN; previously
+  that ARN had to be copied in by hand. Note the caveat this doesn't remove:
+  every field on `Version` is create-only, so a function code change publishes
+  a *replacement* version rather than updating the existing one. The safe
+  order is publish the new version, re-point the distribution at it, wait for
+  CloudFront to propagate the change, and only then delete the old version,
+  and a replicated Lambda@Edge version can stay undeletable for a while after
+  the association is removed. Exposing the resolvable removes the hand-edit;
+  it does not change that ordering.
+
+- `AWS::ECS::TaskDefinition`: `ContainerDefinition.image` now accepts a
+  resolvable (`String|formae.Resolvable`) instead of a bare `String`, so a
+  container image can be wired through the resource graph: an
+  `AWS::CodeBuild::ImageBuild` digest, an `AWS::ECR::Repository` URI, or any
+  other resolvable image reference. It was the only reference-shaped field on
+  the resource family still typed as a plain string, which forced the image to
+  be pinned by hand and re-pinned on every rebuild.
+
+- `AWS::ServiceDiscovery::PrivateDnsNamespace` and `AWS::ServiceDiscovery::Service`
+  support (AWS Cloud Map). A workload can now be registered for service discovery
+  from a forma: declare a private DNS namespace, declare a service in it, and
+  reference that service's `res.arn` from an ECS service's
+  `serviceRegistries[].registryArn`. ECS then registers each task's address as
+  the task starts and deregisters it as the task stops, so
+  `<service name>.<namespace name>` resolves to the live task addresses inside
+  the VPC. The ECS field already accepted a reference; until now there was no
+  resource to point it at.
+
+  The namespace exposes `res.id`, `res.arn`, `res.name` and `res.hostedZoneId`
+  resolvables. The hosted zone id matters because Cloud Map creates and owns a
+  Route53 private hosted zone for the namespace, and nothing else gives you a
+  handle on it.
+
+  CloudControl reports the namespace type as non-provisionable, so the plugin
+  drives it directly through the Cloud Map API. Its create, update and delete are
+  asynchronous operations that the plugin polls to completion. A delete that AWS
+  rejects because the namespace still holds services is retried under a single
+  timeout rather than failed outright, since ECS deregisters task instances
+  asynchronously after an ECS service is deleted and a stack destroy can
+  legitimately reach the namespace while that is still settling.
+
+  Two limitations to know about before adopting this. The namespace's `vpc` is
+  create-only and write-only, and the namespace is **not extractable**: Cloud Map
+  returns a namespace's VPC from no API and offers no way to change it, so an
+  extract could never populate the field and a namespace created outside formae
+  cannot be brought under management by extracting it. Discovery still lists
+  namespaces; only extraction is unavailable. Second, a namespace name must be
+  unique within a VPC, and a colliding create is accepted and then fails
+  asynchronously with a hosted-zone conflict rather than being rejected up front.
+
+  On the service, `dnsConfig.dnsRecords` is replaced as a whole on update, which
+  is what the AWS API itself does with that list. Health checking is Cloud Map's
+  own `healthCheckCustomConfig` for services in a private namespace;
+  `healthCheckConfig` is only valid in a public namespace and AWS rejects it
+  otherwise.
+
+  Deliberately not modelled in this version: `HttpNamespace`,
+  `PublicDnsNamespace`, and `Instance`. Instances are registered and deregistered
+  by ECS itself, and the other two namespace types are non-provisionable in the
+  same way as the private one, so each would need its own provisioner rather than
+  coming for free with a schema.
+
+- `AWS::CodeBuild::ImageBuild` gains `additionalTags`: immutable pins placed on
+  the manifest a build pushes, alongside `imageTag`. `imageTag` moves to the new
+  digest on every in-place rebuild, so a consumer that pinned the previous
+  digest lost the image it pinned — the rebuild left that manifest untagged, and
+  an untagged predecessor is exactly what the resource prunes. A pin gives the
+  predecessor a name of its own, so it is not untagged, so it survives: a
+  rollback target that outlives the next build.
+
+  Pins are **create-once**. A pin declared for the first time is placed on the
+  manifest that build produced, but only if the tag does not already exist — a
+  newly declared pin whose tag is taken fails the apply, naming the tag and the
+  digest it currently resolves to, so a reused release name cannot yield a green
+  apply whose rollback pin names an unrelated image. A pin carried over from the
+  previous apply is left exactly where it is. The plugin never moves and never
+  deletes a pin. Placement re-registers the identical manifest bytes and media
+  type, so the pin resolves to the same digest by construction, and adding one
+  does not force a rebuild — the build that produced the image is not re-run to
+  give it a second name.
+
+  Two consequences to declare against. Removing a pin from the listing is a
+  no-op in the registry, so a placed pin is removable only out of band or by a
+  lifecycle policy. And a repository that accumulates pins cannot be emptied by
+  tearing the `ImageBuild` down: teardown removes only `imageTag`, while every
+  pin is by design a manifest meant to outlive the build that produced it. Its
+  lifecycle becomes yours to manage — a repository lifecycle policy that ages
+  pins out, or an out-of-band delete. A formae-managed `AWS::ECR::Repository`
+  that still holds images cannot be destroyed, and `emptyOnDelete` does not
+  currently change that: CloudControl's delete carries no resource model, so the
+  repository's delete handler never sees the property.
+- Secrets Manager secrets adopt formae's first-class secret types. A secret's
+  value can now be referenced with `secret.res.secretValue`, and
+  `secret.res.secretValue.json("path")` reaches into a JSON payload. The
+  existing `res.secretString`, `res.arn`, `res.id` and `res.name` accessors
+  keep working unchanged.
+- Every secret-bearing property can now be bound to a formae generator, so the
+  credential is drawn (and rotated) by the agent instead of being pinned in the
+  forma file. Twelve fields accept a generator output, written
+  `pw.gen.value`: `AWS::EC2::VerifiedAccessTrustProvider`
+  `OidcOptions.clientSecret`, `AWS::EC2::VPNConnection`
+  `VpnTunnelOptionsSpecifications.preSharedKey`,
+  `AWS::ElasticLoadBalancingV2::Listener` and `...::ListenerRule`
+  `AuthenticateOidcConfig.clientSecret`, `AWS::IAM::ServerCertificate`
+  `privateKey`, `AWS::IAM::User` `LoginProfile.password`,
+  `AWS::Lambda::Permission` `eventSourceToken`, `AWS::RDS::DatabaseRole`
+  `password`, `AWS::RDS::DBCluster` `masterUserPassword`,
+  `AWS::RDS::DBInstance` `masterUserPassword` and `tdeCredentialPassword`, and
+  `AWS::SecretsManager::Secret` `secretString`. Every one of these fields was
+  already opaque and stays opaque, so a generated value is still hashed at
+  rest. Literal strings, `formae.Value`, `formae.SecretValue` and (where the
+  field already accepted one) `formae.Resolvable` keep working unchanged, and
+  the two fields that carry a pattern constraint on the literal
+  (`ServerCertificate.privateKey`, `Permission.eventSourceToken`) still reject
+  a string that does not match.
+
+### Changed
+
+- `AWS::RDS::DBInstance` no longer models `certificateDetails` as a schema
+  property. The field is read-only on AWS's side and its contents move on
+  their own: RDS rotates the server certificate automatically around its
+  half-life, so treating the details as a declarable property with a provider
+  default made an unchanged forma reject reconciles after every rotation. The
+  values are still stored with the resource and still referenceable through
+  the `certificateDetailsCAIdentifier` and `certificateDetailsValidTill`
+  resolvables. A forma that declared `certificateDetails` now fails at eval;
+  delete the block, the field never accepted a user value.
+
+- Every `hasProviderDefault` schema annotation now carries a recorded
+  disposition in `schema/provider-default-dispositions.json`, enforced by a
+  unit test: new annotations fail CI until classified, and rows for removed
+  fields fail as stale. Fields confirmed as provider-default-once are marked
+  `keep` with a pin; fields a co-actor legitimately writes (such as
+  `AWS::RDS::DBInstance.engineVersion`, which RDS moves under auto minor
+  version upgrades) are marked `co-owned` while their handling is designed.
+
+- `AWS::S3::Object` is no longer discoverable. A bucket's object count is
+  unbounded, and objects are data rather than infrastructure, so a discovery
+  scan enumerated every key in every bucket in the account — slow enough to
+  stall the scan on a real account, and it filled the inventory with rows
+  nobody had declared. Objects formae manages are created, read, updated and
+  destroyed exactly as before; they are simply no longer found by discovery, so
+  an existing object now has to be declared to be brought under management.
+
+- `AWS::CodeBuild::ImageBuild` prunes the predecessor manifest after an in-place
+  rebuild — behaviour present since the resource landed and not previously
+  written down. A rebuild moves `imageTag` to the new digest and leaves the
+  prior manifest untagged; the prune deletes it, so a co-managed repository
+  stays empty enough to tear down. It only ever deletes a manifest that carries
+  no tag at all, which is what lets the new `additionalTags` retain a
+  predecessor without changing the prune.
+
+- **Breaking.** `AWS::CodeBuild::ImageBuild` is now a pure build-and-push
+  action: it creates no IAM role, no CodeBuild project and no log group.
+  It runs one build on a project you declare and name, and its only effect in
+  the account is the pushed image. Previously (0.1.15) it idempotently created
+  and updated an internal IAM service role and CodeBuild project, leaving
+  resources in the account that no forma described and that no audit of the
+  forma would predict.
+
+  To migrate a forma:
+
+  - add `projectName`, resolved from the declared project's `res.name`;
+  - remove `serviceRoleArn`, `computeType`, `buildEnvironmentImage` and
+    `timeoutMinutes`; their equivalents are now Project properties
+    (`serviceRole`, `environment.computeType`, `environment.image`,
+    `timeoutInMinutes`);
+  - declare the `AWS::CodeBuild::Project`, the `AWS::IAM::Role` it runs as, and
+    the `AWS::Logs::LogGroup` it logs to. The project must use a privileged
+    `LINUX_CONTAINER` environment with `source.type = "NO_SOURCE"` and
+    `artifacts.type = "NO_ARTIFACTS"`; a project that does not is rejected with
+    a message naming the offending value before any build starts. The project's
+    own build spec is a placeholder — the image build supplies the spec it runs
+    per build as an override, and never reads the project's.
+
+  A complete, copy-pasteable five-resource forma, with the exact IAM policy the
+  build needs, is in the
+  [`codebuild-image-build` example](https://github.com/platform-engineering-labs/formae-plugin-aws/tree/main/examples/codebuild-image-build).
+
+  **Sequencing:** do not bump the aws plugin pin in a consuming infrastructure
+  repository until that repository's forma declares the Project, Role and
+  LogGroup and passes `projectName`. `projectName` is required, so an
+  un-migrated `ImageBuild` no longer evaluates.
+- The internally-created CodeBuild projects and IAM roles from previous versions
+  are **no longer deleted when an ImageBuild is torn down**, and are not
+  adopted. Remove them once, by hand. Their names are fully derivable, so you
+  can compute the exact set rather than deleting by prefix and hoping: the
+  project was named `formae-imgbuild-` followed by the first 12 lowercase hex
+  characters of the SHA-256 of the exact string `<ecrRepositoryUri>|<imageTag>`
+  (the two values joined by a single `|`, with no trailing newline), and the
+  role was that same name with `-role` appended. The project declared no log
+  configuration, so CodeBuild created its default log group at
+  `/aws/codebuild/<project name>`; those groups are orphaned too and go with
+  them. For each `ImageBuild` in your forma, using the values it used:
+
+  ```bash
+  # its ecrRepositoryUri as resolved, not as written: the literal repository URI
+  repo_uri="<account>.dkr.ecr.<region>.amazonaws.com/<repository>"
+  tag="<imageTag>"
+
+  short=$(printf '%s' "$repo_uri|$tag" | sha256sum | cut -c1-12)     # shasum -a 256 on macOS
+
+  echo "project:   formae-imgbuild-$short"
+  echo "role:      formae-imgbuild-$short-role"
+  echo "log group: /aws/codebuild/formae-imgbuild-$short"
+  ```
+
+  Deleting the role requires deleting its inline policy, named
+  `formae-imagebuild-build`, first. A forma that supplied its own
+  `serviceRoleArn` never had an internal role created for it, so it has only the
+  project and that project's log group to clean up.
+- Migrating an existing `ImageBuild` is not an in-place update. `projectName` is
+  part of the resource's identity, so adding it re-creates the resource: the new
+  build runs and pushes the declared tag again. On a repository with mutable tags
+  that re-tags the same content; on a repository with immutable tags the push is
+  rejected. If you have an `ImageBuild` from 0.1.15 or 0.1.16 pushing to an
+  immutable repository, **bump `imageTag` as part of the migration** so the
+  re-created resource pushes a tag that does not yet exist. Note also that the
+  rebuild gate hashes a different set of inputs in this release — it now includes
+  a fingerprint of the project the build runs on, so swapping the builder image
+  out from under a build correctly invalidates the image — so a hash recorded by
+  an earlier version is not comparable with one recorded by this one.
+
+  One caveat on that re-create, if you actually have an `ImageBuild` under
+  management from 0.1.15 or 0.1.16: the identifier stored for it has two parts
+  (repository and tag), and this release's identifier has three (repository, tag
+  and project). The delete half of the re-create reads that stored identifier
+  and rejects it, so the re-create cannot complete on its own. Remove the old
+  resource from formae's state and delete its pushed image out of band before
+  declaring the new five-resource forma. A later release will accept the older
+  two-part identifier so this is unnecessary.
+
+### Deprecated
+
+- The flat `profile` field on the target config is deprecated in favor of
+  `auth = new DefaultChainAuth { profile = ... }`. It continues to work
+  unchanged — a target set this way still authenticates via the default
+  credential chain pinned to that profile — and logs one deprecation warning
+  per plugin process rather than on every call. There is no removal in this
+  release; flat `profile` will be removed at a future major version, posted
+  ahead of time.
+
+  **Migrating is a normal target update.** Both `profile` and `auth` are
+  declared mutable, so rewriting a target from the flat `profile` to an
+  `auth` block changes the target's configuration in place and touches no
+  cloud resource.
+
+  This holds only on an agent at or above the release that carries these
+  hints. An **older** agent does not see them, classifies the dropped
+  top-level `Profile` key as an immutable change, and plans a target
+  replace, which destroys and recreates every resource on that target.
+  Upgrade the agent first, then migrate.
+
+### Fixed
+
+- Updating a writeOnly property no longer fails. Cloud Control accepts only an
+  `add` operation for a property it marks `writeOnlyProperties`, since such a
+  property is absent from every read and there is nothing there to replace, and
+  it rejected the `replace` that formae plans. Cloud Control names the offending
+  paths when it rejects one, so the plugin now rewrites exactly those operations
+  and resends. This covers every resource type without the plugin having to know
+  which properties are writeOnly ahead of time: `AWS::Lambda::Function` has ten
+  such properties (`Code/ZipFile` among them, so an inline-code function could
+  not be changed at all) and `AWS::RDS::DBInstance` sixteen. It replaces the
+  hardcoded special case that did the same for `AWS::SecretsManager::Secret`
+  `SecretString` alone.
+
+- `AWS::RDS::Database` and `AWS::RDS::DatabaseRole` no longer fail when the
+  cluster's admin credential is momentarily refused. RDS rotates an RDS-managed
+  master-user secret on its own schedule, starting within a minute of the
+  cluster being created, and while a rotation settles the Data API rejects some
+  statements authenticated with that secret while sibling statements carrying
+  the same secret succeed a second either side. That authentication failure was
+  classified as an invalid request, which the agent does not retry, so a
+  create landed on a coin flip. It is now reported as not-yet-stabilized: the
+  readiness probe parks the create and polls, and a rotation that lands
+  mid-statement is retried.
+
+- `AWS::CloudFront::Distribution` `Origin.originCustomHeaders[].headerValue` is
+  now opaque. A custom origin header is the documented way to stop callers
+  reaching an origin directly: CloudFront sends the header and the origin rejects
+  requests without it, which makes the value a shared credential, but it was
+  typed as a plain `String` and so was stored in cleartext. `headerName` is
+  deliberately left non-opaque, because it is the identity half of the pair and
+  is used to match a header across a diff.
+
+- `AWS::ApiGateway::ApiKey` `value` is now opaque, so an author-supplied API key
+  is hashed at rest instead of being stored in cleartext. The field carries the
+  credential clients present in the `x-api-key` header, but it was typed as a
+  plain `String`, and a field is marked opaque from its type: without a
+  `formae.SecretValue` in the union the agent had nothing telling it to hash the
+  value, so a declared key persisted in the clear. It now names
+  `formae.ValueSource` like every other credential field here, so it also
+  accepts a generator binding. It still accepts a literal string, and AWS still
+  generates the key when none is declared, so a forma that does not set `value`
+  is unaffected.
+
+- `AWS::Lambda::Version` discovery now surfaces published versions. The list
+  post-filter compared the parent function's name against the ARN form
+  CloudControl echoes back, dropping every listed version, so version
+  discovery silently found nothing.
+
+- `AWS::Lambda::Permission` discovery now finds permissions attached to a
+  published version or an alias, not only those on the bare function. Lambda
+  keeps a separate resource policy per qualifier and the CloudControl list
+  only returns the unqualified one, so a permission granted against a
+  version's or alias's ARN (the shape API Gateway and Lambda@Edge wiring
+  uses) was invisible to discovery. The plugin now walks every policy scope
+  through the Lambda control plane.
+
+- An `AWS::CertificateManager::Certificate` with `subjectAlternativeNames` no
+  longer plans a destructive replace on every reconcile. ACM injects the
+  certificate's primary `domainName` into the subject alternative names it
+  returns from `DescribeCertificate`, whatever was requested, and
+  `subjectAlternativeNames` is `createOnly` — so a certificate declaring only
+  the additional names differed from the read-back on an immutable property and
+  every reconcile planned a destroy-and-recreate of an issued certificate,
+  cascading to the DNS validation records wired to its resolvables. The
+  read-back now reports the names *other than* the primary domain, so an
+  unchanged certificate reconciles as a no-op, while a genuine change to the
+  list still replaces the certificate. Declared names are unchanged on the way
+  out: whatever the forma lists is still sent to ACM verbatim.
+
+  The canonical way to declare `subjectAlternativeNames` is therefore **the
+  additional names only, excluding the primary `domainName`**. If your forma
+  lists the primary domain in `subjectAlternativeNames` — the workaround for
+  this bug — it will plan a replacement of the issued certificate once you pick
+  up this release. Remove the primary domain from the list. That edit is
+  declaration-only: ACM stores the same certificate either way, so the
+  declaration converges against the existing certificate with no cloud change.
+  Simulate before applying to confirm the plan is empty.
+
+- Resources are no longer reported as failed while AWS is still rate-limiting a
+  request that would have succeeded. When CloudControl throttled a call, the
+  plugin absorbed the retries inside a single request to the agent, which could
+  take around three minutes and left the agent with no sign of progress; the
+  agent's check for an unresponsive plugin fired after 40 seconds and failed the
+  resource, cascading to everything that depended on it. Applying many resources
+  at once made this most likely, and subnet creation was the usual casualty. The
+  plugin now bounds how long any one request may spend retrying and reports the
+  work as still in progress instead, so the agent sees continuous progress while
+  the retries continue. Requires formae 0.89.0 or later for the matching change
+  on the agent side.
+
+- A Secrets Manager resource policy is now replaced as a whole document when it
+  changes. Individual statements were compared as a set, so a patch-mode update
+  that edited a statement added the new one without removing the old, leaving
+  the live policy holding both. This was previously masked by a separate defect
+  that recreated the policy on every update; with that fixed in formae 0.89.0,
+  policy updates apply in place and need this hint to be correct.
+
+## [0.1.16]
+
+### Changed
+
+- Bump examples to the latest formae 0.88.0 schema.
+
 ## [0.1.15]
 
 Requires formae >= 0.88.0.

@@ -53,7 +53,7 @@ forma {
         dimensionConfigurations = new {
           new ses.DimensionConfiguration {
             dimensionName = "MessageType"
-            dimensionValueSource = "MESSAGE_TAG"
+            dimensionValueSource = "messageTag"
             defaultDimensionValue = "transactional"
           }
         }
