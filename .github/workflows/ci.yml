@@ -2,15 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
   workflow_dispatch:
     inputs:
       run_conformance:
         description: 'Run conformance tests'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 # Workflow-level group: holds the lock for the entire run so the matrix
