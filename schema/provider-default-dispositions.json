@@ -451,6 +451,11 @@
       "disposition": "co-owned"
     },
     {
+      "key": "ec2/networkinterface.pkl#NetworkInterface.enablePrimaryIpv6",
+      "disposition": "keep",
+      "pin": "documentation"
+    },
+    {
       "key": "ec2/networkinterface.pkl#NetworkInterface.groupSet",
       "disposition": "co-owned"
     },

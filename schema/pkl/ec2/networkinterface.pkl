@@ -59,7 +59,7 @@ open class NetworkInterface extends formae.Resource {
     @aws.FieldHint
     description: String?
 
-    @aws.FieldHint
+    @aws.FieldHint { hasProviderDefault = true }
     enablePrimaryIpv6: Boolean?
 
     @aws.FieldHint { hasProviderDefault = true }
