@@ -1,7 +1,7 @@
 # AWS plugin for formae
 
 [![CI](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/ci.yml)
-[![Monthly](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/monthly.yml/badge.svg?branch=main)](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/monthly.yml)
+[![Weekly](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/weekly.yml/badge.svg?branch=main)](https://github.com/platform-engineering-labs/formae-plugin-aws/actions/workflows/weekly.yml)
 
 AWS resource plugin for
 [formae](https://github.com/platform-engineering-labs/formae). This plugin
