@@ -97,6 +97,12 @@ type Config struct {
 	// authPolicy is the plugin instance's immutable authentication-method
 	// allowlist. Its zero value is unrestricted.
 	authPolicy AuthPolicy
+
+	// parseErr records a target configuration that could not be decoded.
+	// Building AWS options from a half-decoded Config would silently fall back
+	// to the host's ambient region and credentials, where a read of a live
+	// resource returns a genuine NotFound and sync tombstones it.
+	parseErr error
 }
 
 // WithOidcDeps threads the plugin instance's OidcDeps onto Config without
@@ -179,6 +185,10 @@ func (c *Config) effectiveAuth() (string, json.RawMessage, error) {
 // the profile threaded through) without exercising real credential/config-
 // file resolution.
 func (c *Config) awsConfigOptions() ([]func(*awsconfig.LoadOptions) error, error) {
+	if c.parseErr != nil {
+		return nil, c.parseErr
+	}
+
 	synthesized := isAuthAbsent(c.Auth)
 
 	authType, rawAuth, err := c.effectiveAuth()
@@ -254,7 +264,9 @@ func FromTargetConfig(targetConfig json.RawMessage) *Config {
 		return &Config{}
 	}
 	config := &Config{}
-	_ = json.Unmarshal(targetConfig, config)
+	if err := json.Unmarshal(targetConfig, config); err != nil {
+		config.parseErr = fmt.Errorf("config: malformed target configuration: %w", err)
+	}
 
 	return config
 }
