@@ -14,7 +14,9 @@ import (
 // HandleCloudControlError checks if the provided error is a known AWS Cloud Control API exception
 // and returns the corresponding HandlerErrorCode, a boolean indicating if it was identified,
 // and the original error for further processing if needed.
-// E.g. TypeNotFoundException is mapped to NotFound
+//
+// Only ResourceNotFoundException maps to NotFound: a sync read that returns
+// NotFound tombstones the resource, so no other exception may claim it.
 func HandleCloudControlError(err error) (cctypes.HandlerErrorCode, bool) {
 	if err == nil {
 		return "", false
@@ -90,8 +92,8 @@ func HandleCloudControlError(err error) (cctypes.HandlerErrorCode, bool) {
 		// Often maps to AccessDenied or InvalidRequest
 		return cctypes.HandlerErrorCodeAccessDenied, true
 	case errors.As(underlyingErr, &requestTokenNotFound):
-		// Often maps to NotFound or InvalidRequest
-		return cctypes.HandlerErrorCodeNotFound, true
+		// The request token is unknown, not the resource
+		return cctypes.HandlerErrorCodeInvalidRequest, true
 	case errors.As(underlyingErr, &resourceConflict):
 		return cctypes.HandlerErrorCodeResourceConflict, true
 	case errors.As(underlyingErr, &serviceInternalError):
@@ -101,8 +103,8 @@ func HandleCloudControlError(err error) (cctypes.HandlerErrorCode, bool) {
 	case errors.As(underlyingErr, &throttling):
 		return cctypes.HandlerErrorCodeThrottling, true
 	case errors.As(underlyingErr, &typeNotFound):
-		// Often maps to NotFound or InvalidRequest
-		return cctypes.HandlerErrorCodeNotFound, true
+		// The resource type is unknown in this region/account, not the resource
+		return cctypes.HandlerErrorCodeInvalidRequest, true
 	case errors.As(underlyingErr, &unsupportedAction):
 		return cctypes.HandlerErrorCodeInvalidRequest, true
 	default:

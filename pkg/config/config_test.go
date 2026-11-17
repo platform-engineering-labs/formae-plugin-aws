@@ -133,6 +133,18 @@ func TestToAwsConfig_UnknownAuthType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown Auth type")
 }
 
+// TestToAwsConfig_MalformedTargetConfigFailsClosed covers a target config that
+// does not decode: falling back to the host's ambient region and credentials
+// would point reads at the wrong account, where live resources read as NotFound.
+func TestToAwsConfig_MalformedTargetConfigFailsClosed(t *testing.T) {
+	c := FromTargetConfig(json.RawMessage(`{"Region":42}`))
+
+	_, err := c.ToAwsConfig(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "malformed target configuration")
+}
+
 func TestToAwsConfig_OidcMissingRoleArn(t *testing.T) {
 	for _, auth := range []string{
 		`{"Type":"Oidc"}`,

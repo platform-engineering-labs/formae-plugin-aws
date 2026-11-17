@@ -656,8 +656,8 @@ func (c *Client) classifyUnobservedStatus(ctx context.Context, request *resource
 	log := plugin.LoggerFromContext(ctx)
 
 	// An unknown request token needs its own answer, because neither default is
-	// right: the shared error helper maps it to NotFound, which the operator
-	// treats as recoverable and would re-invoke the CRUD on, while this layer's
+	// right: the shared error helper maps it to InvalidRequest, a terminal
+	// failure that misstates the outcome as a bad request, while this layer's
 	// own predicate calls it non-recoverable and would never reach the branch
 	// below. Checked before the budget sentinel because a status call that
 	// crossed its deadline returns this exception wrapped in it, and re-polling
