@@ -7,10 +7,13 @@ package ecs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
@@ -101,6 +104,9 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 	if err != nil {
 		return nil, err
 	}
+	if result != nil && result.ErrorCode == resource.OperationErrorCodeNotFound {
+		return s.confirmNotFound(ctx, request, result), nil
+	}
 	if result == nil || result.ErrorCode != "" || result.Properties == "" {
 		return result, nil
 	}
@@ -150,6 +156,67 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 		ResourceType: result.ResourceType,
 		Properties:   string(out),
 	}, nil
+}
+
+// confirmNotFound checks a CloudControl NotFound against ECS itself before it
+// is returned. CloudControl answers NotFound for a live service when its
+// resource handler cannot reach the ECS API, and formae's sync drops the
+// record of a resource whose read reports NotFound. So NotFound is only
+// returned when ECS positively reports the service absent or on its way out:
+// a MISSING or INACTIVE failure, a status other than ACTIVE, or a cluster that
+// no longer exists. Anything else, including a failed or empty answer from
+// ECS, is returned as an error the caller retries.
+func (s *Service) confirmNotFound(ctx context.Context, request *resource.ReadRequest, notFound *resource.ReadResult) *resource.ReadResult {
+	cluster, service, ok := parseClusterAndServiceFromNativeID(request.NativeID)
+	if !ok || s.ecsClientFactory == nil {
+		return notFound
+	}
+
+	unconfirmed := func(code resource.OperationErrorCode, reason string) *resource.ReadResult {
+		plugin.LoggerFromContext(ctx).Warn("AWS::ECS::Service Read: CloudControl reported NotFound but ECS did not confirm it",
+			"nativeID", request.NativeID, "reason", reason)
+		return &resource.ReadResult{ResourceType: notFound.ResourceType, ErrorCode: code}
+	}
+
+	ecsCli, err := s.ecsClientFactory(s.cfg)
+	if err != nil {
+		return unconfirmed(resource.OperationErrorCodeServiceInternalError, "building ECS client: "+err.Error())
+	}
+	out, err := ecsCli.DescribeServices(ctx, &awsecs.DescribeServicesInput{
+		Cluster:  &cluster,
+		Services: []string{service},
+	})
+	if err != nil {
+		var clusterNotFound *ecstypes.ClusterNotFoundException
+		if errors.As(err, &clusterNotFound) {
+			return notFound
+		}
+		// Only codes that say something specific are kept; an unrecognized
+		// failure stays retryable rather than terminal.
+		code, _ := classifyAWSError(err)
+		switch code {
+		case resource.OperationErrorCodeThrottling,
+			resource.OperationErrorCodeAccessDenied,
+			resource.OperationErrorCodeInvalidCredentials:
+		default:
+			code = resource.OperationErrorCodeServiceInternalError
+		}
+		return unconfirmed(code, "DescribeServices: "+err.Error())
+	}
+
+	for _, failure := range out.Failures {
+		switch aws.ToString(failure.Reason) {
+		case "MISSING", "INACTIVE":
+			return notFound
+		}
+	}
+	if len(out.Services) == 0 {
+		return unconfirmed(resource.OperationErrorCodeServiceInternalError, "DescribeServices returned neither the service nor a failure for it")
+	}
+	if status := aws.ToString(out.Services[0].Status); status == "ACTIVE" {
+		return unconfirmed(resource.OperationErrorCodeServiceInternalError, "DescribeServices reports the service ACTIVE")
+	}
+	return notFound
 }
 
 // decodeLoadBalancersFromProps converts the JSON-shaped LoadBalancers field

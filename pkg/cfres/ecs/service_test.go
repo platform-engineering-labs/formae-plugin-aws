@@ -13,8 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	awselbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -508,4 +512,123 @@ func TestRead_EmptyLoadBalancers_EmitsEmptyEndpoints(t *testing.T) {
 	assert.NotNil(t, out)
 	assert.Contains(t, out.Properties, `"Endpoints":{}`)
 	mockELB.AssertExpectations(t)
+}
+
+// CloudControl answers NotFound for a live service when its handler cannot
+// reach ECS, and a NotFound read makes formae drop the record. The read must
+// only report NotFound when ECS itself confirms the service is absent.
+func TestService_Read_ConfirmsCloudControlNotFoundWithECS(t *testing.T) {
+	const nativeID = "arn:aws:ecs:us-west-2:123456789012:service/my-cluster/my-svc|my-cluster"
+
+	tests := []struct {
+		name        string
+		describeOut *awsecs.DescribeServicesOutput
+		describeErr error
+		want        resource.OperationErrorCode
+	}{
+		{
+			name:        "ECS reports the service MISSING",
+			describeOut: &awsecs.DescribeServicesOutput{Failures: []ecstypes.Failure{{Reason: aws.String("MISSING")}}},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS reports an INACTIVE tombstone",
+			describeOut: &awsecs.DescribeServicesOutput{Failures: []ecstypes.Failure{{Reason: aws.String("INACTIVE")}}},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS returns the service INACTIVE",
+			describeOut: &awsecs.DescribeServicesOutput{Services: []ecstypes.Service{{Status: aws.String("INACTIVE")}}},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS returns the service DRAINING",
+			describeOut: &awsecs.DescribeServicesOutput{Services: []ecstypes.Service{{Status: aws.String("DRAINING")}}},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "the cluster no longer exists",
+			describeErr: &ecstypes.ClusterNotFoundException{},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS returns the service ACTIVE",
+			describeOut: &awsecs.DescribeServicesOutput{Services: []ecstypes.Service{{Status: aws.String("ACTIVE")}}},
+			want:        resource.OperationErrorCodeServiceInternalError,
+		},
+		{
+			name:        "ECS answers with neither a service nor a failure",
+			describeOut: &awsecs.DescribeServicesOutput{},
+			want:        resource.OperationErrorCodeServiceInternalError,
+		},
+		{
+			name:        "ECS fails with a server error",
+			describeErr: &ecstypes.ServerException{},
+			want:        resource.OperationErrorCodeServiceInternalError,
+		},
+		{
+			name:        "ECS cannot be reached",
+			describeErr: errors.New("dial tcp: connect timed out"),
+			want:        resource.OperationErrorCodeServiceInternalError,
+		},
+		{
+			name:        "ECS throttles",
+			describeErr: &smithy.GenericAPIError{Code: "ThrottlingException"},
+			want:        resource.OperationErrorCodeThrottling,
+		},
+		{
+			name:        "ECS denies access",
+			describeErr: &smithy.GenericAPIError{Code: "AccessDeniedException"},
+			want:        resource.OperationErrorCodeAccessDenied,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			ccx := &mockCCXClient{}
+			ccx.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+				ResourceType: "AWS::ECS::Service",
+				ErrorCode:    resource.OperationErrorCodeNotFound,
+			}, nil)
+			ecsCli := &mockECSClient{}
+			ecsCli.On("DescribeServices", ctx, mock.MatchedBy(func(in *awsecs.DescribeServicesInput) bool {
+				return aws.ToString(in.Cluster) == "my-cluster" && len(in.Services) == 1 && in.Services[0] == "my-svc"
+			})).Return(tt.describeOut, tt.describeErr)
+
+			svc := newServiceWithMocks(ccx, ecsCli, &mockELBv2Client{})
+			out, err := svc.readWithClient(ctx, ccx, &resource.ReadRequest{
+				ResourceType: "AWS::ECS::Service",
+				NativeID:     nativeID,
+			})
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, out.ErrorCode)
+			assert.Equal(t, "AWS::ECS::Service", out.ResourceType)
+			assert.Empty(t, out.Properties)
+			ecsCli.AssertNumberOfCalls(t, "DescribeServices", 1)
+		})
+	}
+}
+
+// Only a NotFound is checked against ECS; every other CloudControl error is
+// returned as it came.
+func TestService_Read_DoesNotConsultECSForOtherErrors(t *testing.T) {
+	ctx := context.Background()
+	ccx := &mockCCXClient{}
+	ccx.On("ReadResource", ctx, mock.Anything).Return(&resource.ReadResult{
+		ResourceType: "AWS::ECS::Service",
+		ErrorCode:    resource.OperationErrorCodeThrottling,
+	}, nil)
+	ecsCli := &mockECSClient{}
+
+	svc := newServiceWithMocks(ccx, ecsCli, &mockELBv2Client{})
+	out, err := svc.readWithClient(ctx, ccx, &resource.ReadRequest{
+		ResourceType: "AWS::ECS::Service",
+		NativeID:     "arn:aws:ecs:us-west-2:123456789012:service/my-cluster/my-svc|my-cluster",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, resource.OperationErrorCodeThrottling, out.ErrorCode)
+	ecsCli.AssertNotCalled(t, "DescribeServices", mock.Anything, mock.Anything)
 }
