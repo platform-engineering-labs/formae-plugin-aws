@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.70.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.299.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.347.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.5
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.77.0
 	github.com/aws/aws-sdk-go-v2/service/elasticbeanstalk v1.33.20
