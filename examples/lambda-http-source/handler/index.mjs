@@ -1,3 +1,7 @@
+// © 2026 Platform Engineering Labs Inc.
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 // Minimal Lambda handler for the lambda-http-source example.
 //
 // Runtime: nodejs20.x (see main.pkl). The function is wired as `index.handler`,
