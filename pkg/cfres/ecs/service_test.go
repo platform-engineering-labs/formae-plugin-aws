@@ -117,7 +117,9 @@ func TestService_Read_PassesThroughWhenServiceArnMissing(t *testing.T) {
 	assert.Equal(t, "my-cluster", props["Cluster"])
 }
 
-func TestService_Read_PropagatesErrorResult(t *testing.T) {
+// A NotFound for a native ID that cannot be split into cluster and service
+// cannot be checked against ECS, so it must not be passed on as NotFound.
+func TestService_Read_NotFoundWithMalformedNativeID_InvalidRequest(t *testing.T) {
 	ctx := context.Background()
 	client := &mockCCXReadClient{}
 	innerResult := &resource.ReadResult{
@@ -125,15 +127,17 @@ func TestService_Read_PropagatesErrorResult(t *testing.T) {
 		ErrorCode:    resource.OperationErrorCodeNotFound,
 	}
 	client.On("ReadResource", ctx, mock.Anything).Return(innerResult, nil)
+	ecsCli := &mockECSClient{}
 
-	svc := &Service{cfg: &config.Config{}}
+	svc := newServiceWithMocks(nil, ecsCli, nil)
 	out, err := svc.readWithClient(ctx, client, &resource.ReadRequest{
 		ResourceType: "AWS::ECS::Service",
 		NativeID:     "missing",
 	})
 
 	assert.NoError(t, err)
-	assert.Equal(t, resource.OperationErrorCodeNotFound, out.ErrorCode)
+	assert.Equal(t, resource.OperationErrorCodeInvalidRequest, out.ErrorCode)
+	ecsCli.AssertNotCalled(t, "DescribeServices", mock.Anything, mock.Anything)
 }
 
 func TestService_Read_PropagatesInnerError(t *testing.T) {
@@ -550,6 +554,26 @@ func TestService_Read_ConfirmsCloudControlNotFoundWithECS(t *testing.T) {
 			name:        "the cluster no longer exists",
 			describeErr: &ecstypes.ClusterNotFoundException{},
 			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS has purged the service",
+			describeErr: &smithy.GenericAPIError{Code: "ServiceNotFoundException"},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS has purged the service (typed error)",
+			describeErr: &ecstypes.ServiceNotFoundException{},
+			want:        resource.OperationErrorCodeNotFound,
+		},
+		{
+			name:        "ECS returns the service without a status",
+			describeOut: &awsecs.DescribeServicesOutput{Services: []ecstypes.Service{{}}},
+			want:        resource.OperationErrorCodeServiceInternalError,
+		},
+		{
+			name:        "ECS returns the service with an unknown status",
+			describeOut: &awsecs.DescribeServicesOutput{Services: []ecstypes.Service{{Status: aws.String("PROVISIONING")}}},
+			want:        resource.OperationErrorCodeServiceInternalError,
 		},
 		{
 			name:        "ECS returns the service ACTIVE",

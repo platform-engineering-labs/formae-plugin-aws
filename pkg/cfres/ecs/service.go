@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/smithy-go"
 	"github.com/platform-engineering-labs/formae/pkg/plugin"
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 	"github.com/platform-engineering-labs/formae-plugin-aws/pkg/cfres/prov"
@@ -163,19 +164,25 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 // resource handler cannot reach the ECS API, and formae's sync drops the
 // record of a resource whose read reports NotFound. So NotFound is only
 // returned when ECS positively reports the service absent or on its way out:
-// a MISSING or INACTIVE failure, a status other than ACTIVE, or a cluster that
-// no longer exists. Anything else, including a failed or empty answer from
-// ECS, is returned as an error the caller retries.
+// a MISSING or INACTIVE failure, a DRAINING or INACTIVE status, or a service
+// or cluster that no longer exists. Anything else, including a failed or empty
+// answer from ECS or a status this code does not know, is returned as an error
+// that leaves the record in place.
 func (s *Service) confirmNotFound(ctx context.Context, request *resource.ReadRequest, notFound *resource.ReadResult) *resource.ReadResult {
-	cluster, service, ok := parseClusterAndServiceFromNativeID(request.NativeID)
-	if !ok || s.ecsClientFactory == nil {
-		return notFound
-	}
-
 	unconfirmed := func(code resource.OperationErrorCode, reason string) *resource.ReadResult {
 		plugin.LoggerFromContext(ctx).Warn("AWS::ECS::Service Read: CloudControl reported NotFound but ECS did not confirm it",
 			"nativeID", request.NativeID, "reason", reason)
 		return &resource.ReadResult{ResourceType: notFound.ResourceType, ErrorCode: code}
+	}
+
+	cluster, service, ok := parseClusterAndServiceFromNativeID(request.NativeID)
+	if !ok {
+		// Without a cluster and service there is nothing to ask ECS, and a
+		// NotFound nobody confirmed is exactly what must not be returned.
+		return unconfirmed(resource.OperationErrorCodeInvalidRequest, "malformed NativeID: "+request.NativeID)
+	}
+	if s.ecsClientFactory == nil {
+		return unconfirmed(resource.OperationErrorCodeServiceInternalError, "no ECS client configured")
 	}
 
 	ecsCli, err := s.ecsClientFactory(s.cfg)
@@ -187,9 +194,15 @@ func (s *Service) confirmNotFound(ctx context.Context, request *resource.ReadReq
 		Services: []string{service},
 	})
 	if err != nil {
-		var clusterNotFound *ecstypes.ClusterNotFoundException
-		if errors.As(err, &clusterNotFound) {
-			return notFound
+		// ECS answers ServiceNotFoundException once it has purged an inactive
+		// service. DescribeServices does not model that error, so the SDK may
+		// hand it back untyped; match on the code rather than the Go type.
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.ErrorCode() {
+			case "ClusterNotFoundException", "ServiceNotFoundException":
+				return notFound
+			}
 		}
 		// Only codes that say something specific are kept; an unrecognized
 		// failure stays retryable rather than terminal.
@@ -213,10 +226,14 @@ func (s *Service) confirmNotFound(ctx context.Context, request *resource.ReadReq
 	if len(out.Services) == 0 {
 		return unconfirmed(resource.OperationErrorCodeServiceInternalError, "DescribeServices returned neither the service nor a failure for it")
 	}
-	if status := aws.ToString(out.Services[0].Status); status == "ACTIVE" {
-		return unconfirmed(resource.OperationErrorCodeServiceInternalError, "DescribeServices reports the service ACTIVE")
+	// Status is optional in the ECS API, so only the two values that mean the
+	// service is gone or going count; a missing or unfamiliar one does not.
+	switch status := aws.ToString(out.Services[0].Status); status {
+	case "DRAINING", "INACTIVE":
+		return notFound
+	default:
+		return unconfirmed(resource.OperationErrorCodeServiceInternalError, fmt.Sprintf("DescribeServices reports the service status %q", status))
 	}
-	return notFound
 }
 
 // decodeLoadBalancersFromProps converts the JSON-shaped LoadBalancers field
