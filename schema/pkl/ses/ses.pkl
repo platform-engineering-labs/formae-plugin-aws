@@ -77,7 +77,9 @@ open class DkimSigningAttributes extends formae.SubResource {
 
 @aws.SubResourceHint
 open class DeliveryOptions extends formae.SubResource {
-    tlsPolicy: TlsPolicy = "OPTIONAL"
+    /// Nullable because AWS can return DeliveryOptions without a TlsPolicy, and
+    /// a non-nullable field is treated as required on every read.
+    tlsPolicy: TlsPolicy? = "OPTIONAL"
     /// 5 min – 14 hrs (300 .. 50400).
     maxDeliverySeconds: Int(isBetween(300, 50400))?
 }
