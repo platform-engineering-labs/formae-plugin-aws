@@ -137,6 +137,7 @@ func TestService_Read_NotFoundWithMalformedNativeID_InvalidRequest(t *testing.T)
 
 	assert.NoError(t, err)
 	assert.Equal(t, resource.OperationErrorCodeInvalidRequest, out.ErrorCode)
+	assert.Contains(t, out.StatusMessage, "malformed NativeID: missing")
 	ecsCli.AssertNotCalled(t, "DescribeServices", mock.Anything, mock.Anything)
 }
 
@@ -483,6 +484,8 @@ func TestRead_TransientError_ReturnsRecoverablePluginError(t *testing.T) {
 	assert.NotNil(t, out)
 	// Recoverable plugin error code surfaced; no Endpoints in the response.
 	assert.Equal(t, resource.OperationErrorCodeThrottling, out.ErrorCode)
+	assert.Contains(t, out.StatusMessage, "composing service endpoints: ")
+	assert.Contains(t, out.StatusMessage, "rate exceeded")
 	assert.Empty(t, out.Properties)
 }
 
@@ -628,6 +631,11 @@ func TestService_Read_ConfirmsCloudControlNotFoundWithECS(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, out.ErrorCode)
+			if tt.want == resource.OperationErrorCodeNotFound {
+				assert.Empty(t, out.StatusMessage)
+			} else {
+				assert.Contains(t, out.StatusMessage, "ECS did not confirm it: ")
+			}
 			assert.Equal(t, "AWS::ECS::Service", out.ResourceType)
 			assert.Empty(t, out.Properties)
 			ecsCli.AssertNumberOfCalls(t, "DescribeServices", 1)

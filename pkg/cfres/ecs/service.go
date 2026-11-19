@@ -142,8 +142,9 @@ func (s *Service) readWithClient(ctx context.Context, client ccxReadClient, requ
 			// sync loop retry the Plugin Read. Do not return partial
 			// Endpoints data — preserve last-known-good in persisted state.
 			return &resource.ReadResult{
-				ResourceType: result.ResourceType,
-				ErrorCode:    resource.OperationErrorCodeThrottling,
+				ResourceType:  result.ResourceType,
+				ErrorCode:     resource.OperationErrorCodeThrottling,
+				StatusMessage: "composing service endpoints: " + composed.TransientError.Error(),
 			}, nil
 		}
 		props["Endpoints"] = composed.Endpoints
@@ -172,7 +173,11 @@ func (s *Service) confirmNotFound(ctx context.Context, request *resource.ReadReq
 	unconfirmed := func(code resource.OperationErrorCode, reason string) *resource.ReadResult {
 		plugin.LoggerFromContext(ctx).Warn("AWS::ECS::Service Read: CloudControl reported NotFound but ECS did not confirm it",
 			"nativeID", request.NativeID, "reason", reason)
-		return &resource.ReadResult{ResourceType: notFound.ResourceType, ErrorCode: code}
+		return &resource.ReadResult{
+			ResourceType:  notFound.ResourceType,
+			ErrorCode:     code,
+			StatusMessage: "CloudControl reported NotFound but ECS did not confirm it: " + reason,
+		}
 	}
 
 	cluster, service, ok := parseClusterAndServiceFromNativeID(request.NativeID)
