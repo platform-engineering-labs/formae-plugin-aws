@@ -11,9 +11,14 @@ import "../aws.pkl"
 
 const type = "AWS::Route53::HostedZone"
 
+typealias HostedZoneTier = "STANDARD"|"ADVANCED"
+
 @aws.SubResourceHint
 open class HostedZoneConfig  extends formae.SubResource{
     comment: String?
+
+    @aws.FieldHint{ hasProviderDefault = true }
+    hostedZoneTier: HostedZoneTier?
 }
 
 @aws.SubResourceHint

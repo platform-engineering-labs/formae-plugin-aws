@@ -1637,6 +1637,11 @@
       "pin": "documentation"
     },
     {
+      "key": "route53/hostedzone.pkl#HostedZoneConfig.hostedZoneTier",
+      "disposition": "keep",
+      "pin": "documentation"
+    },
+    {
       "key": "s3/bucket.pkl#Bucket.bucketEncryption",
       "disposition": "keep",
       "pin": "documentation"
