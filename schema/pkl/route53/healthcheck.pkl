@@ -15,6 +15,8 @@ typealias HealthCheckType = "CALCULATED"|"CLOUDWATCH_METRIC"|"HTTP"|"HTTP_STR_MA
 
 typealias InsufficientDataHealthStatusType = "Healthy"|"Unhealthy"|"LastKnownStatus"
 
+typealias EndpointType = "PUBLIC"|"PRIVATE"
+
 @aws.SubResourceHint
 open class AlarmIdentifier extends formae.SubResource {
     @aws.FieldHint
@@ -34,6 +36,9 @@ open class HealthCheckConfig extends formae.SubResource {
 
     @aws.FieldHint{ outputField = "EnableSNI" }
     enableSNI: Boolean?
+
+    @aws.FieldHint{ createOnly = true; hasProviderDefault = true }
+    endpointType: EndpointType?
 
     @aws.FieldHint
     failureThreshold: Int?
