@@ -18,7 +18,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.0
 	github.com/aws/aws-sdk-go-v2/service/rds v1.108.0
-	github.com/aws/aws-sdk-go-v2/service/rdsdata v1.32.0
+	github.com/aws/aws-sdk-go-v2/service/rdsdata v1.41.5
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.62.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.1
 	github.com/aws/aws-sdk-go-v2/service/s3control v1.70.1
