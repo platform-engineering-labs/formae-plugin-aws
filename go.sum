@@ -34,8 +34,8 @@ github.com/aws/aws-sdk-go-v2/service/acm v1.39.4 h1:2P7p/kNLozilMJfF5SNfKCAslLZF
 github.com/aws/aws-sdk-go-v2/service/acm v1.39.4/go.mod h1:xQtZpSJWrvS9GKpvmxLqZU98QbBAsXxjd4ZHH0U42Qk=
 github.com/aws/aws-sdk-go-v2/service/apigateway v1.42.5 h1:Z+8vxfSQrlz2ixwsZPUgBmoWTlWCt39HxaGeDWJic58=
 github.com/aws/aws-sdk-go-v2/service/apigateway v1.42.5/go.mod h1:dGix9no22yIDTfvm4RAC/lCGua6fQp0flRXlxb4+sMs=
-github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14 h1:ImtrKaec9pN/hz2rCS0IiVUBGKjxS9ZFM3MHNVoZTiY=
-github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14/go.mod h1:7lrvANo4D0kDvxGrcKXEocfULnurpaYBiPRf17ri2lU=
+github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.38.12 h1:yYR4Yja/z8MmF2BOys5xc/A4B7S0BDP8l8BcfHuZsck=
+github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.38.12/go.mod h1:C9ZmYvltZXzDsKv0niSaxxibSdjeVecwT9wTVZQuPbM=
 github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1 h1:UXPRXa3HLrJolDM098DfXgLJrbB086+Zip3M+4Dy1WI=
 github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1/go.mod h1:Uu2kNhTTM1ZrJcIL3FDLlzaHwOZUugiMmL8K8ibBbvo=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.70.0 h1:WFdCBo4QEW8RfwsOQPm8yOjXZw1S/CvTOiwX+ockqGk=

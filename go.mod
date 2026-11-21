@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.18
 	github.com/aws/aws-sdk-go-v2/service/acm v1.39.4
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.42.5
-	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.29.14
+	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.38.12
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.70.0
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.347.0
