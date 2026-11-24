@@ -53,6 +53,25 @@ Requires formae >= 0.89.0.
 - Bumped the formae plugin SDK (`pkg/plugin`) to v0.4.4, along with routine
   AWS SDK updates.
 
+## [0.1.20]
+
+Requires formae >= 0.89.0.
+
+### Fixed
+
+- `AWS::EC2::NetworkInterface` accepts the `EnablePrimaryIpv6` value AWS now
+  returns after create as a provider default.
+
+## [0.1.19]
+
+Requires formae >= 0.89.0.
+
+### Fixed
+
+- `AWS::ECS::TaskDefinition` now matches containers by their serialized name
+  when planning changes. Updating one container image in a task with sidecars
+  no longer produces unrelated container property changes.
+
 ## [0.1.18]
 
 Requires formae >= 0.89.0.
