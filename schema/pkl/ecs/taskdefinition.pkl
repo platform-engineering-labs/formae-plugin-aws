@@ -339,7 +339,7 @@ open class TaskDefinition extends formae.Resource {
     @aws.FieldHint{
         createOnly = true
         updateMethod = "EntitySet"
-        indexField = "name"
+        indexField = "Name"
     }
     containerDefinitions: Listing<ContainerDefinition>?
 
