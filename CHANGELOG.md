@@ -8,6 +8,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Install with `sudo formae plugin install aws` on the host that runs the
 formae agent.
 
+## [0.1.21]
+
+Requires formae >= 0.89.0.
+
+### Added
+
+- `AWS::Route53::HealthCheck` models `HealthCheckConfig.endpointType`
+  (`PUBLIC` or `PRIVATE`). AWS now returns the field on every read, `PUBLIC`
+  when it was not set, and the schema previously rejected it as an unexpected
+  property. It is create-only and treated as a provider default.
+- `AWS::Route53::HostedZone` models `HostedZoneConfig.hostedZoneTier`
+  (`STANDARD` or `ADVANCED`). AWS returns `STANDARD` for a zone created
+  without it, which is treated as a provider default.
+
+### Fixed
+
+- Only CloudControl's `ResourceNotFoundException` is now reported as NotFound.
+  A read that reports NotFound makes formae drop its record of the resource,
+  so `TypeNotFoundException` and `RequestTokenNotFoundException` now map to
+  InvalidRequest instead.
+- A target config that fails to decode now fails the call. Previously the
+  plugin silently fell back to the host's ambient region and credentials,
+  where live resources could read as genuinely NotFound.
+- `AWS::ECS::Service` no longer loses its record when CloudControl reports
+  NotFound for a live service, as it does when its handler cannot reach the
+  ECS API. The read now confirms with `ecs:DescribeServices` and returns
+  NotFound only when ECS itself reports the service missing, inactive or
+  draining, or the cluster gone. Any other answer is a retryable error, and a
+  native ID that cannot be split into cluster and service returns
+  InvalidRequest, which leaves the record in place.
+- `AWS::ECS::Service` reads that fail now say why. A refused unconfirmed
+  NotFound, or giving up on composing endpoints after transient ELB errors,
+  sets a status message on the result instead of surfacing only a bare error
+  code.
+- `AWS::SES::ConfigurationSet` created without delivery options can be read
+  again. AWS returns a `DeliveryOptions` object with no `TlsPolicy`, which
+  failed the required-field check, so the record was never stored and
+  references to the set did not resolve. `DeliveryOptions.tlsPolicy` is now
+  nullable and keeps its `OPTIONAL` default.
+
+### Changed
+
+- Bumped the formae plugin SDK (`pkg/plugin`) to v0.4.4, along with routine
+  AWS SDK updates.
+
+## [0.1.20]
+
+Requires formae >= 0.89.0.
+
+### Fixed
+
+- `AWS::EC2::NetworkInterface` accepts the `EnablePrimaryIpv6` value AWS now
+  returns after create as a provider default.
+
+## [0.1.19]
+
+Requires formae >= 0.89.0.
+
+### Fixed
+
+- `AWS::ECS::TaskDefinition` now matches containers by their serialized name
+  when planning changes. Updating one container image in a task with sidecars
+  no longer produces unrelated container property changes.
+
 ## [0.1.18]
 
 Requires formae >= 0.89.0.
